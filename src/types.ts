@@ -13,7 +13,6 @@ export interface Person {
   name: string;
   shift: string;
   role: string;
-  permissionLevel?: string;
   nationality: string;
   day1: string;
   day2: string;
