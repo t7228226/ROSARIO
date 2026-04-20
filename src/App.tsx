@@ -15,7 +15,6 @@ import {
   getDutyCode,
   getPersonDutyDisplay,
   getQualifiedPeopleForStation,
-  getQualificationCountMap,
   getStationCoverage,
   getTeamOfPerson,
   qualificationBadge,
@@ -56,6 +55,7 @@ const emptyBootstrap: AppBootstrap = {
 
 const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不可排", ""];
 const dayOptions: Array<Exclude<ShiftMode, "全部在職">> = DAY_OPTIONS;
+const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任", "總權限管理員"];
 
 const roleRank: Record<UserRole, number> = {
   技術員: 1,
@@ -71,6 +71,18 @@ function normalizeRole(raw?: string): UserRole {
   if (raw === "組長") return "組長";
   if (raw === "領班") return "領班";
   return "技術員";
+}
+
+function normalizePermission(person?: Person | null): UserRole | null {
+  if (!person) return null;
+  if (person.id === "P0033") return "總權限管理員";
+  const explicit = person.permissionLevel;
+  if (explicit) return normalizeRole(explicit);
+  return normalizeRole(person.role);
+}
+
+function isStationLeaderOrAbove(person: Person) {
+  return ["領班", "組長", "主任", "總權限管理員"].includes(person.role);
 }
 
 function getEmployeeLabel(person?: Person) {
@@ -124,7 +136,7 @@ export default function App() {
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
-  const currentRole = currentUser ? normalizeRole(currentUser.role) : null;
+  const currentRole = normalizePermission(currentUser);
 
   const [flash, setFlash] = useState("");
 
@@ -174,6 +186,7 @@ export default function App() {
     aDay2: "",
     bDay1: "",
     bDay2: "",
+    permissionLevel: "技術員",
   });
 
   useEffect(() => {
@@ -235,6 +248,11 @@ export default function App() {
   const reviewSelectedPerson = useMemo(() => {
     return data.people.find((person) => person.id === reviewEmployeeId) || reviewPeople[0] || null;
   }, [data.people, reviewEmployeeId, reviewPeople]);
+
+  const permissionCandidates = useMemo(
+    () => data.people.filter((person) => isStationLeaderOrAbove(person)).sort((a, b) => a.name.localeCompare(b.name, "zh-Hant")),
+    [data.people]
+  );
 
   useEffect(() => {
     if (reviewSelectedPerson && !reviewEmployeeId) {
@@ -315,9 +333,8 @@ export default function App() {
 
   function canEditRulesForTeam(team: TeamName) {
     if (!currentUser) return false;
-    const role = normalizeRole(currentUser.role);
-    if (role === "總權限管理員") return true;
-    return role === "主任" && getTeamOfPerson(currentUser) === team;
+    if (currentRole === "總權限管理員") return true;
+    return currentRole === "主任" && getTeamOfPerson(currentUser) === team;
   }
 
   function setFlashMessage(text: string) {
@@ -353,7 +370,7 @@ export default function App() {
 
     setCurrentUser(matched);
     setPage("home");
-    setFlashMessage(`登入成功：${matched.name}（${normalizeRole(matched.role)}）`);
+    setFlashMessage(`登入成功：${matched.name}（職務：${matched.role}／權限：${normalizePermission(matched) || "技術員"}）`);
   }
 
   async function handleSaveQualification(statusOverride?: QualificationStatus) {
@@ -396,7 +413,7 @@ export default function App() {
           : [...current.qualifications, payload],
       };
     });
-    setFlashMessage("站點考核已確認並儲存。切換班別時，工號/姓名輸入框會自動清空。" );
+    setFlashMessage("站點考核已確認並儲存。切換班別時，工號/姓名輸入框會自動清空。");
   }
 
   async function handleDeleteQualification(employeeId: string, stationId: string) {
@@ -441,6 +458,9 @@ export default function App() {
       ...current,
       people: current.people.map((item) => (item.id === person.id ? next : item)),
     }));
+    if (currentUser?.id === person.id) {
+      setCurrentUser(next);
+    }
     setFlashMessage(`人員 ${person.name} 已確認更新。`);
   }
 
@@ -480,8 +500,9 @@ export default function App() {
       aDay2: "",
       bDay1: "",
       bDay2: "",
+      permissionLevel: "技術員",
     });
-    setFlashMessage("人員已確認新增。" );
+    setFlashMessage("人員已確認新增。");
   }
 
   function toggleManualAssignment(stationId: string, employeeId: string) {
@@ -503,7 +524,7 @@ export default function App() {
       (item) => item.id.toLowerCase() === value.toLowerCase() || item.name.toLowerCase() === value.toLowerCase()
     );
     if (!person || !station) {
-      setFlashMessage("找不到該人員，請確認工號或姓名是否存在於本次出勤池。" );
+      setFlashMessage("找不到該人員，請確認工號或姓名是否存在於本次出勤池。");
       return;
     }
 
@@ -520,7 +541,7 @@ export default function App() {
       } else {
         const finished = confirmAction(`是否直接標記 ${person.name} 為 ${station.name} 訓練完成？`);
         if (!finished) {
-          setFlashMessage("已取消自訂安插。" );
+          setFlashMessage("已取消自訂安插。");
           return;
         }
         setReviewEmployeeId(person.id);
@@ -572,7 +593,7 @@ export default function App() {
     const used = new Set(Object.values(assignments).flat());
     const available = pool.filter((person) => !used.has(person.id));
     if (!available.length) {
-      setFlashMessage("此站點目前沒有可隨機安排的合格人選。" );
+      setFlashMessage("此站點目前沒有可隨機安排的合格人選。");
       return;
     }
     const pick = available[Math.floor(Math.random() * available.length)];
@@ -620,7 +641,7 @@ export default function App() {
             <div className="logged-user">
               <strong>{currentUser.name}</strong>
               <span>
-                {currentUser.id}｜{normalizeRole(currentUser.role)}
+                {currentUser.id}｜職務：{currentUser.role}｜權限：{currentRole}
               </span>
               <button className="ghost" type="button" onClick={logout}>
                 登出
@@ -675,7 +696,7 @@ export default function App() {
               <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
             </div>
             <div className="panel"><h3>系統定位</h3><p>這是通用型檢測系統，提供幹部進行站點資格查詢、考核維護、缺口分析、站點試排與智能試排。</p></div>
-            <div className="panel"><h3>權限規則</h3><ul><li>未登入：只能看首頁。</li><li>技術員：查詢人員資格、查詢站點人選。</li><li>領班：可進行站點考核修改申請。</li><li>組長：可進行站點缺口分析、站點試排。</li><li>主任：可進行站點規則設定、人員名單管理、站點缺口、智能試排、站點試排。</li><li>總權限管理員：全功能可用。</li></ul></div>
+            <div className="panel"><h3>權限規則</h3><ul><li>未登入：只能看首頁。</li><li>技術員：查詢人員資格、查詢站點人選。</li><li>領班：可進行站點考核修改申請。</li><li>組長：可進行站點缺口分析、站點試排。</li><li>主任：可進行站點規則設定、人員名單管理、站點缺口、智能試排、站點試排。</li><li>總權限管理員：全功能可用，且可決定站長以上人員系統權限。</li><li>職務標籤與權限標籤已分離。</li></ul></div>
           </Layout>
         ) : null}
 
@@ -771,11 +792,11 @@ export default function App() {
         ) : null}
 
         {currentRole && page === "station-rules" && hasAccess("主任") ? (
-          <Layout title="站點規則設定" subtitle="規則改為各班自行設定；所有修改需先確認，僅當班主任或總權限管理員可改。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={rulesDay} onChange={(e) => setRulesDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><span className="muted">系統代號：{getDutyCode(rulesTeam, rulesDay)}</span></div><table className="table"><thead><tr><th>站點</th><th>正班最低</th><th>輪休單批最低</th><th>優先序</th><th>必站</th><th>備援目標</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); return <tr key={rule.stationId}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={station?.normalMin ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { normalMin: value })} /></td><td><ConfirmNumberInput value={station?.reliefMinPerBatch ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={station?.priority ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { priority: value })} /></td><td><ConfirmSelect value={station?.isMandatory ? "Y" : "N"} disabled={!canEditRulesForTeam(rulesTeam)} options={[{label:"Y", value:"Y"},{label:"N", value:"N"}]} onCommit={(value) => station && handleUpdateStation(station, { isMandatory: value === "Y" })} /></td><td><ConfirmNumberInput value={station?.backupTarget ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { backupTarget: value })} /></td></tr>; })}</tbody></table></div></Layout>
+          <Layout title="站點規則設定" subtitle="規則改為各班自行設定；所有修改需先確認，僅當班主任或總權限管理員可改。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={rulesDay} onChange={(e) => setRulesDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><span className="muted">系統代號：{getDutyCode(rulesTeam, rulesDay)}</span></div><table className="table"><thead><tr><th>站點</th><th>正班最低</th><th>輪休單批最低</th><th>優先序</th><th>必站</th><th>備援目標</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); return <tr key={rule.stationId}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={station?.normalMin ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { normalMin: value })} /></td><td><ConfirmNumberInput value={station?.reliefMinPerBatch ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={station?.priority ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { priority: value })} /></td><td><ConfirmSelect value={station?.isMandatory ? "Y" : "N"} disabled={!canEditRulesForTeam(rulesTeam)} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => station && handleUpdateStation(station, { isMandatory: value === "Y" })} /></td><td><ConfirmNumberInput value={station?.backupTarget ?? 0} disabled={!canEditRulesForTeam(rulesTeam)} onCommit={(value) => station && handleUpdateStation(station, { backupTarget: value })} /></td></tr>; })}</tbody></table></div></Layout>
         ) : null}
 
         {currentRole && page === "people-management" && hasAccess("主任") ? (
-          <Layout title="人員名單管理" subtitle="已新增搜尋框，所有修改需先確認後才套用。"><div className="panel"><h3>新增人員</h3><div className="form-grid compact-form"><div><label className="field-label">工號</label><input value={newPersonForm.id} onChange={(e) => setNewPersonForm((c) => ({ ...c, id: e.target.value }))} /></div><div><label className="field-label">姓名</label><input value={newPersonForm.name} onChange={(e) => setNewPersonForm((c) => ({ ...c, name: e.target.value }))} /></div><div><label className="field-label">班別</label><select value={newPersonForm.shift} onChange={(e) => setNewPersonForm((c) => ({ ...c, shift: e.target.value }))}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div><label className="field-label">角色</label><input value={newPersonForm.role} onChange={(e) => setNewPersonForm((c) => ({ ...c, role: e.target.value }))} /></div><div><label className="field-label">國籍</label><input value={newPersonForm.nationality} onChange={(e) => setNewPersonForm((c) => ({ ...c, nationality: e.target.value }))} /></div><div><label className="field-label">在職狀態</label><input value={newPersonForm.employmentStatus} onChange={(e) => setNewPersonForm((c) => ({ ...c, employmentStatus: e.target.value }))} /></div></div><div className="toolbar"><button className="primary" type="button" onClick={handleCreatePerson}>確認新增人員</button></div></div><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>角色</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value, day1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value, day2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></Layout>
+          <Layout title="人員名單管理" subtitle="已新增搜尋框，所有修改需先確認後才套用。最高權限者會看到權限管理介面。"><div className="panel"><h3>新增人員</h3><div className="form-grid compact-form"><div><label className="field-label">工號</label><input value={newPersonForm.id} onChange={(e) => setNewPersonForm((c) => ({ ...c, id: e.target.value }))} /></div><div><label className="field-label">姓名</label><input value={newPersonForm.name} onChange={(e) => setNewPersonForm((c) => ({ ...c, name: e.target.value }))} /></div><div><label className="field-label">班別</label><select value={newPersonForm.shift} onChange={(e) => setNewPersonForm((c) => ({ ...c, shift: e.target.value }))}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div><label className="field-label">角色</label><input value={newPersonForm.role} onChange={(e) => setNewPersonForm((c) => ({ ...c, role: e.target.value }))} /></div><div><label className="field-label">系統權限</label><select value={newPersonForm.permissionLevel || "技術員"} onChange={(e) => setNewPersonForm((c) => ({ ...c, permissionLevel: e.target.value as UserRole }))}>{permissionOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div><label className="field-label">國籍</label><input value={newPersonForm.nationality} onChange={(e) => setNewPersonForm((c) => ({ ...c, nationality: e.target.value }))} /></div><div><label className="field-label">在職狀態</label><input value={newPersonForm.employmentStatus} onChange={(e) => setNewPersonForm((c) => ({ ...c, employmentStatus: e.target.value }))} /></div></div><div className="toolbar"><button className="primary" type="button" onClick={handleCreatePerson}>確認新增人員</button></div></div><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>角色</th><th>權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{normalizePermission(person)}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value, day1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value, day2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div>{currentRole === "總權限管理員" ? <div className="panel"><h3>權限管理</h3><p>此區僅最高權限可見。僅列出站長以上人員，權限調整會連動到人員名單。</p><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>目前權限</th><th>調整權限</th></tr></thead><tbody>{permissionCandidates.map((person) => <tr key={`perm-${person.id}`}><td>{person.id}</td><td>{person.name}</td><td>{String(getTeamOfPerson(person))}</td><td>{person.role}</td><td>{normalizePermission(person)}</td><td><ConfirmSelect value={normalizePermission(person) || "技術員"} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { permissionLevel: value })} /></td></tr>)}</tbody></table></div> : null}</Layout>
         ) : null}
 
         {currentRole && page === "smart-schedule" && hasAccess("主任") ? (
