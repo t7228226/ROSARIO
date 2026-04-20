@@ -228,6 +228,20 @@ export function searchText(values: Array<string | undefined | null>, keyword: st
   return values.some((value) => String(value || "").toLowerCase().includes(normalized));
 }
 
+function compareScore(a: Array<number | string>, b: Array<number | string>) {
+  const maxLength = Math.max(a.length, b.length);
+  for (let i = 0; i < maxLength; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (left === right) continue;
+    if (typeof left === "number" && typeof right === "number") {
+      return left - right;
+    }
+    return String(left ?? "").localeCompare(String(right ?? ""), "zh-Hant", { numeric: true });
+  }
+  return 0;
+}
+
 export function buildSmartAssignments(
   team: TeamName,
   mode: Exclude<ShiftMode, "全部在職">,
@@ -260,15 +274,9 @@ export function buildSmartAssignments(
   }
 
   return rules.map((rule) => {
-    const candidates = getQualifiedPeopleForStation(rule.stationId, activePeople, qualifications).sort((a, b) => {
-      const sa = score(a);
-      const sb = score(b);
-      for (let i = 0; i < Math.max(sa.length, sb.length); i += 1) {
-        if (sa[i] === sb[i]) continue;
-        return String(sa[i]).localeCompare(String(sb[i]), "zh-Hant", { numeric: true });
-      }
-      return 0;
-    });
+    const candidates = getQualifiedPeopleForStation(rule.stationId, activePeople, qualifications).sort((a, b) =>
+      compareScore(score(a), score(b))
+    );
 
     const assigned: Person[] = [];
     for (const person of candidates) {
