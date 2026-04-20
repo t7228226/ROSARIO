@@ -95,6 +95,10 @@ function appendUniqueAssignment(current: Record<string, string[]>, stationId: st
   };
 }
 
+function findAssignedStation(assignments: Record<string, string[]>, employeeId: string) {
+  return Object.entries(assignments).find(([, ids]) => ids.includes(employeeId))?.[0] || null;
+}
+
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
@@ -354,10 +358,17 @@ export default function App() {
     const raw = window.prompt("請輸入工號或姓名");
     if (!raw) return;
     const attendance = target === "manual" ? manualAttendance : smartAttendance;
+    const assignments = target === "manual" ? manualAssignments : smartAssignments;
     const person = attendance.all.find((item) => item.id === raw.trim() || item.name === raw.trim());
     const station = data.stations.find((item) => item.id === stationId);
     if (!person || !station) {
       setFlashMessage("找不到可用人員，請確認該人員存在於本次出勤池。" );
+      return;
+    }
+    const assignedStationId = findAssignedStation(assignments, person.id);
+    if (assignedStationId && assignedStationId !== stationId) {
+      const assignedStation = data.stations.find((item) => item.id === assignedStationId);
+      setFlashMessage(`${person.name} 已安排在 ${assignedStation?.name || assignedStationId}，不可重複佔站。`);
       return;
     }
     const qualified = data.qualifications.some((item) => item.employeeId === person.id && item.stationId === stationId && item.status === "合格");
