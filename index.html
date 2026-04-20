@@ -4,87 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>站點資格管理 App</title>
-    <script>
-      (function () {
-        const ACTIVE_API_BASE = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-        const LEGACY_API_BASES = [
-          "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec"
-        ];
-        const ALL_API_BASES = [ACTIVE_API_BASE].concat(LEGACY_API_BASES);
-        const bindCloseButton = (panel) => {
-          const closeButton = panel.querySelector("#debug-close");
-          if (closeButton) closeButton.onclick = function () { panel.style.display = "none"; };
-        };
-        const ensureDebugPanel = () => {
-          let panel = document.getElementById("debug-panel");
-          if (!panel) {
-            panel = document.createElement("div");
-            panel.id = "debug-panel";
-            panel.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;max-height:45vh;overflow:auto;z-index:99999;background:#111;color:#0f0;padding:12px;border-radius:12px;font-size:12px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.35);";
-            panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;"><strong style="color:#fff;">除錯訊息</strong><button id="debug-close" style="background:#333;color:#fff;border:0;border-radius:8px;padding:4px 10px;cursor:pointer;">關閉</button></div><pre id="debug-log" style="margin:0;white-space:pre-wrap;"></pre>';
-            document.addEventListener("DOMContentLoaded", function () { document.body.appendChild(panel); bindCloseButton(panel); });
-            if (document.body) { document.body.appendChild(panel); bindCloseButton(panel); }
-          }
-          return panel;
-        };
-        const showDebug = (title, detail) => {
-          const panel = ensureDebugPanel();
-          panel.style.display = "block";
-          const log = panel.querySelector("#debug-log");
-          const text = "[" + new Date().toLocaleTimeString("zh-Hant-TW") + "] " + title + "\n" + (detail || "") + "\n\n";
-          if (log) log.textContent += text;
-          console.error(title, detail || "");
-        };
-        const isApiUrl = (url) => ALL_API_BASES.some((base) => url.startsWith(base));
-        const normalizeApiUrl = (url) => {
-          for (const base of ALL_API_BASES) if (url.startsWith(base)) return ACTIVE_API_BASE + url.slice(base.length);
-          return url;
-        };
-        window.addEventListener("error", function (event) {
-          showDebug("JS Error", (event.message || "") + (event.filename ? "\n" + event.filename + ":" + event.lineno + ":" + event.colno : ""));
-        });
-        window.addEventListener("unhandledrejection", function (event) {
-          const reason = event.reason;
-          showDebug("Promise Error", typeof reason === "object" ? JSON.stringify(reason, null, 2) : String(reason));
-        });
-        const originalFetch = window.fetch.bind(window);
-        window.fetch = async function (input, init) {
-          const rawUrl = typeof input === "string" ? input : (input && input.url) || "";
-          const isApiCall = isApiUrl(rawUrl);
-          const finalInput = typeof input === "string" ? normalizeApiUrl(input) : input;
-          try {
-            const response = await originalFetch(finalInput, init);
-            if (!isApiCall) return response;
-            const cloned = response.clone();
-            let data;
-            try { data = await cloned.json(); } catch (jsonError) {
-              showDebug("API JSON parse failed", rawUrl + "\n" + String(jsonError));
-              return response;
-            }
-            if (data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "ok")) {
-              if (data.ok === false) {
-                showDebug("API returned ok=false", JSON.stringify(data, null, 2));
-                throw new Error(data.message || "API error");
-              }
-              const payload = Object.prototype.hasOwnProperty.call(data, "data") ? data.data : data;
-              return new Response(JSON.stringify(payload), {
-                status: response.status,
-                statusText: response.statusText,
-                headers: { "Content-Type": "application/json" }
-              });
-            }
-            return response;
-          } catch (fetchError) {
-            if (isApiCall) showDebug("API fetch failed", rawUrl + "\n" + String(fetchError));
-            throw fetchError;
-          }
-        };
-      })();
-    </script>
-    <script type="module" crossorigin src="/ROSARIO/assets/index-DFyEfZb-.js"></script>
-    <link rel="stylesheet" crossorigin href="/ROSARIO/assets/index-DeHYLTdT.css">
   </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
