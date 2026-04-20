@@ -1,4 +1,4 @@
-import type { AppBootstrap, Person, Qualification, Station } from "../types";
+import type { AppBootstrap, Person, Qualification, Station, StationRule } from "../types";
 import { mockBootstrap } from "./mockData";
 
 const API_URL =
@@ -13,6 +13,90 @@ function ensureArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+function toBool(value: unknown) {
+  return String(value ?? "").toUpperCase() === "Y" || String(value ?? "") === "啟用";
+}
+
+function normalizePeople(rows: unknown[]): Person[] {
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        id: String(item.id ?? item["工號"] ?? "").trim(),
+        name: String(item.name ?? item["姓名"] ?? item["正式姓名"] ?? "").trim(),
+        shift: String(item.shift ?? item["班別"] ?? "").trim(),
+        role: String(item.role ?? item["職務"] ?? "").trim(),
+        nationality: String(item.nationality ?? item["國籍"] ?? "").trim(),
+        day1: String(item.day1 ?? item["第一天"] ?? item["(A)第一天"] ?? "").trim(),
+        day2: String(item.day2 ?? item["第二天"] ?? item["(A)第二天"] ?? "").trim(),
+        aDay1: String(item.aDay1 ?? item["(A)第一天"] ?? "").trim(),
+        aDay2: String(item.aDay2 ?? item["(A)第二天"] ?? "").trim(),
+        bDay1: String(item.bDay1 ?? item["(B)第一天"] ?? "").trim(),
+        bDay2: String(item.bDay2 ?? item["(B)第二天"] ?? "").trim(),
+        employmentStatus: String(item.employmentStatus ?? item["在職狀態"] ?? "").trim(),
+        note: String(item.note ?? item["備註"] ?? "").trim(),
+      } as Person;
+    })
+    .filter((item) => item.id && item.name);
+}
+
+function normalizeStations(rows: unknown[]): Station[] {
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        id: String(item.id ?? item["站點代碼"] ?? "").trim(),
+        name: String(item.name ?? item["站點名稱"] ?? item["規則ID"] ?? "").trim(),
+        normalMin: Number(item.normalMin ?? item["最低需求"] ?? 0),
+        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["備援目標"] ?? 0),
+        priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
+        isMandatory: toBool(item.isMandatory ?? item["是否必站"]),
+        backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
+        description: String(item.description ?? item["說明"] ?? "").trim(),
+        note: String(item.note ?? item["備註"] ?? "").trim(),
+      } as Station;
+    })
+    .filter((item) => item.id);
+}
+
+function normalizeQualifications(rows: unknown[]): Qualification[] {
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        employeeId: String(item.employeeId ?? item["工號"] ?? "").trim(),
+        employeeName: String(item.employeeName ?? item["姓名"] ?? "").trim(),
+        stationId: String(item.stationId ?? item["站點代碼"] ?? "").trim(),
+        status: String(item.status ?? item["資格狀態"] ?? "") as Qualification["status"],
+        rawStatus: String(item.rawStatus ?? item["資格狀態"] ?? "").trim(),
+      };
+    })
+    .filter((item) => item.employeeId && item.stationId);
+}
+
+function normalizeRules(rows: unknown[]): StationRule[] {
+  return rows
+    .map((row) => {
+      const item = row as Record<string, unknown>;
+      return {
+        id: String(item.id ?? item["規則ID"] ?? item["唯一主鍵"] ?? "").trim(),
+        team: String(item.team ?? item["班別"] ?? "").trim(),
+        dayKey: String(item.dayKey ?? item["日別"] ?? "").trim(),
+        stationId: String(item.stationId ?? item["站點代碼"] ?? item["對應 02_站點主表"] ?? "").trim(),
+        minRequired: Number(item.minRequired ?? item["最低需求"] ?? 0),
+        backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
+        priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
+        isMandatory: toBool(item.isMandatory ?? item["是否必站"]),
+        trainingCanFill: toBool(item.trainingCanFill ?? item["訓練中可補位"]),
+        qualificationLimit: String(item.qualificationLimit ?? item["資格限制"] ?? "不限").trim(),
+        canShare: toBool(item.canShare ?? item["可否共用人力"]),
+        enabled: String(item.enabled ?? item["啟用狀態"] ?? "") !== "停用",
+        note: String(item.note ?? item["備註"] ?? "").trim(),
+      } as StationRule;
+    })
+    .filter((item) => item.stationId && item.team && item.dayKey);
+}
+
 function normalizeBootstrap(payload: unknown): AppBootstrap {
   const source =
     payload && typeof payload === "object" && "data" in payload
@@ -21,14 +105,16 @@ function normalizeBootstrap(payload: unknown): AppBootstrap {
 
   const obj = source && typeof source === "object" ? (source as Record<string, unknown>) : {};
 
-  const people = ensureArray<Person>(obj.people);
-  const stations = ensureArray<Station>(obj.stations);
-  const qualifications = ensureArray<Qualification>(obj.qualifications);
+  const people = normalizePeople(ensureArray(obj.people));
+  const stations = normalizeStations(ensureArray(obj.stations));
+  const qualifications = normalizeQualifications(ensureArray(obj.qualifications));
+  const stationRules = normalizeRules(ensureArray(obj.stationRules ?? obj.rules));
 
   return {
     people,
     stations,
     qualifications,
+    stationRules,
   };
 }
 
