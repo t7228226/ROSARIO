@@ -1,6 +1,6 @@
-export type UserRole = "一般幹部" | "領班" | "組長";
+export type UserRole = "技術員" | "領班" | "組長" | "主任";
 
-export type ShiftMode = "B班" | "第一天" | "第二天";
+export type ShiftMode = "全部在職" | "第一天" | "第二天";
 
 export type QualificationStatus = "合格" | "訓練中" | "不可排" | "";
 
