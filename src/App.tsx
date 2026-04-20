@@ -350,7 +350,16 @@ export default function App() {
   function toggleManualAssignment(stationId: string, employeeId: string) {
     setManualAssignments((current) => {
       const currentIds = current[stationId] || [];
-      return { ...current, [stationId]: currentIds.includes(employeeId) ? currentIds.filter((id) => id !== employeeId) : [...currentIds, employeeId] };
+      if (currentIds.includes(employeeId)) {
+        return { ...current, [stationId]: currentIds.filter((id) => id !== employeeId) };
+      }
+      const assignedStationId = findAssignedStation(current, employeeId);
+      if (assignedStationId && assignedStationId !== stationId) {
+        const assignedStation = data.stations.find((item) => item.id === assignedStationId);
+        setFlashMessage(`${data.people.find((item) => item.id === employeeId)?.name || employeeId} 已安排在 ${assignedStation?.name || assignedStationId}，不可重複佔站。`);
+        return current;
+      }
+      return { ...current, [stationId]: [...currentIds, employeeId] };
     });
   }
 
