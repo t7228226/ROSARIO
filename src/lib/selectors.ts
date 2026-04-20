@@ -177,21 +177,26 @@ export function getStationCoverage(
   const activeIds = new Set(activePeople.map((person) => person.id));
   const supportIds = new Set(supportPeople.map((person) => person.id));
   const related = qualifications.filter((item) => item.stationId === stationId && activeIds.has(item.employeeId));
-  const qualified = related.filter((item) => item.status === "合格").length;
-  const training = related.filter((item) => item.status === "訓練中").length;
-  const blocked = related.filter((item) => item.status === "不可排").length;
-  const supportQualifiedIds = qualifications
-    .filter((item) => item.stationId === stationId && item.status === "合格" && supportIds.has(item.employeeId))
-    .map((item) => item.employeeId);
-  const shortage = Math.max(0, minimumNeed - qualified);
+  const qualifiedIds = [...new Set(related.filter((item) => item.status === "合格").map((item) => item.employeeId))];
+  const trainingIds = [...new Set(related.filter((item) => item.status === "訓練中").map((item) => item.employeeId))];
+  const blockedIds = [...new Set(related.filter((item) => item.status === "不可排").map((item) => item.employeeId))];
+  const supportQualifiedIds = qualifiedIds.filter((id) => supportIds.has(id));
+  const ownQualifiedIds = qualifiedIds.filter((id) => !supportIds.has(id));
+  const shortage = Math.max(0, minimumNeed - qualifiedIds.length);
 
   return {
     related,
-    qualified,
-    training,
-    blocked,
-    shortage,
+    qualified: qualifiedIds.length,
+    qualifiedIds,
+    ownQualified: ownQualifiedIds.length,
+    ownQualifiedIds,
+    supportQualified: supportQualifiedIds.length,
     supportQualifiedIds,
+    training: trainingIds.length,
+    trainingIds,
+    blocked: blockedIds.length,
+    blockedIds,
+    shortage,
   };
 }
 
