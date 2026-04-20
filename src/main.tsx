@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import App from "./App";
 import "./styles.css";
 
 declare global {
@@ -30,28 +31,21 @@ window.addEventListener("unhandledrejection", (event) => {
   showFatalError("系統載入失敗", detail);
 });
 
-async function bootstrap() {
-  try {
-    const root = document.getElementById("root");
-    if (!root) {
-      throw new Error("找不到 root 容器");
-    }
-
-    const module = await import("./App");
-    const App = module.default;
-
-    if (window.__hideBootStatus) {
-      window.__hideBootStatus();
-    }
-
-    ReactDOM.createRoot(root).render(
-      <React.StrictMode>
-        <App />
-      </React.StrictMode>
-    );
-  } catch (error) {
-    showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
+try {
+  const root = document.getElementById("root");
+  if (!root) {
+    throw new Error("找不到 root 容器");
   }
-}
 
-void bootstrap();
+  if (window.__hideBootStatus) {
+    window.__hideBootStatus();
+  }
+
+  ReactDOM.createRoot(root).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+} catch (error) {
+  showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
+}
