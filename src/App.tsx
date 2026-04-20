@@ -62,11 +62,9 @@ const roleRank: Record<UserRole, number> = {
   領班: 2,
   組長: 3,
   主任: 4,
-  總權限管理員: 5,
 };
 
 function normalizeRole(raw?: string): UserRole {
-  if (raw === "總權限管理員") return "總權限管理員";
   if (raw === "主任") return "主任";
   if (raw === "組長") return "組長";
   if (raw === "領班") return "領班";
@@ -220,7 +218,7 @@ export default function App() {
 
   function canEditRulesForTeam(team: TeamName) {
     if (!currentUser) return false;
-    return currentRole === "總權限管理員" || (currentRole === "主任" && getTeamOfPerson(currentUser) === team);
+    return currentRole === "主任" && getTeamOfPerson(currentUser) === team;
   }
 
   function setFlashMessage(text: string) {
