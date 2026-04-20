@@ -1,10 +1,12 @@
-export type UserRole = "技術員" | "領班" | "組長" | "主任";
+export type UserRole = "技術員" | "領班" | "組長" | "主任" | "總權限管理員";
 
 export type ShiftMode = "全部在職" | "當班" | "第一天" | "第二天";
 
 export type QualificationStatus = "合格" | "訓練中" | "不可排" | "";
 
 export type TeamName = "婷芬班" | "美香班" | "俊志班" | "翊展班";
+
+export type SmartScheduleMode = "當班優先" | "支援優先" | "資格優先";
 
 export interface Person {
   id: string;
@@ -63,4 +65,24 @@ export interface AppBootstrap {
   stations: Station[];
   qualifications: Qualification[];
   stationRules?: StationRule[];
+}
+
+export interface AttendanceSummary {
+  own: Person[];
+  support: Person[];
+  all: Person[];
+  ownDuty: string;
+  supportDuty: string;
+  supportTeam: TeamName;
+  localCount: number;
+  filipinoCount: number;
+  vietnamCount: number;
+  totalCount: number;
+}
+
+export interface SmartAssignmentRow {
+  stationId: string;
+  assigned: Person[];
+  shortage: number;
+  source: string[];
 }
