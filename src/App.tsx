@@ -84,6 +84,17 @@ function findDuplicateIds(assignments: Record<string, string[]>) {
   return [...map.entries()].filter(([, count]) => count > 1).map(([id]) => id);
 }
 
+function appendUniqueAssignment(current: Record<string, string[]>, stationId: string, employeeId: string) {
+  const currentIds = current[stationId] || [];
+  if (currentIds.includes(employeeId)) {
+    return current;
+  }
+  return {
+    ...current,
+    [stationId]: [...currentIds, employeeId],
+  };
+}
+
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
@@ -369,7 +380,7 @@ export default function App() {
       setReviewStationId(stationId);
     }
     const setter = target === "manual" ? setManualAssignments : setSmartAssignments;
-    setter((current) => ({ ...current, [stationId]: [...(current[stationId] || []), person.id] }));
+    setter((current) => appendUniqueAssignment(current, stationId, person.id));
     setFlashMessage(`${person.name} 已加入 ${station.name}。`);
   }
 
