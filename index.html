@@ -7,18 +7,54 @@
     <script>
       (function () {
         const API_BASE = "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec";
+        const ensureDebugPanel = () => {
+          let panel = document.getElementById("debug-panel");
+          if (!panel) {
+            panel = document.createElement("pre");
+            panel.id = "debug-panel";
+            panel.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;max-height:45vh;overflow:auto;white-space:pre-wrap;z-index:99999;background:#111;color:#0f0;padding:12px;border-radius:12px;font-size:12px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.35);";
+            document.addEventListener("DOMContentLoaded", function () {
+              document.body.appendChild(panel);
+            });
+            if (document.body) document.body.appendChild(panel);
+          }
+          return panel;
+        };
+        const showDebug = (title, detail) => {
+          const panel = ensureDebugPanel();
+          const text = "[" + new Date().toLocaleTimeString("zh-Hant-TW") + "] " + title + "\n" + (detail || "") + "\n\n";
+          panel.textContent += text;
+          console.error(title, detail || "");
+        };
+
+        window.addEventListener("error", function (event) {
+          showDebug("JS Error", (event.message || "") + (event.filename ? "\n" + event.filename + ":" + event.lineno + ":" + event.colno : ""));
+        });
+
+        window.addEventListener("unhandledrejection", function (event) {
+          const reason = event.reason;
+          showDebug("Promise Error", typeof reason === "object" ? JSON.stringify(reason, null, 2) : String(reason));
+        });
+
         const originalFetch = window.fetch.bind(window);
         window.fetch = async function (input, init) {
-          const response = await originalFetch(input, init);
           const url = typeof input === "string" ? input : (input && input.url) || "";
-          if (!url.startsWith(API_BASE)) {
-            return response;
-          }
           try {
+            const response = await originalFetch(input, init);
+            if (!url.startsWith(API_BASE)) {
+              return response;
+            }
             const cloned = response.clone();
-            const data = await cloned.json();
+            let data;
+            try {
+              data = await cloned.json();
+            } catch (jsonError) {
+              showDebug("API JSON parse failed", url + "\n" + String(jsonError));
+              return response;
+            }
             if (data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "ok")) {
               if (data.ok === false) {
+                showDebug("API returned ok=false", JSON.stringify(data, null, 2));
                 throw new Error(data.message || "API error");
               }
               const payload = Object.prototype.hasOwnProperty.call(data, "data") ? data.data : data;
@@ -28,10 +64,13 @@
                 headers: { "Content-Type": "application/json" }
               });
             }
-          } catch (error) {
-            console.error("API unwrap failed:", error);
+            return response;
+          } catch (fetchError) {
+            if (url.startsWith(API_BASE)) {
+              showDebug("API fetch failed", url + "\n" + String(fetchError));
+            }
+            throw fetchError;
           }
-          return response;
         };
       })();
     </script>
