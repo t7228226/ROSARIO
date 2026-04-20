@@ -4,6 +4,37 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>站點資格管理 App</title>
+    <script>
+      (function () {
+        const API_BASE = "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec";
+        const originalFetch = window.fetch.bind(window);
+        window.fetch = async function (input, init) {
+          const response = await originalFetch(input, init);
+          const url = typeof input === "string" ? input : (input && input.url) || "";
+          if (!url.startsWith(API_BASE)) {
+            return response;
+          }
+          try {
+            const cloned = response.clone();
+            const data = await cloned.json();
+            if (data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "ok")) {
+              if (data.ok === false) {
+                throw new Error(data.message || "API error");
+              }
+              const payload = Object.prototype.hasOwnProperty.call(data, "data") ? data.data : data;
+              return new Response(JSON.stringify(payload), {
+                status: response.status,
+                statusText: response.statusText,
+                headers: { "Content-Type": "application/json" }
+              });
+            }
+          } catch (error) {
+            console.error("API unwrap failed:", error);
+          }
+          return response;
+        };
+      })();
+    </script>
     <script type="module" crossorigin src="/ROSARIO/assets/index-DFyEfZb-.js"></script>
     <link rel="stylesheet" crossorigin href="/ROSARIO/assets/index-DeHYLTdT.css">
   </head>
