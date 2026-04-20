@@ -4,8 +4,81 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>站點資格管理 App</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        background: #f4f7fb;
+        color: #172033;
+        font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+      }
+      #boot-status {
+        padding: 24px;
+        line-height: 1.7;
+      }
+      #boot-status.error {
+        background: #fff7f7;
+        color: #7f1d1d;
+      }
+      #boot-status pre {
+        white-space: pre-wrap;
+        background: #fff;
+        border: 1px solid #fecaca;
+        border-radius: 12px;
+        padding: 12px;
+        overflow: auto;
+      }
+    </style>
+    <script>
+      (function () {
+        function ensureBootStatus() {
+          var el = document.getElementById('boot-status');
+          if (!el) {
+            el = document.createElement('div');
+            el.id = 'boot-status';
+            el.innerHTML = '<h1>系統啟動中</h1><p>若長時間停在此畫面，請把畫面截圖提供給我。</p>';
+            document.addEventListener('DOMContentLoaded', function () {
+              var root = document.getElementById('root');
+              if (root && !document.getElementById('boot-status')) {
+                root.before(el);
+              } else if (!root && document.body && !document.getElementById('boot-status')) {
+                document.body.prepend(el);
+              }
+            });
+          }
+          return el;
+        }
+
+        function showEarlyError(title, detail) {
+          var el = ensureBootStatus();
+          el.className = 'error';
+          el.innerHTML = '<h1>' + title + '</h1><p>請把下方錯誤截圖提供給我。</p><pre>' + String(detail || '') + '</pre>';
+        }
+
+        window.__hideBootStatus = function () {
+          var el = document.getElementById('boot-status');
+          if (el) el.style.display = 'none';
+        };
+
+        window.addEventListener('error', function (event) {
+          showEarlyError('系統啟動失敗', (event.message || '') + '\n' + (event.filename || '') + ':' + (event.lineno || 0) + ':' + (event.colno || 0));
+        });
+
+        window.addEventListener('unhandledrejection', function (event) {
+          var reason = event.reason;
+          var detail = typeof reason === 'object' ? JSON.stringify(reason, null, 2) : String(reason);
+          showEarlyError('系統啟動失敗', detail);
+        });
+
+        ensureBootStatus();
+      })();
+    </script>
   </head>
   <body>
+    <div id="boot-status">
+      <h1>系統啟動中</h1>
+      <p>若長時間停在此畫面，請把畫面截圖提供給我。</p>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
