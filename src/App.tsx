@@ -30,7 +30,6 @@ import type {
   QualificationStatus,
   ShiftMode,
   SmartScheduleMode,
-  Station,
   StationRule,
   TeamName,
   UserRole,
@@ -308,7 +307,7 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await updateStationRule(next as unknown as Station);
+    await updateStationRule(next);
     setData((current) => {
       const rules = current.stationRules || [];
       const exists = rules.some((item) => item.id === rule.id || (item.team === rule.team && item.dayKey === rule.dayKey && item.stationId === rule.stationId));
