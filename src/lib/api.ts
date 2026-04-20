@@ -3,9 +3,9 @@ import { mockBootstrap } from "./mockData";
 
 const API_URL =
   import.meta.env.VITE_GAS_API_URL ||
-  "https://script.google.com/macros/s/AKfycbwsqvP9ogL4v81T3luON_43aHt1Vdz-e3bT--sEH2n56eKj11z05FPhkCC4rFouwt4w_A/exec";
+  "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec";
 
-const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "true") !== "false";
+const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
 
 let localCache: AppBootstrap = structuredClone(mockBootstrap);
 
