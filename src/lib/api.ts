@@ -9,6 +9,29 @@ const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
 
 let localCache: AppBootstrap = structuredClone(mockBootstrap);
 
+function ensureArray<T>(value: unknown): T[] {
+  return Array.isArray(value) ? (value as T[]) : [];
+}
+
+function normalizeBootstrap(payload: unknown): AppBootstrap {
+  const source =
+    payload && typeof payload === "object" && "data" in payload
+      ? (payload as { data?: unknown }).data
+      : payload;
+
+  const obj = source && typeof source === "object" ? (source as Record<string, unknown>) : {};
+
+  const people = ensureArray<Person>(obj.people);
+  const stations = ensureArray<Station>(obj.stations);
+  const qualifications = ensureArray<Qualification>(obj.qualifications);
+
+  return {
+    people,
+    stations,
+    qualifications,
+  };
+}
+
 async function request<T>(action: string, payload?: unknown, method: "GET" | "POST" = "POST"): Promise<T> {
   if (USE_MOCK) {
     throw new Error("mock mode");
@@ -41,7 +64,13 @@ async function request<T>(action: string, payload?: unknown, method: "GET" | "PO
 
 export async function fetchBootstrapData(): Promise<AppBootstrap> {
   try {
-    const data = await request<AppBootstrap>("bootstrap", undefined, "GET");
+    const raw = await request<unknown>("bootstrap", undefined, "GET");
+    const data = normalizeBootstrap(raw);
+
+    if (!data.people.length && !data.stations.length && !data.qualifications.length) {
+      return structuredClone(localCache);
+    }
+
     localCache = data;
     return data;
   } catch {
