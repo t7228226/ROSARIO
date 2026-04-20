@@ -6,7 +6,12 @@
     <title>站點資格管理 App</title>
     <script>
       (function () {
-        const API_BASE = "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec";
+        const ACTIVE_API_BASE = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
+        const LEGACY_API_BASES = [
+          "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec"
+        ];
+        const ALL_API_BASES = [ACTIVE_API_BASE].concat(LEGACY_API_BASES);
+
         const ensureDebugPanel = () => {
           let panel = document.getElementById("debug-panel");
           if (!panel) {
@@ -20,11 +25,22 @@
           }
           return panel;
         };
+
         const showDebug = (title, detail) => {
           const panel = ensureDebugPanel();
           const text = "[" + new Date().toLocaleTimeString("zh-Hant-TW") + "] " + title + "\n" + (detail || "") + "\n\n";
           panel.textContent += text;
           console.error(title, detail || "");
+        };
+
+        const isApiUrl = (url) => ALL_API_BASES.some((base) => url.startsWith(base));
+        const normalizeApiUrl = (url) => {
+          for (const base of ALL_API_BASES) {
+            if (url.startsWith(base)) {
+              return ACTIVE_API_BASE + url.slice(base.length);
+            }
+          }
+          return url;
         };
 
         window.addEventListener("error", function (event) {
@@ -38,10 +54,15 @@
 
         const originalFetch = window.fetch.bind(window);
         window.fetch = async function (input, init) {
-          const url = typeof input === "string" ? input : (input && input.url) || "";
+          const rawUrl = typeof input === "string" ? input : (input && input.url) || "";
+          const isApiCall = isApiUrl(rawUrl);
+          const finalInput = typeof input === "string"
+            ? normalizeApiUrl(input)
+            : input;
+
           try {
-            const response = await originalFetch(input, init);
-            if (!url.startsWith(API_BASE)) {
+            const response = await originalFetch(finalInput, init);
+            if (!isApiCall) {
               return response;
             }
             const cloned = response.clone();
@@ -49,7 +70,7 @@
             try {
               data = await cloned.json();
             } catch (jsonError) {
-              showDebug("API JSON parse failed", url + "\n" + String(jsonError));
+              showDebug("API JSON parse failed", rawUrl + "\n" + String(jsonError));
               return response;
             }
             if (data && typeof data === "object" && Object.prototype.hasOwnProperty.call(data, "ok")) {
@@ -66,8 +87,8 @@
             }
             return response;
           } catch (fetchError) {
-            if (url.startsWith(API_BASE)) {
-              showDebug("API fetch failed", url + "\n" + String(fetchError));
+            if (isApiCall) {
+              showDebug("API fetch failed", rawUrl + "\n" + String(fetchError));
             }
             throw fetchError;
           }
