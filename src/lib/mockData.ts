@@ -6,5 +6,5 @@ import qualifications from "../data/qualifications.json";
 export const mockBootstrap: AppBootstrap = {
   people,
   stations,
-  qualifications: qualifications as Qualification[],
+  qualifications: qualifications as unknown as Qualification[],
 };
