@@ -1,4 +1,4 @@
-export type UserRole = "技術員" | "領班" | "組長" | "主任" | "總權限管理員";
+export type UserRole = "技術員" | "領班" | "組長" | "主任";
 
 export type ShiftMode = "全部在職" | "當班" | "第一天" | "第二天";
 
