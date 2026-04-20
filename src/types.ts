@@ -14,8 +14,6 @@ export interface Person {
   shift: string;
   role: string;
   nationality: string;
-  day1: string;
-  day2: string;
   employmentStatus: string;
   note?: string;
   aDay1?: string;
