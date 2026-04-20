@@ -48,15 +48,15 @@ export function getDutyCode(team: TeamName, mode: Exclude<ShiftMode, "全部在�
 function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班" | "全部在職">): string {
   const group = TEAM_FIELD_GROUP[team];
   if (group === "A") {
-    return mode === "第一天" ? String(person.aDay1 || person.day1 || "") : String(person.aDay2 || person.day2 || "");
+    return mode === "第一天" ? String(person.aDay1 || "") : String(person.aDay2 || "");
   }
-  return mode === "第一天" ? String(person.bDay1 || person.day1 || "") : String(person.bDay2 || person.day2 || "");
+  return mode === "第一天" ? String(person.bDay1 || "") : String(person.bDay2 || "");
 }
 
 export function getPersonDutyDisplay(person: Person) {
   return {
-    aDay1: String(person.aDay1 || person.day1 || ""),
-    aDay2: String(person.aDay2 || person.day2 || ""),
+    aDay1: String(person.aDay1 || ""),
+    aDay2: String(person.aDay2 || ""),
     bDay1: String(person.bDay1 || ""),
     bDay2: String(person.bDay2 || ""),
   };
