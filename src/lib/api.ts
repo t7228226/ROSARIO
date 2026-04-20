@@ -194,14 +194,21 @@ export async function deleteQualification(payload: Pick<Qualification, "employee
   }
 }
 
-export async function updateStationRule(payload: Station): Promise<Station> {
+export async function updateStationRule(payload: StationRule): Promise<StationRule> {
   try {
     await request("updateStationRule", payload, "POST");
   } catch {
-    const exists = localCache.stations.some((station) => station.id === payload.id);
-    localCache.stations = exists
-      ? localCache.stations.map((station) => (station.id === payload.id ? payload : station))
-      : [...localCache.stations, payload];
+    const rules = localCache.stationRules || [];
+    const exists = rules.some(
+      (rule) => rule.id === payload.id || (rule.team === payload.team && rule.dayKey === payload.dayKey && rule.stationId === payload.stationId)
+    );
+    localCache.stationRules = exists
+      ? rules.map((rule) =>
+          rule.id === payload.id || (rule.team === payload.team && rule.dayKey === payload.dayKey && rule.stationId === payload.stationId)
+            ? payload
+            : rule
+        )
+      : [...rules, payload];
   }
   return payload;
 }
