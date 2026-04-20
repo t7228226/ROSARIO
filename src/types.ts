@@ -1,8 +1,10 @@
 export type UserRole = "技術員" | "領班" | "組長" | "主任";
 
-export type ShiftMode = "全部在職" | "第一天" | "第二天";
+export type ShiftMode = "當班" | "第一天" | "第二天";
 
 export type QualificationStatus = "合格" | "訓練中" | "不可排" | "";
+
+export type TeamName = "婷芬班" | "美香班" | "俊志班" | "翊展班";
 
 export interface Person {
   id: string;
@@ -14,6 +16,10 @@ export interface Person {
   day2: string;
   employmentStatus: string;
   note?: string;
+  aDay1?: string;
+  aDay2?: string;
+  bDay1?: string;
+  bDay2?: string;
 }
 
 export interface Station {
@@ -25,6 +31,22 @@ export interface Station {
   isMandatory?: boolean | null;
   backupTarget?: number | null;
   description?: string;
+  note?: string;
+}
+
+export interface StationRule {
+  id: string;
+  team: string;
+  dayKey: string;
+  stationId: string;
+  minRequired: number;
+  backupTarget?: number | null;
+  priority?: number | null;
+  isMandatory?: boolean | null;
+  trainingCanFill?: boolean | null;
+  qualificationLimit?: string;
+  canShare?: boolean | null;
+  enabled?: boolean | null;
   note?: string;
 }
 
@@ -40,4 +62,5 @@ export interface AppBootstrap {
   people: Person[];
   stations: Station[];
   qualifications: Qualification[];
+  stationRules?: StationRule[];
 }
