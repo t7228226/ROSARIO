@@ -3,7 +3,7 @@ import { mockBootstrap } from "./mockData";
 
 const API_URL =
   import.meta.env.VITE_GAS_API_URL ||
-  "https://script.google.com/macros/s/AKfycbwsqvP9ogL4v81T3luON_43aHt1Vdz-e3bT--sEH2n56eKj11z05FPhkCC4rFouwt4w_A/exec";
+  "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
 
 const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
 
@@ -37,7 +37,13 @@ function normalizePeople(rows: unknown[]): Person[] {
         note: String(item.note ?? item["備註"] ?? "").trim(),
       } as Person;
     })
-    .filter((item) => item.id && item.name);
+    .filter((item) => {
+      if (!item.id || !item.name) return false;
+      if (item.id.includes("唯一主鍵") || item.name.includes("正式姓名") || item.shift.includes("下拉選單")) {
+        return false;
+      }
+      return true;
+    });
 }
 
 function normalizeStations(rows: unknown[]): Station[] {
@@ -48,7 +54,7 @@ function normalizeStations(rows: unknown[]): Station[] {
         id: String(item.id ?? item["站點代碼"] ?? "").trim(),
         name: String(item.name ?? item["站點名稱"] ?? item["規則ID"] ?? "").trim(),
         normalMin: Number(item.normalMin ?? item["最低需求"] ?? 0),
-        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["備援目標"] ?? 0),
+        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休單批最低"] ?? item["備援目標"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
         isMandatory: toBool(item.isMandatory ?? item["是否必站"]),
         backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
@@ -56,7 +62,7 @@ function normalizeStations(rows: unknown[]): Station[] {
         note: String(item.note ?? item["備註"] ?? "").trim(),
       } as Station;
     })
-    .filter((item) => item.id);
+    .filter((item) => item.id && !item.id.includes("唯一主鍵"));
 }
 
 function normalizeQualifications(rows: unknown[]): Qualification[] {
@@ -71,7 +77,7 @@ function normalizeQualifications(rows: unknown[]): Qualification[] {
         rawStatus: String(item.rawStatus ?? item["資格狀態"] ?? "").trim(),
       };
     })
-    .filter((item) => item.employeeId && item.stationId);
+    .filter((item) => item.employeeId && item.stationId && !item.employeeId.includes("唯一主鍵"));
 }
 
 function normalizeRules(rows: unknown[]): StationRule[] {
@@ -94,7 +100,7 @@ function normalizeRules(rows: unknown[]): StationRule[] {
         note: String(item.note ?? item["備註"] ?? "").trim(),
       } as StationRule;
     })
-    .filter((item) => item.stationId && item.team && item.dayKey);
+    .filter((item) => item.stationId && item.team && item.dayKey && !item.id.includes("唯一主鍵"));
 }
 
 function normalizeBootstrap(payload: unknown): AppBootstrap {
