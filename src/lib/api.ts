@@ -3,7 +3,7 @@ import { mockBootstrap } from "./mockData";
 
 const API_URL =
   import.meta.env.VITE_GAS_API_URL ||
-  "https://script.google.com/macros/s/AKfycbxKRcMC6vplkm34uw2-LDGKm_wY_OxM_UoeIInQOBeJK94VJ8d-40yEov-4sGpLdlV3/exec";
+  "https://script.google.com/macros/s/AKfycbwsqvP9ogL4v81T3luON_43aHt1Vdz-e3bT--sEH2n56eKj11z05FPhkCC4rFouwt4w_A/exec";
 
 const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
 
@@ -79,7 +79,10 @@ export async function updateStationRule(payload: Station): Promise<Station> {
   try {
     await request("updateStationRule", payload, "POST");
   } catch {
-    localCache.stations = localCache.stations.map((station) => (station.id === payload.id ? payload : station));
+    const exists = localCache.stations.some((station) => station.id === payload.id);
+    localCache.stations = exists
+      ? localCache.stations.map((station) => (station.id === payload.id ? payload : station))
+      : [...localCache.stations, payload];
   }
   return payload;
 }
@@ -88,7 +91,10 @@ export async function updatePerson(payload: Person): Promise<Person> {
   try {
     await request("updatePerson", payload, "POST");
   } catch {
-    localCache.people = localCache.people.map((person) => (person.id === payload.id ? payload : person));
+    const exists = localCache.people.some((person) => person.id === payload.id);
+    localCache.people = exists
+      ? localCache.people.map((person) => (person.id === payload.id ? payload : person))
+      : [...localCache.people, payload];
   }
   return payload;
 }
