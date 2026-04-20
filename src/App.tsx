@@ -250,19 +250,17 @@ export default function App() {
     setFlashMessage(`登入成功：${matched.name}`);
   }
 
-  async function handleSaveQualification(statusOverride?: QualificationStatus) {
-    const employee = reviewSelectedPerson;
-    const station = data.stations.find((item) => item.id === reviewStationId);
-    const nextStatus = statusOverride ?? reviewStatus;
-    if (!employee || !station) {
-      setFlashMessage("請先選擇人員與站點。");
-      return;
+  async function persistQualification(employee: Person, stationId: string, status: QualificationStatus) {
+    const station = data.stations.find((item) => item.id === stationId);
+    if (!station) {
+      setFlashMessage("找不到指定站點。");
+      return false;
     }
-    if (!confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${nextStatus || "空白"}」？`)) {
+    if (!confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${status || "空白"}」？`)) {
       setFlashMessage("已取消修改。");
-      return;
+      return false;
     }
-    const payload: Qualification = { employeeId: employee.id, employeeName: employee.name, stationId: station.id, status: nextStatus };
+    const payload: Qualification = { employeeId: employee.id, employeeName: employee.name, stationId, status };
     await upsertQualification(payload);
     setData((current) => {
       const exists = current.qualifications.some((item) => item.employeeId === payload.employeeId && item.stationId === payload.stationId);
@@ -273,7 +271,20 @@ export default function App() {
           : [...current.qualifications, payload],
       };
     });
-    setFlashMessage("站點考核已確認並儲存。" );
+    return true;
+  }
+
+  async function handleSaveQualification(statusOverride?: QualificationStatus) {
+    const employee = reviewSelectedPerson;
+    const nextStatus = statusOverride ?? reviewStatus;
+    if (!employee || !reviewStationId) {
+      setFlashMessage("請先選擇人員與站點。");
+      return;
+    }
+    const ok = await persistQualification(employee, reviewStationId, nextStatus);
+    if (ok) {
+      setFlashMessage("站點考核已確認並儲存。");
+    }
   }
 
   async function handleDeleteQualification(employeeId: string, stationId: string) {
@@ -342,21 +353,20 @@ export default function App() {
     if (!qualified) {
       const training = confirmAction(`${person.name} 目前不符合 ${station.name} 資格。是否標記為訓練人力？`);
       if (training) {
-        setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
-        setReviewEmployeeId(person.id);
-        setReviewStationId(stationId);
-        await handleSaveQualification("訓練中");
+        const ok = await persistQualification(person, stationId, "訓練中");
+        if (!ok) return;
       } else {
         const complete = confirmAction(`是否直接標記 ${person.name} 為 ${station.name} 訓練完成？`);
         if (!complete) {
           setFlashMessage("已取消自訂安排。");
           return;
         }
-        setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
-        setReviewEmployeeId(person.id);
-        setReviewStationId(stationId);
-        await handleSaveQualification("合格");
+        const ok = await persistQualification(person, stationId, "合格");
+        if (!ok) return;
       }
+      setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
+      setReviewEmployeeId(person.id);
+      setReviewStationId(stationId);
     }
     const setter = target === "manual" ? setManualAssignments : setSmartAssignments;
     setter((current) => ({ ...current, [stationId]: [...(current[stationId] || []), person.id] }));
