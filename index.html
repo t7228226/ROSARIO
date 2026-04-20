@@ -60,6 +60,8 @@
           if (el) el.style.display = 'none';
         };
 
+        window.__showBootError = showEarlyError;
+
         window.addEventListener('error', function (event) {
           showEarlyError('系統啟動失敗', (event.message || '') + '\n' + (event.filename || '') + ':' + (event.lineno || 0) + ':' + (event.colno || 0));
         });
@@ -69,6 +71,13 @@
           var detail = typeof reason === 'object' ? JSON.stringify(reason, null, 2) : String(reason);
           showEarlyError('系統啟動失敗', detail);
         });
+
+        setTimeout(function () {
+          var el = document.getElementById('boot-status');
+          if (el && el.style.display !== 'none' && !el.classList.contains('error')) {
+            showEarlyError('系統啟動逾時', '主程式在預期時間內未完成載入。這通常代表入口模組或打包後資產未成功載入。');
+          }
+        }, 4000);
 
         ensureBootStatus();
       })();
@@ -80,6 +89,13 @@
       <p>若長時間停在此畫面，請把畫面截圖提供給我。</p>
     </div>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      import('/src/main.tsx').catch((error) => {
+        const detail = error instanceof Error ? error.stack || error.message : String(error);
+        if (window.__showBootError) {
+          window.__showBootError('系統啟動失敗', detail);
+        }
+      });
+    </script>
   </body>
 </html>
