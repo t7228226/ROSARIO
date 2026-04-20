@@ -1,7 +1,19 @@
-import type { Person, Qualification, ShiftMode, Station, StationRule, TeamName } from "../types";
+import type {
+  AttendanceSummary,
+  Person,
+  Qualification,
+  ShiftMode,
+  SmartAssignmentRow,
+  SmartScheduleMode,
+  Station,
+  StationRule,
+  TeamName,
+} from "../types";
 
 export const TEAM_OPTIONS: TeamName[] = ["婷芬班", "美香班", "俊志班", "翊展班"];
 export const REVIEW_TEAM_OPTIONS = ["全部班別", ...TEAM_OPTIONS] as const;
+export const DAY_OPTIONS: Exclude<ShiftMode, "全部在職">[] = ["當班", "第一天", "第二天"];
+export const SMART_MODE_OPTIONS: SmartScheduleMode[] = ["當班優先", "支援優先", "資格優先"];
 
 export const TEAM_DUTY_MAP: Record<TeamName, string> = {
   婷芬班: "日A",
@@ -24,11 +36,16 @@ const TEAM_FIELD_GROUP: Record<TeamName, "A" | "B"> = {
   翊展班: "B",
 };
 
-export function getTeamOfPerson(person: Person): string {
+export function getTeamOfPerson(person: Person): TeamName | string {
   return String(person.shift || "").trim();
 }
 
-function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班">): string {
+export function getDutyCode(team: TeamName, mode: Exclude<ShiftMode, "全部在職">) {
+  if (mode === "當班") return TEAM_DUTY_MAP[team];
+  return `${TEAM_DUTY_MAP[team]}${mode}`;
+}
+
+function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班" | "全部在職">): string {
   const group = TEAM_FIELD_GROUP[team];
   if (group === "A") {
     return mode === "第一天" ? String(person.aDay1 || person.day1 || "") : String(person.aDay2 || person.day2 || "");
@@ -36,24 +53,37 @@ function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode,
   return mode === "第一天" ? String(person.bDay1 || person.day1 || "") : String(person.bDay2 || person.day2 || "");
 }
 
-export function isPersonActiveInMode(person: Person, mode: ShiftMode): boolean {
+export function getPersonDutyDisplay(person: Person) {
+  return {
+    aDay1: String(person.aDay1 || person.day1 || ""),
+    aDay2: String(person.aDay2 || person.day2 || ""),
+    bDay1: String(person.bDay1 || ""),
+    bDay2: String(person.bDay2 || ""),
+  };
+}
+
+export function isPersonActiveInMode(person: Person, team: TeamName, mode: Exclude<ShiftMode, "全部在職">): boolean {
   if (person.employmentStatus !== "在職" || person.role === "主任") {
     return false;
   }
   if (mode === "當班") {
-    return true;
+    return getTeamOfPerson(person) === team;
   }
-  if (mode === "第一天") {
-    return String(person.day1 || "") === "Y";
-  }
-  return String(person.day2 || "") === "Y";
+  return getOwnDayValue(person, team, mode) === TEAM_DUTY_MAP[team];
+}
+
+function countByNationality(people: Person[]) {
+  const localCount = people.filter((person) => /本|台/.test(person.nationality)).length;
+  const filipinoCount = people.filter((person) => /菲/.test(person.nationality)).length;
+  const vietnamCount = people.filter((person) => /越/.test(person.nationality)).length;
+  return { localCount, filipinoCount, vietnamCount, totalCount: people.length };
 }
 
 export function getAttendanceForTeam(
   people: Person[],
   selectedTeam: TeamName,
-  mode: ShiftMode
-) {
+  mode: Exclude<ShiftMode, "全部在職">
+): AttendanceSummary {
   const ownDuty = TEAM_DUTY_MAP[selectedTeam];
   const supportTeam = TEAM_SUPPORT_MAP[selectedTeam];
   const supportDuty = TEAM_DUTY_MAP[supportTeam];
@@ -64,11 +94,12 @@ export function getAttendanceForTeam(
     const own = baseActive.filter((person) => getTeamOfPerson(person) === selectedTeam);
     return {
       own,
-      support: [] as Person[],
+      support: [],
       all: own,
       supportTeam,
       ownDuty,
       supportDuty,
+      ...countByNationality(own),
     };
   }
 
@@ -80,24 +111,26 @@ export function getAttendanceForTeam(
     (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === supportDuty
   );
 
+  const merged = [...own, ...support.filter((person) => !own.some((item) => item.id === person.id))];
+
   return {
     own,
     support,
-    all: [...own, ...support],
+    all: merged,
     supportTeam,
     ownDuty,
     supportDuty,
+    ...countByNationality(merged),
   };
 }
 
-export function getRuleDayKey(team: TeamName, mode: ShiftMode): string {
-  if (mode === "當班") return "當班";
-  return `${TEAM_DUTY_MAP[team]}${mode}`;
+export function getRuleDayKey(team: TeamName, mode: Exclude<ShiftMode, "全部在職">): string {
+  return getDutyCode(team, mode);
 }
 
 export function getApplicableRules(
   team: TeamName,
-  mode: ShiftMode,
+  mode: Exclude<ShiftMode, "全部在職">,
   stationRules: StationRule[],
   stations: Station[]
 ): StationRule[] {
@@ -111,7 +144,7 @@ export function getApplicableRules(
   }
 
   return stations.map((station) => ({
-    id: station.id,
+    id: `${team}-${targetKey}-${station.id}`,
     team,
     dayKey: targetKey,
     stationId: station.id,
@@ -162,6 +195,33 @@ export function getStationCoverage(
   };
 }
 
+export function getQualifiedPeopleForStation(
+  stationId: string,
+  people: Person[],
+  qualifications: Qualification[],
+  allowTraining = false
+) {
+  const activeIds = new Set(people.map((person) => person.id));
+  const allowedStatuses = allowTraining ? new Set(["合格", "訓練中"]) : new Set(["合格"]);
+  const ids = qualifications
+    .filter(
+      (item) => item.stationId === stationId && activeIds.has(item.employeeId) && allowedStatuses.has(item.status)
+    )
+    .map((item) => item.employeeId);
+  return people.filter((person) => ids.includes(person.id));
+}
+
+export function getQualificationCountMap(people: Person[], qualifications: Qualification[]) {
+  const map = new Map<string, number>();
+  for (const person of people) {
+    map.set(
+      person.id,
+      qualifications.filter((item) => item.employeeId === person.id && item.status === "合格").length
+    );
+  }
+  return map;
+}
+
 export function searchText(values: Array<string | undefined | null>, keyword: string) {
   const normalized = keyword.trim().toLowerCase();
   if (!normalized) return true;
@@ -170,44 +230,45 @@ export function searchText(values: Array<string | undefined | null>, keyword: st
 
 export function buildSmartAssignments(
   team: TeamName,
-  mode: ShiftMode,
+  mode: Exclude<ShiftMode, "全部在職">,
   stations: Station[],
   stationRules: StationRule[],
   people: Person[],
-  qualifications: Qualification[]
-) {
+  qualifications: Qualification[],
+  strategy: SmartScheduleMode = "當班優先"
+): SmartAssignmentRow[] {
   const attendance = getAttendanceForTeam(people, team, mode);
   const rules = getApplicableRules(team, mode, stationRules, stations);
   const activePeople = attendance.all;
   const ownIds = new Set(attendance.own.map((person) => person.id));
-
-  const qualificationMap = new Map<string, Qualification[]>();
-  for (const q of qualifications) {
-    if (!qualificationMap.has(q.employeeId)) qualificationMap.set(q.employeeId, []);
-    qualificationMap.get(q.employeeId)!.push(q);
-  }
-
-  const flexibility = new Map<string, number>();
-  for (const person of activePeople) {
-    const count = (qualificationMap.get(person.id) || []).filter((q) => q.status === "合格").length;
-    flexibility.set(person.id, count);
-  }
-
+  const supportIds = new Set(attendance.support.map((person) => person.id));
+  const flexMap = getQualificationCountMap(activePeople, qualifications);
   const used = new Set<string>();
 
+  function score(person: Person) {
+    const flex = flexMap.get(person.id) || 0;
+    const isOwn = ownIds.has(person.id) ? 1 : 0;
+    const isSupport = supportIds.has(person.id) ? 1 : 0;
+
+    if (strategy === "當班優先") {
+      return [isOwn * -1, flex, person.name];
+    }
+    if (strategy === "支援優先") {
+      return [isSupport * -1, flex, person.name];
+    }
+    return [flex, isSupport * -1, isOwn * -1, person.name];
+  }
+
   return rules.map((rule) => {
-    const candidates = activePeople
-      .filter((person) =>
-        (qualificationMap.get(person.id) || []).some(
-          (q) => q.stationId === rule.stationId && q.status === "合格"
-        )
-      )
-      .sort((a, b) => {
-        const ownScore = Number(ownIds.has(b.id)) - Number(ownIds.has(a.id));
-        if (ownScore !== 0) return ownScore;
-        const flex = (flexibility.get(a.id) || 0) - (flexibility.get(b.id) || 0);
-        return flex || a.name.localeCompare(b.name, "zh-Hant");
-      });
+    const candidates = getQualifiedPeopleForStation(rule.stationId, activePeople, qualifications).sort((a, b) => {
+      const sa = score(a);
+      const sb = score(b);
+      for (let i = 0; i < Math.max(sa.length, sb.length); i += 1) {
+        if (sa[i] === sb[i]) continue;
+        return String(sa[i]).localeCompare(String(sb[i]), "zh-Hant", { numeric: true });
+      }
+      return 0;
+    });
 
     const assigned: Person[] = [];
     for (const person of candidates) {
