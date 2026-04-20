@@ -2,6 +2,12 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles.css";
 
+declare global {
+  interface Window {
+    __hideBootStatus?: () => void;
+  }
+}
+
 function showFatalError(title: string, detail: string) {
   const root = document.getElementById("root");
   if (!root) return;
@@ -33,6 +39,10 @@ async function bootstrap() {
 
     const module = await import("./App");
     const App = module.default;
+
+    if (window.__hideBootStatus) {
+      window.__hideBootStatus();
+    }
 
     ReactDOM.createRoot(root).render(
       <React.StrictMode>
