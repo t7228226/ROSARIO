@@ -56,7 +56,6 @@ const emptyBootstrap: AppBootstrap = {
 
 const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不可排", ""];
 const dayOptions: Exclude<ShiftMode, "全部在職">[] = DAY_OPTIONS;
-const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任", "總權限管理員"];
 
 const roleRank: Record<UserRole, number> = {
   技術員: 1,
@@ -74,12 +73,6 @@ function normalizeRole(raw?: string): UserRole {
   return "技術員";
 }
 
-function normalizePermission(person?: Person | null): UserRole | null {
-  if (!person) return null;
-  if (person.id === "P0033") return "總權限管理員";
-  return normalizeRole(person.permissionLevel || person.role);
-}
-
 function findVisibleSelection<T extends { id: string }>(list: T[], id: string) {
   return list.find((item) => item.id === id) || list[0] || null;
 }
@@ -94,10 +87,6 @@ function findDuplicateIds(assignments: Record<string, string[]>) {
   return [...map.entries()].filter(([, count]) => count > 1).map(([id]) => id);
 }
 
-function isLeaderOrAbove(person: Person) {
-  return ["領班", "組長", "主任", "總權限管理員", "站長"].includes(person.role);
-}
-
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
@@ -106,7 +95,7 @@ export default function App() {
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
-  const currentRole = normalizePermission(currentUser);
+  const currentRole = currentUser ? normalizeRole(currentUser.role) : null;
 
   const [personTeamFilter, setPersonTeamFilter] = useState<string>("全部班別");
   const [personKeyword, setPersonKeyword] = useState("");
@@ -165,15 +154,9 @@ export default function App() {
     });
   }, [data.people, personTeamFilter, personKeyword]);
 
-  const selectedEmployee = useMemo(
-    () => findVisibleSelection(filteredPeople, selectedEmployeeId),
-    [filteredPeople, selectedEmployeeId]
-  );
+  const selectedEmployee = useMemo(() => findVisibleSelection(filteredPeople, selectedEmployeeId), [filteredPeople, selectedEmployeeId]);
 
-  const stationAttendance = useMemo(
-    () => getAttendanceForTeam(data.people, stationTeamFilter, stationDayFilter),
-    [data.people, stationTeamFilter, stationDayFilter]
-  );
+  const stationAttendance = useMemo(() => getAttendanceForTeam(data.people, stationTeamFilter, stationDayFilter), [data.people, stationTeamFilter, stationDayFilter]);
 
   const stationScopedQualifications = useMemo(() => {
     const availableIds = new Set(stationAttendance.all.map((person) => person.id));
@@ -188,10 +171,7 @@ export default function App() {
     });
   }, [data.stations, stationKeyword, stationScopedQualifications]);
 
-  const selectedStation = useMemo(
-    () => findVisibleSelection(filteredStations, selectedStationId),
-    [filteredStations, selectedStationId]
-  );
+  const selectedStation = useMemo(() => findVisibleSelection(filteredStations, selectedStationId), [filteredStations, selectedStationId]);
 
   const reviewPeople = useMemo(() => {
     return data.people.filter((person) => {
@@ -201,10 +181,7 @@ export default function App() {
     });
   }, [data.people, reviewShift, reviewKeyword]);
 
-  const reviewSelectedPerson = useMemo(
-    () => findVisibleSelection(reviewPeople, reviewEmployeeId),
-    [reviewPeople, reviewEmployeeId]
-  );
+  const reviewSelectedPerson = useMemo(() => findVisibleSelection(reviewPeople, reviewEmployeeId), [reviewPeople, reviewEmployeeId]);
 
   const reviewOverviewRows = useMemo(() => {
     return reviewPeople.map((person) => {
@@ -232,8 +209,6 @@ export default function App() {
 
   const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, rulesDay, data.stationRules || [], data.stations), [rulesTeam, rulesDay, data.stationRules, data.stations]);
 
-  const permissionCandidates = useMemo(() => data.people.filter(isLeaderOrAbove), [data.people]);
-
   const manualDuplicateIds = useMemo(() => findDuplicateIds(manualAssignments), [manualAssignments]);
   const smartDuplicateIds = useMemo(() => findDuplicateIds(smartAssignments), [smartAssignments]);
 
@@ -245,8 +220,7 @@ export default function App() {
 
   function canEditRulesForTeam(team: TeamName) {
     if (!currentUser) return false;
-    if (currentRole === "總權限管理員") return true;
-    return currentRole === "主任" && getTeamOfPerson(currentUser) === team;
+    return currentRole === "總權限管理員" || (currentRole === "主任" && getTeamOfPerson(currentUser) === team);
   }
 
   function setFlashMessage(text: string) {
@@ -269,9 +243,7 @@ export default function App() {
       setFlashMessage("請輸入工號或姓名。");
       return;
     }
-    const matched = data.people.find(
-      (person) => person.id.toLowerCase() === normalized || person.name.toLowerCase() === normalized
-    );
+    const matched = data.people.find((person) => person.id.toLowerCase() === normalized || person.name.toLowerCase() === normalized);
     if (!matched) {
       setFlashMessage("查無此帳號。請輸入正確工號或姓名。");
       return;
@@ -293,12 +265,7 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    const payload: Qualification = {
-      employeeId: employee.id,
-      employeeName: employee.name,
-      stationId: station.id,
-      status: nextStatus,
-    };
+    const payload: Qualification = { employeeId: employee.id, employeeName: employee.name, stationId: station.id, status: nextStatus };
     await upsertQualification(payload);
     setData((current) => {
       const exists = current.qualifications.some((item) => item.employeeId === payload.employeeId && item.stationId === payload.stationId);
@@ -309,7 +276,7 @@ export default function App() {
           : [...current.qualifications, payload],
       };
     });
-    setFlashMessage("站點考核已確認並儲存。切換班別時，工號/姓名輸入框已自動清空。" );
+    setFlashMessage("站點考核已確認並儲存。" );
   }
 
   async function handleDeleteQualification(employeeId: string, stationId: string) {
@@ -320,10 +287,7 @@ export default function App() {
       return;
     }
     await deleteQualification({ employeeId, stationId });
-    setData((current) => ({
-      ...current,
-      qualifications: current.qualifications.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId)),
-    }));
+    setData((current) => ({ ...current, qualifications: current.qualifications.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId)) }));
     setFlashMessage("站點考核已刪除。");
   }
 
@@ -334,13 +298,8 @@ export default function App() {
       return;
     }
     await updatePerson(next);
-    setData((current) => ({
-      ...current,
-      people: current.people.map((item) => (item.id === person.id ? next : item)),
-    }));
-    if (currentUser?.id === person.id) {
-      setCurrentUser(next);
-    }
+    setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
+    if (currentUser?.id === person.id) setCurrentUser(next);
     setFlashMessage(`人員 ${person.name} 已確認更新。`);
   }
 
@@ -362,16 +321,13 @@ export default function App() {
           : [...rules, next],
       };
     });
-    setFlashMessage(`站點規則已確認更新。`);
+    setFlashMessage("站點規則已確認更新。" );
   }
 
   function toggleManualAssignment(stationId: string, employeeId: string) {
     setManualAssignments((current) => {
       const currentIds = current[stationId] || [];
-      return {
-        ...current,
-        [stationId]: currentIds.includes(employeeId) ? currentIds.filter((id) => id !== employeeId) : [...currentIds, employeeId],
-      };
+      return { ...current, [stationId]: currentIds.includes(employeeId) ? currentIds.filter((id) => id !== employeeId) : [...currentIds, employeeId] };
     });
   }
 
@@ -411,15 +367,7 @@ export default function App() {
   }
 
   function runSmartPlan() {
-    const rows = buildSmartAssignments(
-      smartShift,
-      smartDay,
-      data.stations,
-      data.stationRules || [],
-      data.people,
-      data.qualifications,
-      smartMode
-    );
+    const rows = buildSmartAssignments(smartShift, smartDay, data.stations, data.stationRules || [], data.people, data.qualifications, smartMode);
     const next: Record<string, string[]> = {};
     rows.forEach((row) => {
       next[row.stationId] = row.assigned.map((person) => person.id);
@@ -442,9 +390,7 @@ export default function App() {
 
   const allowedNav = currentRole ? navItems.filter((item) => hasAccess(item.minRole)) : navItems.filter((item) => item.key === "home");
 
-  if (loading) {
-    return <div className="app-shell loading">資料載入中...</div>;
-  }
+  if (loading) return <div className="app-shell loading">資料載入中...</div>;
 
   return (
     <div className="app-shell">
@@ -454,7 +400,6 @@ export default function App() {
           <h1>站點資格管理</h1>
           <p>給幹部查詢與管理站點資格，未登入只能看首頁內容，登入後才顯示對應功能。</p>
         </div>
-
         <div className="control-card">
           <label>登入系統</label>
           {currentUser ? (
@@ -471,262 +416,22 @@ export default function App() {
             </>
           )}
         </div>
-
         <nav className="nav-list">
-          {allowedNav.map((item) => (
-            <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => setPage(item.key)}>
-              {item.label}
-            </button>
-          ))}
+          {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => setPage(item.key)}>{item.label}</button>)}
         </nav>
       </aside>
-
       <main className="content">
         {flash ? <div className="flash"><span>{flash}</span><button type="button" className="flash-close" onClick={() => setFlash("")}>×</button></div> : null}
-
-        {page === "home" ? (
-          <Layout title="首頁" subtitle="第一塊為系統說明，第二塊為登入。未登入不顯示查詢與管理功能。">
-            <div className="grid three">
-              <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
-              <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
-              <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
-            </div>
-            <div className="panel"><h3>系統定位</h3><p>這是通用型檢測系統，提供幹部進行站點資格查詢、考核維護、缺口分析、站點試排與智能試排。</p></div>
-            <div className="panel"><h3>權限規則</h3><ul><li>未登入：只能看首頁。</li><li>技術員：查詢人員資格、查詢站點人選。</li><li>領班：站點考核。</li><li>組長：站點缺口分析、站點試排。</li><li>主任：站點規則設定、人員名單管理、智能試排。</li></ul></div>
-          </Layout>
-        ) : null}
-
+        {page === "home" ? <Layout title="首頁" subtitle="第一塊為系統說明，第二塊為登入。未登入不顯示查詢與管理功能。"><div className="grid three"><StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" /><StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" /><StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" /></div><div className="panel"><h3>系統定位</h3><p>這是通用型檢測系統，提供幹部進行站點資格查詢、考核維護、缺口分析、站點試排與智能試排。</p></div><div className="panel"><h3>權限規則</h3><ul><li>未登入：只能看首頁。</li><li>技術員：查詢人員資格、查詢站點人選。</li><li>領班：站點考核。</li><li>組長：站點缺口分析、站點試排。</li><li>主任：站點規則設定、人員名單管理、智能試排。</li></ul></div></Layout> : null}
         {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
-
-        {currentRole && page === "person-query" ? (
-          <Layout title="查詢人員資格" subtitle="可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。">
-            <div className="grid two">
-              <div className="panel">
-                <div className="toolbar">
-                  <select value={personTeamFilter} onChange={(e) => setPersonTeamFilter(e.target.value)}>
-                    <option value="全部班別">全部班別</option>
-                    {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
-                  </select>
-                  <input placeholder="輸入工號、姓名、角色、國籍" value={personKeyword} onChange={(e) => setPersonKeyword(e.target.value)} />
-                </div>
-                <div className="list-scroll">
-                  {filteredPeople.map((person) => (
-                    <button key={person.id} className={selectedEmployee?.id === person.id ? "list-row active" : "list-row"} onClick={() => setSelectedEmployeeId(person.id)}>
-                      <strong>{person.name}</strong>
-                      <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="panel">
-                {selectedEmployee ? (
-                  <>
-                    {(() => {
-                      const duty = getPersonDutyDisplay(selectedEmployee);
-                      return (
-                        <>
-                          <div className="detail-grid">
-                            <Info label="工號" value={selectedEmployee.id} />
-                            <Info label="姓名" value={selectedEmployee.name} />
-                            <Info label="班別" value={String(getTeamOfPerson(selectedEmployee))} />
-                            <Info label="角色" value={selectedEmployee.role} />
-                          </div>
-                          <div className="detail-grid">
-                            <Info label="(A)第一天" value={duty.aDay1} />
-                            <Info label="(A)第二天" value={duty.aDay2} />
-                            <Info label="(B)第一天" value={duty.bDay1} />
-                            <Info label="(B)第二天" value={duty.bDay2} />
-                          </div>
-                        </>
-                      );
-                    })()}
-                    <table className="table"><thead><tr><th>站點</th><th>狀態</th></tr></thead><tbody>{data.qualifications.filter((item) => item.employeeId === selectedEmployee.id).map((item) => <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.stationId}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>)}</tbody></table>
-                  </>
-                ) : <Empty text="此班別目前沒有可顯示人員。" />}
-              </div>
-            </div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "station-query" ? (
-          <Layout title="查詢站點人選" subtitle="新增班別與日別選項，可查看當班或第一天/第二天支援後的人選。">
-            <div className="grid two">
-              <div className="panel">
-                <div className="toolbar">
-                  <select value={stationTeamFilter} onChange={(e) => setStationTeamFilter(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                  <select value={stationDayFilter} onChange={(e) => setStationDayFilter(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                  <input placeholder="搜尋站點" value={stationKeyword} onChange={(e) => setStationKeyword(e.target.value)} />
-                </div>
-                <div className="list-scroll">
-                  {filteredStations.map((station) => (
-                    <button key={station.id} className={selectedStation?.id === station.id ? "list-row active" : "list-row"} onClick={() => setSelectedStationId(station.id)}>
-                      <strong>{station.name}</strong>
-                      <span>{station.id}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="panel">
-                {selectedStation ? (
-                  <>
-                    <div className="detail-grid">
-                      <Info label="站點代碼" value={selectedStation.id} />
-                      <Info label="站點名稱" value={selectedStation.name} />
-                      <Info label="班別" value={stationTeamFilter} />
-                      <Info label="日別" value={stationDayFilter} />
-                      <Info label="總出勤" value={String(stationAttendance.totalCount)} />
-                      <Info label="支援人力" value={String(stationAttendance.support.length)} />
-                    </div>
-                    <table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead><tbody>{stationScopedQualifications.filter((item) => item.stationId === selectedStation.id).map((item) => { const person = data.people.find((p) => p.id === item.employeeId); return <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.employeeId}</td><td>{person?.name || item.employeeName || "-"}</td><td>{person ? String(getTeamOfPerson(person)) : "-"}</td><td>{stationAttendance.own.some((p) => p.id === item.employeeId) ? "當班" : "支援"}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>; })}</tbody></table>
-                  </>
-                ) : <Empty text="找不到符合條件的站點。" />}
-              </div>
-            </div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "qualification-review" && hasAccess("領班") ? (
-          <Layout title="站點考核" subtitle="(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。">
-            <div className="grid two">
-              <div className="panel">
-                <div className="toolbar">
-                  <select value={reviewShift} onChange={(e) => setReviewShift(e.target.value as (typeof REVIEW_TEAM_OPTIONS)[number])}>{REVIEW_TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                  <input placeholder="輸入工號或姓名" value={reviewKeyword} onChange={(e) => setReviewKeyword(e.target.value)} />
-                </div>
-                <div className="list-scroll">
-                  {reviewPeople.map((person) => (
-                    <button key={person.id} className={reviewSelectedPerson?.id === person.id ? "list-row active" : "list-row"} onClick={() => setReviewEmployeeId(person.id)}>
-                      <strong>{person.name}</strong>
-                      <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="panel">
-                {reviewSelectedPerson ? (
-                  <>
-                    {(() => {
-                      const duty = getPersonDutyDisplay(reviewSelectedPerson);
-                      return <>
-                        <div className="detail-grid">
-                          <Info label="工號" value={reviewSelectedPerson.id} />
-                          <Info label="姓名" value={reviewSelectedPerson.name} />
-                          <Info label="班別" value={String(getTeamOfPerson(reviewSelectedPerson))} />
-                          <Info label="角色" value={reviewSelectedPerson.role} />
-                        </div>
-                        <div className="detail-grid">
-                          <Info label="(A)第一天" value={duty.aDay1} />
-                          <Info label="(A)第二天" value={duty.aDay2} />
-                          <Info label="(B)第一天" value={duty.bDay1} />
-                          <Info label="(B)第二天" value={duty.bDay2} />
-                        </div>
-                      </>;
-                    })()}
-                    <div className="form-grid compact-form">
-                      <div>
-                        <label className="field-label">站點</label>
-                        <select value={reviewStationId} onChange={(e) => setReviewStationId(e.target.value)}>
-                          <option value="">請選擇站點</option>
-                          {data.stations.map((station) => <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="field-label">狀態</label>
-                        <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>
-                          {qualificationOptions.map((item) => <option key={item || "blank"} value={item}>{item || "空白"}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="toolbar"><button className="primary" type="button" onClick={() => handleSaveQualification()}>確認並儲存</button></div>
-                    <table className="table"><thead><tr><th>站點</th><th>狀態</th><th>操作</th></tr></thead><tbody>{data.qualifications.filter((item) => item.employeeId === reviewSelectedPerson.id).map((item) => <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.stationId}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td><td><button className="danger" type="button" onClick={() => handleDeleteQualification(item.employeeId, item.stationId)}>刪除</button></td></tr>)}</tbody></table>
-                  </>
-                ) : <Empty text="請先選取人員。" />}
-              </div>
-            </div>
-            <div className="panel"><h3>班別人員總攬</h3><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>職務</th><th>國籍</th><th>合格</th><th>訓練中</th><th>不可排</th></tr></thead><tbody>{reviewOverviewRows.map((row) => <tr key={row.id}><td>{row.id}</td><td>{row.name}</td><td>{row.role}</td><td>{row.nationality}</td><td>{row.qualified}</td><td>{row.training}</td><td>{row.blocked}</td></tr>)}</tbody></table></div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "gap-analysis" && hasAccess("組長") ? (
-          <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，當班與支援人力會重新計算。">
-            <div className="panel">
-              <div className="toolbar">
-                <select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <select value={gapDay} onChange={(e) => setGapDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-              </div>
-              <div className="detail-grid">
-                <Info label="本籍出勤" value={String(gapAttendance.localCount)} />
-                <Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} />
-                <Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} />
-                <Info label="總出勤" value={String(gapAttendance.totalCount)} />
-                <Info label="當班人力" value={String(gapAttendance.own.length)} />
-                <Info label="支援人力" value={String(gapAttendance.support.length)} />
-              </div>
-              <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => data.people.find((p) => p.id === id)?.name || id); return <tr key={`${rule.team}-${rule.dayKey}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table>
-            </div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
-          <Layout title="站點試排" subtitle="移除隨機按鈕，保留自訂人選、出勤人數、幹部樣式與浮動資訊。">
-            <div className="panel">
-              <div className="toolbar">
-                <select value={manualShift} onChange={(e) => setManualShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <select value={manualDay} onChange={(e) => setManualDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-              </div>
-              <div className="detail-grid">
-                <Info label="本籍出勤" value={String(manualAttendance.localCount)} />
-                <Info label="菲籍出勤" value={String(manualAttendance.filipinoCount)} />
-                <Info label="越籍出勤" value={String(manualAttendance.vietnamCount)} />
-                <Info label="總出勤" value={String(manualAttendance.totalCount)} />
-              </div>
-            </div>
-            <div className="panel"><h3>幹部站位</h3><div className="chips"><span className="chip">主任 × 1</span><span className="chip">組長 × 1</span><span className="chip">領班 × 3</span></div></div>
-            <div className="panel floating-summary"><div className="detail-grid"><Info label="需排總人數" value={String(manualRules.reduce((sum, rule) => sum + rule.minRequired, 0))} /><Info label="已排總人數" value={String(countAssigned(manualAssignments))} /><Info label="重複安排" value={String(manualDuplicateIds.length)} /><Info label="缺口總數" value={String(manualRules.reduce((sum, rule) => sum + Math.max(0, rule.minRequired - (manualAssignments[rule.stationId]?.length || 0)), 0))} /></div></div>
-            <div className="grid two">{manualRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const selectedIds = manualAssignments[rule.stationId] || []; const candidates = getQualifiedPeopleForStation(rule.stationId, manualAttendance.all, data.qualifications, true); return <div className="panel" key={rule.stationId}><div className="panel-header"><h3>{station?.name || rule.stationId}</h3><span>需求 {rule.minRequired}</span></div><div className="toolbar"><button type="button" className="ghost" onClick={() => handleCustomAssign("manual", rule.stationId)}>自訂人選</button></div><div className="chips">{selectedIds.length ? selectedIds.map((id) => { const person = data.people.find((item) => item.id === id); return <span className="chip" key={id}>{person?.name || id}</span>; }) : <span className="muted">尚未安排</span>}</div><div className="list-scroll short">{candidates.map((person) => <button key={person.id} className={selectedIds.includes(person.id) ? "list-row active" : "list-row"} onClick={() => toggleManualAssignment(rule.stationId, person.id)}><strong>{person.name}</strong><span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span></button>)}</div></div>; })}</div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "station-rules" && hasAccess("主任") ? (
-          <Layout title="站點規則設定" subtitle="規則依班別與日別獨立顯示；非當班主任不可修改。">
-            <div className="panel">
-              <div className="toolbar">
-                <select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <select value={rulesDay} onChange={(e) => setRulesDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <span className="muted">系統代號：{getDutyCode(rulesTeam, rulesDay)}</span>
-              </div>
-              <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>優先序</th><th>必站</th><th>備援目標</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.dayKey}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td></tr>; })}</tbody></table>
-            </div>
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "people-management" && hasAccess("主任") ? (
-          <Layout title="人員名單管理" subtitle="以現有人員資料為主，不再額外留空白新增表單。修改需確認後才寫入。">
-            <div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>角色</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value, day1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value, day2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div>
-            {currentRole === "總權限管理員" ? <div className="panel"><h3>權限管理</h3><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>權限</th></tr></thead><tbody>{permissionCandidates.map((person) => <tr key={`perm-${person.id}`}><td>{person.id}</td><td>{person.name}</td><td>{String(getTeamOfPerson(person))}</td><td>{person.role}</td><td><ConfirmSelect value={normalizePermission(person) || "技術員"} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { permissionLevel: value })} /></td></tr>)}</tbody></table></div> : null}
-          </Layout>
-        ) : null}
-
-        {currentRole && page === "smart-schedule" && hasAccess("主任") ? (
-          <Layout title="智能試排" subtitle="提供當班優先、支援優先、資格優先三種模式，依四班 / 三日別運作。">
-            <div className="panel">
-              <div className="toolbar">
-                <select value={smartShift} onChange={(e) => setSmartShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <select value={smartDay} onChange={(e) => setSmartDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <select value={smartMode} onChange={(e) => setSmartMode(e.target.value as SmartScheduleMode)}>{SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                <button className="primary" type="button" onClick={runSmartPlan}>一鍵試排</button>
-              </div>
-              <div className="detail-grid">
-                <Info label="本籍出勤" value={String(smartAttendance.localCount)} />
-                <Info label="菲籍出勤" value={String(smartAttendance.filipinoCount)} />
-                <Info label="越籍出勤" value={String(smartAttendance.vietnamCount)} />
-                <Info label="總出勤" value={String(smartAttendance.totalCount)} />
-              </div>
-            </div>
-            <div className="panel floating-summary"><div className="detail-grid"><Info label="需排總人數" value={String(smartRules.reduce((sum, rule) => sum + rule.minRequired, 0))} /><Info label="已排總人數" value={String(countAssigned(smartAssignments))} /><Info label="重複安排" value={String(smartDuplicateIds.length)} /><Info label="缺口總數" value={String(smartRules.reduce((sum, rule) => sum + Math.max(0, rule.minRequired - (smartAssignments[rule.stationId]?.length || 0)), 0))} /></div></div>
-            <div className="grid two">{smartRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const selectedIds = smartAssignments[rule.stationId] || []; return <div className="panel" key={rule.stationId}><div className="panel-header"><h3>{station?.name || rule.stationId}</h3><span>需求 {rule.minRequired}</span></div><div className="toolbar"><button type="button" className="ghost" onClick={() => handleCustomAssign("smart", rule.stationId)}>自訂人選</button></div><div className="chips">{selectedIds.length ? selectedIds.map((id) => { const person = data.people.find((item) => item.id === id); return <span className="chip" key={id}>{person?.name || id}</span>; }) : <span className="muted">尚未安排</span>}</div></div>; })}</div>
-          </Layout>
-        ) : null}
+        {currentRole && page === "person-query" ? <Layout title="查詢人員資格" subtitle="可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。"><div className="grid two"><div className="panel"><div className="toolbar"><select value={personTeamFilter} onChange={(e) => setPersonTeamFilter(e.target.value)}><option value="全部班別">全部班別</option>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><input placeholder="輸入工號、姓名、角色、國籍" value={personKeyword} onChange={(e) => setPersonKeyword(e.target.value)} /></div><div className="list-scroll">{filteredPeople.map((person) => <button key={person.id} className={selectedEmployee?.id === person.id ? "list-row active" : "list-row"} onClick={() => setSelectedEmployeeId(person.id)}><strong>{person.name}</strong><span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span></button>)}</div></div><div className="panel">{selectedEmployee ? <>{(() => { const duty = getPersonDutyDisplay(selectedEmployee); return <><div className="detail-grid"><Info label="工號" value={selectedEmployee.id} /><Info label="姓名" value={selectedEmployee.name} /><Info label="班別" value={String(getTeamOfPerson(selectedEmployee))} /><Info label="角色" value={selectedEmployee.role} /></div><div className="detail-grid"><Info label="(A)第一天" value={duty.aDay1} /><Info label="(A)第二天" value={duty.aDay2} /><Info label="(B)第一天" value={duty.bDay1} /><Info label="(B)第二天" value={duty.bDay2} /></div></>; })()}<table className="table"><thead><tr><th>站點</th><th>狀態</th></tr></thead><tbody>{data.qualifications.filter((item) => item.employeeId === selectedEmployee.id).map((item) => <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.stationId}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>)}</tbody></table></> : <Empty text="此班別目前沒有可顯示人員。" />}</div></div></Layout> : null}
+        {currentRole && page === "station-query" ? <Layout title="查詢站點人選" subtitle="新增班別與日別選項，可查看當班或第一天/第二天支援後的人選。"><div className="grid two"><div className="panel"><div className="toolbar"><select value={stationTeamFilter} onChange={(e) => setStationTeamFilter(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={stationDayFilter} onChange={(e) => setStationDayFilter(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><input placeholder="搜尋站點" value={stationKeyword} onChange={(e) => setStationKeyword(e.target.value)} /></div><div className="list-scroll">{filteredStations.map((station) => <button key={station.id} className={selectedStation?.id === station.id ? "list-row active" : "list-row"} onClick={() => setSelectedStationId(station.id)}><strong>{station.name}</strong><span>{station.id}</span></button>)}</div></div><div className="panel">{selectedStation ? <><div className="detail-grid"><Info label="站點代碼" value={selectedStation.id} /><Info label="站點名稱" value={selectedStation.name} /><Info label="班別" value={stationTeamFilter} /><Info label="日別" value={stationDayFilter} /><Info label="總出勤" value={String(stationAttendance.totalCount)} /><Info label="支援人力" value={String(stationAttendance.support.length)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead><tbody>{stationScopedQualifications.filter((item) => item.stationId === selectedStation.id).map((item) => { const person = data.people.find((p) => p.id === item.employeeId); return <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.employeeId}</td><td>{person?.name || item.employeeName || "-"}</td><td>{person ? String(getTeamOfPerson(person)) : "-"}</td><td>{stationAttendance.own.some((p) => p.id === item.employeeId) ? "當班" : "支援"}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>; })}</tbody></table></> : <Empty text="找不到符合條件的站點。" />}</div></div></Layout> : null}
+        {currentRole && page === "qualification-review" && hasAccess("領班") ? <Layout title="站點考核" subtitle="(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。"><div className="grid two"><div className="panel"><div className="toolbar"><select value={reviewShift} onChange={(e) => setReviewShift(e.target.value as (typeof REVIEW_TEAM_OPTIONS)[number])}>{REVIEW_TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><input placeholder="輸入工號或姓名" value={reviewKeyword} onChange={(e) => setReviewKeyword(e.target.value)} /></div><div className="list-scroll">{reviewPeople.map((person) => <button key={person.id} className={reviewSelectedPerson?.id === person.id ? "list-row active" : "list-row"} onClick={() => setReviewEmployeeId(person.id)}><strong>{person.name}</strong><span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span></button>)}</div></div><div className="panel">{reviewSelectedPerson ? <>{(() => { const duty = getPersonDutyDisplay(reviewSelectedPerson); return <><div className="detail-grid"><Info label="工號" value={reviewSelectedPerson.id} /><Info label="姓名" value={reviewSelectedPerson.name} /><Info label="班別" value={String(getTeamOfPerson(reviewSelectedPerson))} /><Info label="角色" value={reviewSelectedPerson.role} /></div><div className="detail-grid"><Info label="(A)第一天" value={duty.aDay1} /><Info label="(A)第二天" value={duty.aDay2} /><Info label="(B)第一天" value={duty.bDay1} /><Info label="(B)第二天" value={duty.bDay2} /></div></>; })()}<div className="form-grid compact-form"><div><label className="field-label">站點</label><select value={reviewStationId} onChange={(e) => setReviewStationId(e.target.value)}><option value="">請選擇站點</option>{data.stations.map((station) => <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>)}</select></div><div><label className="field-label">狀態</label><select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>{qualificationOptions.map((item) => <option key={item || "blank"} value={item}>{item || "空白"}</option>)}</select></div></div><div className="toolbar"><button className="primary" type="button" onClick={() => handleSaveQualification()}>確認並儲存</button></div><table className="table"><thead><tr><th>站點</th><th>狀態</th><th>操作</th></tr></thead><tbody>{data.qualifications.filter((item) => item.employeeId === reviewSelectedPerson.id).map((item) => <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.stationId}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td><td><button className="danger" type="button" onClick={() => handleDeleteQualification(item.employeeId, item.stationId)}>刪除</button></td></tr>)}</tbody></table></> : <Empty text="請先選取人員。" />}</div></div><div className="panel"><h3>班別人員總攬</h3><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>職務</th><th>國籍</th><th>合格</th><th>訓練中</th><th>不可排</th></tr></thead><tbody>{reviewOverviewRows.map((row) => <tr key={row.id}><td>{row.id}</td><td>{row.name}</td><td>{row.role}</td><td>{row.nationality}</td><td>{row.qualified}</td><td>{row.training}</td><td>{row.blocked}</td></tr>)}</tbody></table></div></Layout> : null}
+        {currentRole && page === "gap-analysis" && hasAccess("組長") ? <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，當班與支援人力會重新計算。"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label="當班人力" value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /></div><table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => data.people.find((p) => p.id === id)?.name || id); return <tr key={`${rule.team}-${rule.dayKey}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table></div></Layout> : null}
+        {currentRole && page === "manual-schedule" && hasAccess("組長") ? <Layout title="站點試排" subtitle="移除隨機按鈕，保留自訂人選、出勤人數、幹部樣式與浮動資訊。"><div className="panel"><div className="toolbar"><select value={manualShift} onChange={(e) => setManualShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={manualDay} onChange={(e) => setManualDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(manualAttendance.localCount)} /><Info label="菲籍出勤" value={String(manualAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(manualAttendance.vietnamCount)} /><Info label="總出勤" value={String(manualAttendance.totalCount)} /></div></div><div className="panel"><h3>幹部站位</h3><div className="chips"><span className="chip">主任 × 1</span><span className="chip">組長 × 1</span><span className="chip">領班 × 3</span></div></div><div className="panel floating-summary"><div className="detail-grid"><Info label="需排總人數" value={String(manualRules.reduce((sum, rule) => sum + rule.minRequired, 0))} /><Info label="已排總人數" value={String(countAssigned(manualAssignments))} /><Info label="重複安排" value={String(manualDuplicateIds.length)} /><Info label="缺口總數" value={String(manualRules.reduce((sum, rule) => sum + Math.max(0, rule.minRequired - (manualAssignments[rule.stationId]?.length || 0)), 0))} /></div></div><div className="grid two">{manualRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const selectedIds = manualAssignments[rule.stationId] || []; const candidates = getQualifiedPeopleForStation(rule.stationId, manualAttendance.all, data.qualifications, true); return <div className="panel" key={rule.stationId}><div className="panel-header"><h3>{station?.name || rule.stationId}</h3><span>需求 {rule.minRequired}</span></div><div className="toolbar"><button type="button" className="ghost" onClick={() => handleCustomAssign("manual", rule.stationId)}>自訂人選</button></div><div className="chips">{selectedIds.length ? selectedIds.map((id) => { const person = data.people.find((item) => item.id === id); return <span className="chip" key={id}>{person?.name || id}</span>; }) : <span className="muted">尚未安排</span>}</div><div className="list-scroll short">{candidates.map((person) => <button key={person.id} className={selectedIds.includes(person.id) ? "list-row active" : "list-row"} onClick={() => toggleManualAssignment(rule.stationId, person.id)}><strong>{person.name}</strong><span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span></button>)}</div></div>; })}</div></Layout> : null}
+        {currentRole && page === "station-rules" && hasAccess("主任") ? <Layout title="站點規則設定" subtitle="規則依班別與日別獨立顯示；非當班主任不可修改。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={rulesDay} onChange={(e) => setRulesDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><span className="muted">系統代號：{getDutyCode(rulesTeam, rulesDay)}</span></div><table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>優先序</th><th>必站</th><th>備援目標</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.dayKey}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td></tr>; })}</tbody></table></div></Layout> : null}
+        {currentRole && page === "people-management" && hasAccess("主任") ? <Layout title="人員名單管理" subtitle="以現有人員資料為主，不再額外留空白新增表單。修改需確認後才寫入。"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>角色</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value, day1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value, day2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></Layout> : null}
+        {currentRole && page === "smart-schedule" && hasAccess("主任") ? <Layout title="智能試排" subtitle="提供當班優先、支援優先、資格優先三種模式，依四班 / 三日別運作。"><div className="panel"><div className="toolbar"><select value={smartShift} onChange={(e) => setSmartShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={smartDay} onChange={(e) => setSmartDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={smartMode} onChange={(e) => setSmartMode(e.target.value as SmartScheduleMode)}>{SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><button className="primary" type="button" onClick={runSmartPlan}>一鍵試排</button></div><div className="detail-grid"><Info label="本籍出勤" value={String(smartAttendance.localCount)} /><Info label="菲籍出勤" value={String(smartAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(smartAttendance.vietnamCount)} /><Info label="總出勤" value={String(smartAttendance.totalCount)} /></div></div><div className="panel floating-summary"><div className="detail-grid"><Info label="需排總人數" value={String(smartRules.reduce((sum, rule) => sum + rule.minRequired, 0))} /><Info label="已排總人數" value={String(countAssigned(smartAssignments))} /><Info label="重複安排" value={String(smartDuplicateIds.length)} /><Info label="缺口總數" value={String(smartRules.reduce((sum, rule) => sum + Math.max(0, rule.minRequired - (smartAssignments[rule.stationId]?.length || 0)), 0))} /></div></div><div className="grid two">{smartRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const selectedIds = smartAssignments[rule.stationId] || []; return <div className="panel" key={rule.stationId}><div className="panel-header"><h3>{station?.name || rule.stationId}</h3><span>需求 {rule.minRequired}</span></div><div className="toolbar"><button type="button" className="ghost" onClick={() => handleCustomAssign("smart", rule.stationId)}>自訂人選</button></div><div className="chips">{selectedIds.length ? selectedIds.map((id) => { const person = data.people.find((item) => item.id === id); return <span className="chip" key={id}>{person?.name || id}</span>; }) : <span className="muted">尚未安排</span>}</div></div>; })}</div></Layout> : null}
       </main>
     </div>
   );
