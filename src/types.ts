@@ -1,4 +1,4 @@
-export type UserRole = "技術員" | "領班" | "組長" | "主任";
+export type UserRole = "技術員" | "領班" | "組長" | "主任" | "站長" | "最高權限";
 
 export type ShiftMode = "全部在職" | "當班" | "第一天" | "第二天";
 
@@ -20,6 +20,9 @@ export interface Person {
   aDay2?: string;
   bDay1?: string;
   bDay2?: string;
+  systemPermission?: UserRole | string;
+  permissionLevel?: UserRole | string;
+  isSuperAdmin?: boolean;
 }
 
 export interface Station {
