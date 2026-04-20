@@ -55,7 +55,7 @@ export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<PageKey>("home");
-  const [role, setRole] = useState<UserRole>("組長");
+  const [role] = useState<UserRole>("一般幹部");
   const [mode, setMode] = useState<ShiftMode>("第一天");
 
   const [personKeyword, setPersonKeyword] = useState("");
@@ -212,24 +212,27 @@ export default function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-card">
-          <div className="brand-kicker">通用型站點資格系統</div>
-          <h1>站點資格管理 App</h1>
-          <p>從 B 班 Excel 升級成可供其他班共用的網頁版。</p>
+          <div className="brand-kicker">通用型檢測系統</div>
+          <h1>通用型檢測系統</h1>
+          <p>整合人員資格查詢、站點人選查詢與資格維護，作為多班共用的檢測管理入口。</p>
         </div>
 
         <div className="control-card">
-          <label>目前角色</label>
-          <select value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-            <option value="一般幹部">一般幹部</option>
-            <option value="領班">領班</option>
-            <option value="組長">組長</option>
-          </select>
+          <label>登入系統</label>
+          <p className="muted">
+            目前版本先關閉前端自行切換身分，未登入時只開放查詢功能。真正權限要改成帳號登入後由系統判定。
+          </p>
+          <button className="primary" type="button" disabled>
+            登入功能開發中
+          </button>
 
           <label>分析模式</label>
           <select value={mode} onChange={(e) => setMode(e.target.value as ShiftMode)}>
-            <option value="B班">B班</option>
+            <option value="全部在職">全部在職</option>
             <option value="第一天">第一天</option>
             <option value="第二天">第二天</option>
+            <option value="第三天">第三天</option>
+            <option value="第四天">第四天</option>
           </select>
         </div>
 
@@ -252,7 +255,7 @@ export default function App() {
         {page === "home" ? (
           <Layout
             title="首頁"
-            subtitle="只放幹部常用功能，管理功能另外收斂到管理區，避免首頁越做越亂。"
+            subtitle="只放幹部常用功能，管理功能另外收斂到登入後權限區，避免首頁越做越亂。"
           >
             <div className="grid three">
               <StatCard title="人員總數" value={String(data.people.length)} note="主檔人數" />
@@ -263,7 +266,7 @@ export default function App() {
             <div className="grid three">
               <ActionCard title="查詢人員資格" desc="查某人會哪些站點、看班別、職務、第一天與第二天。" onClick={() => setPage("person-query")} />
               <ActionCard title="查詢站點人選" desc="查某站有哪些相關人員，區分合格、訓練中、不可排。" onClick={() => setPage("station-query")} />
-              <ActionCard title="考核確認" desc="新增、修改、刪除資格紀錄，並防止重複新增。" onClick={() => setPage("qualification-review")} />
+              <ActionCard title="考核確認" desc="此功能改為登入後依權限開放，不再讓前端自行切換身分。" onClick={() => setFlash("請先完成登入與權限驗證後再開放此功能。") } />
             </div>
           </Layout>
         ) : null}
@@ -414,7 +417,7 @@ export default function App() {
         {page === "qualification-review" ? (
           <Layout title="考核確認" subtitle="維護人員站點資格，可新增、修改、刪除資格。">
             {roleRank[role] < roleRank["領班"] ? (
-              <Empty text="目前角色無法使用考核確認。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <>
                 <div className="panel">
@@ -513,7 +516,7 @@ export default function App() {
         {page === "station-rules" ? (
           <Layout title="站點規則設定" subtitle="缺口分析、試排、智能試排的底層規則來源。">
             {roleRank[role] < roleRank["組長"] ? (
-              <Empty text="目前角色無法使用管理功能。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <table className="table">
                 <thead>
@@ -551,7 +554,7 @@ export default function App() {
         {page === "people-management" ? (
           <Layout title="人員名單管理" subtitle="處理在職、班別、職務、日別與基本資料。">
             {roleRank[role] < roleRank["組長"] ? (
-              <Empty text="目前角色無法使用管理功能。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <table className="table">
                 <thead>
@@ -601,9 +604,9 @@ export default function App() {
         ) : null}
 
         {page === "gap-analysis" ? (
-          <Layout title="站點缺口分析" subtitle="不綁死 B 班，改成可選 B班 / 第一天 / 第二天。">
+          <Layout title="站點缺口分析" subtitle="不綁死單一班別，改成依分析模式切換可用人數。">
             {roleRank[role] < roleRank["組長"] ? (
-              <Empty text="目前角色無法使用管理功能。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <table className="table">
                 <thead>
@@ -641,7 +644,7 @@ export default function App() {
         {page === "manual-schedule" ? (
           <Layout title="站點試排" subtitle="先做手動模擬排站，再進一步升級智能建議。">
             {roleRank[role] < roleRank["組長"] ? (
-              <Empty text="目前角色無法使用管理功能。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <div className="grid two">
                 {data.stations.map((station) => {
@@ -672,7 +675,7 @@ export default function App() {
         {page === "smart-schedule" ? (
           <Layout title="智能試排" subtitle="依資格、班別、限制邏輯，先用排班優先序進行去重分派建議。">
             {roleRank[role] < roleRank["組長"] ? (
-              <Empty text="目前角色無法使用管理功能。" />
+              <Empty text="請先完成登入與權限驗證後再開放此功能。" />
             ) : (
               <table className="table">
                 <thead>
