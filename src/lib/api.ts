@@ -27,8 +27,6 @@ function normalizePeople(rows: unknown[]): Person[] {
         shift: String(item.shift ?? item["班別"] ?? "").trim(),
         role: String(item.role ?? item["職務"] ?? item["身分標籤"] ?? "").trim(),
         nationality: String(item.nationality ?? item["國籍"] ?? "").trim(),
-        day1: String(item.day1 ?? item["第一天"] ?? item["(A)第一天"] ?? "").trim(),
-        day2: String(item.day2 ?? item["第二天"] ?? item["(A)第二天"] ?? "").trim(),
         aDay1: String(item.aDay1 ?? item["(A)第一天"] ?? "").trim(),
         aDay2: String(item.aDay2 ?? item["(A)第二天"] ?? "").trim(),
         bDay1: String(item.bDay1 ?? item["(B)第一天"] ?? "").trim(),
