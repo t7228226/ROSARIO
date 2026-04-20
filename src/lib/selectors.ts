@@ -1,16 +1,130 @@
-import type { Person, Qualification, ShiftMode, Station } from "../types";
+import type { Person, Qualification, ShiftMode, Station, StationRule, TeamName } from "../types";
+
+export const TEAM_OPTIONS: TeamName[] = ["婷芬班", "美香班", "俊志班", "翊展班"];
+export const REVIEW_TEAM_OPTIONS = ["全部班別", ...TEAM_OPTIONS] as const;
+
+export const TEAM_DUTY_MAP: Record<TeamName, string> = {
+  婷芬班: "日A",
+  美香班: "日B",
+  俊志班: "夜A",
+  翊展班: "夜B",
+};
+
+export const TEAM_SUPPORT_MAP: Record<TeamName, TeamName> = {
+  婷芬班: "美香班",
+  美香班: "婷芬班",
+  俊志班: "翊展班",
+  翊展班: "俊志班",
+};
+
+const TEAM_FIELD_GROUP: Record<TeamName, "A" | "B"> = {
+  婷芬班: "A",
+  美香班: "B",
+  俊志班: "A",
+  翊展班: "B",
+};
+
+export function getTeamOfPerson(person: Person): string {
+  return String(person.shift || "").trim();
+}
+
+function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班">): string {
+  const group = TEAM_FIELD_GROUP[team];
+  if (group === "A") {
+    return mode === "第一天" ? String(person.aDay1 || person.day1 || "") : String(person.aDay2 || person.day2 || "");
+  }
+  return mode === "第一天" ? String(person.bDay1 || person.day1 || "") : String(person.bDay2 || person.day2 || "");
+}
 
 export function isPersonActiveInMode(person: Person, mode: ShiftMode): boolean {
   if (person.employmentStatus !== "在職" || person.role === "主任") {
     return false;
   }
-  if (mode === "全部在職") {
+  if (mode === "當班") {
     return true;
   }
   if (mode === "第一天") {
-    return person.day1 === "Y";
+    return String(person.day1 || "") === "Y";
   }
-  return person.day2 === "Y";
+  return String(person.day2 || "") === "Y";
+}
+
+export function getAttendanceForTeam(
+  people: Person[],
+  selectedTeam: TeamName,
+  mode: ShiftMode
+) {
+  const ownDuty = TEAM_DUTY_MAP[selectedTeam];
+  const supportTeam = TEAM_SUPPORT_MAP[selectedTeam];
+  const supportDuty = TEAM_DUTY_MAP[supportTeam];
+
+  const baseActive = people.filter((person) => person.employmentStatus === "在職" && person.role !== "主任");
+
+  if (mode === "當班") {
+    const own = baseActive.filter((person) => getTeamOfPerson(person) === selectedTeam);
+    return {
+      own,
+      support: [] as Person[],
+      all: own,
+      supportTeam,
+      ownDuty,
+      supportDuty,
+    };
+  }
+
+  const own = baseActive.filter(
+    (person) => getTeamOfPerson(person) === selectedTeam && getOwnDayValue(person, selectedTeam, mode) === ownDuty
+  );
+
+  const support = baseActive.filter(
+    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === supportDuty
+  );
+
+  return {
+    own,
+    support,
+    all: [...own, ...support],
+    supportTeam,
+    ownDuty,
+    supportDuty,
+  };
+}
+
+export function getRuleDayKey(team: TeamName, mode: ShiftMode): string {
+  if (mode === "當班") return "當班";
+  return `${TEAM_DUTY_MAP[team]}${mode}`;
+}
+
+export function getApplicableRules(
+  team: TeamName,
+  mode: ShiftMode,
+  stationRules: StationRule[],
+  stations: Station[]
+): StationRule[] {
+  const targetKey = getRuleDayKey(team, mode);
+  const matched = stationRules.filter(
+    (rule) => rule.team === team && rule.dayKey === targetKey && rule.enabled !== false
+  );
+
+  if (matched.length) {
+    return [...matched].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
+  }
+
+  return stations.map((station) => ({
+    id: station.id,
+    team,
+    dayKey: targetKey,
+    stationId: station.id,
+    minRequired: station.normalMin,
+    backupTarget: station.backupTarget ?? 0,
+    priority: station.priority ?? 999,
+    isMandatory: station.isMandatory ?? false,
+    trainingCanFill: false,
+    qualificationLimit: "不限",
+    canShare: true,
+    enabled: true,
+    note: station.note,
+  }));
 }
 
 export function qualificationBadge(status: string): string {
@@ -20,46 +134,31 @@ export function qualificationBadge(status: string): string {
   return "badge badge-empty";
 }
 
-export function groupQualificationsByEmployee(qualifications: Qualification[]) {
-  return qualifications.reduce<Record<string, Qualification[]>>((acc, current) => {
-    acc[current.employeeId] ||= [];
-    acc[current.employeeId].push(current);
-    return acc;
-  }, {});
-}
-
-export function groupQualificationsByStation(qualifications: Qualification[]) {
-  return qualifications.reduce<Record<string, Qualification[]>>((acc, current) => {
-    acc[current.stationId] ||= [];
-    acc[current.stationId].push(current);
-    return acc;
-  }, {});
-}
-
 export function getStationCoverage(
-  station: Station,
-  people: Person[],
-  qualifications: Qualification[],
-  mode: ShiftMode
+  stationId: string,
+  minimumNeed: number,
+  activePeople: Person[],
+  supportPeople: Person[],
+  qualifications: Qualification[]
 ) {
-  const activePeople = new Set(people.filter((person) => isPersonActiveInMode(person, mode)).map((person) => person.id));
-  const related = qualifications.filter((item) => item.stationId === station.id && activePeople.has(item.employeeId));
+  const activeIds = new Set(activePeople.map((person) => person.id));
+  const supportIds = new Set(supportPeople.map((person) => person.id));
+  const related = qualifications.filter((item) => item.stationId === stationId && activeIds.has(item.employeeId));
   const qualified = related.filter((item) => item.status === "合格").length;
   const training = related.filter((item) => item.status === "訓練中").length;
   const blocked = related.filter((item) => item.status === "不可排").length;
-
-  const normalGap = Math.max(0, station.normalMin - qualified);
-  const reliefSafeNeed = station.reliefMinPerBatch * 2;
-  const reliefGap = Math.max(0, reliefSafeNeed - qualified);
+  const supportQualifiedIds = qualifications
+    .filter((item) => item.stationId === stationId && item.status === "合格" && supportIds.has(item.employeeId))
+    .map((item) => item.employeeId);
+  const shortage = Math.max(0, minimumNeed - qualified);
 
   return {
     related,
     qualified,
     training,
     blocked,
-    normalGap,
-    reliefSafeNeed,
-    reliefGap,
+    shortage,
+    supportQualifiedIds,
   };
 }
 
@@ -70,14 +169,17 @@ export function searchText(values: Array<string | undefined | null>, keyword: st
 }
 
 export function buildSmartAssignments(
+  team: TeamName,
+  mode: ShiftMode,
   stations: Station[],
+  stationRules: StationRule[],
   people: Person[],
-  qualifications: Qualification[],
-  mode: ShiftMode
+  qualifications: Qualification[]
 ) {
-  const activePeople = people
-    .filter((person) => isPersonActiveInMode(person, mode))
-    .sort((a, b) => a.role.localeCompare(b.role, "zh-Hant") || a.name.localeCompare(b.name, "zh-Hant"));
+  const attendance = getAttendanceForTeam(people, team, mode);
+  const rules = getApplicableRules(team, mode, stationRules, stations);
+  const activePeople = attendance.all;
+  const ownIds = new Set(attendance.own.map((person) => person.id));
 
   const qualificationMap = new Map<string, Qualification[]>();
   for (const q of qualifications) {
@@ -91,43 +193,35 @@ export function buildSmartAssignments(
     flexibility.set(person.id, count);
   }
 
-  const candidatesByStation = new Map<string, Person[]>();
-  for (const station of stations) {
+  const used = new Set<string>();
+
+  return rules.map((rule) => {
     const candidates = activePeople
       .filter((person) =>
         (qualificationMap.get(person.id) || []).some(
-          (q) => q.stationId === station.id && q.status === "合格"
+          (q) => q.stationId === rule.stationId && q.status === "合格"
         )
       )
-      .sort((a, b) => (flexibility.get(a.id) || 0) - (flexibility.get(b.id) || 0));
-    candidatesByStation.set(station.id, candidates);
-  }
+      .sort((a, b) => {
+        const ownScore = Number(ownIds.has(b.id)) - Number(ownIds.has(a.id));
+        if (ownScore !== 0) return ownScore;
+        const flex = (flexibility.get(a.id) || 0) - (flexibility.get(b.id) || 0);
+        return flex || a.name.localeCompare(b.name, "zh-Hant");
+      });
 
-  const orderedStations = [...stations].sort((a, b) => {
-    const priorityA = a.priority ?? 999;
-    const priorityB = b.priority ?? 999;
-    return priorityA - priorityB || a.name.localeCompare(b.name, "zh-Hant");
-  });
-
-  const used = new Set<string>();
-  const assignments: Array<{ stationId: string; assigned: Person[]; shortage: number }> = [];
-
-  for (const station of orderedStations) {
-    const need = station.normalMin;
-    const candidates = candidatesByStation.get(station.id) || [];
     const assigned: Person[] = [];
     for (const person of candidates) {
       if (used.has(person.id)) continue;
       assigned.push(person);
       used.add(person.id);
-      if (assigned.length >= need) break;
+      if (assigned.length >= rule.minRequired) break;
     }
-    assignments.push({
-      stationId: station.id,
-      assigned,
-      shortage: Math.max(0, need - assigned.length),
-    });
-  }
 
-  return assignments;
+    return {
+      stationId: rule.stationId,
+      assigned,
+      shortage: Math.max(0, rule.minRequired - assigned.length),
+      source: assigned.map((person) => (ownIds.has(person.id) ? "當班" : "支援")),
+    };
+  });
 }
