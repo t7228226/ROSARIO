@@ -4,13 +4,13 @@ export function isPersonActiveInMode(person: Person, mode: ShiftMode): boolean {
   if (person.employmentStatus !== "在職" || person.role === "主任") {
     return false;
   }
-  if (mode === "B班") {
-    return person.shift === "B班";
+  if (mode === "全部在職") {
+    return true;
   }
   if (mode === "第一天") {
-    return person.shift === "B班" || (person.shift === "A班" && person.day1 === "Y");
+    return person.day1 === "Y";
   }
-  return person.shift === "B班" || (person.shift === "A班" && person.day2 === "Y");
+  return person.day2 === "Y";
 }
 
 export function qualificationBadge(status: string): string {
