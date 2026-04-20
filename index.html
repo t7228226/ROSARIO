@@ -89,13 +89,6 @@
       <p>若長時間停在此畫面，請把畫面截圖提供給我。</p>
     </div>
     <div id="root"></div>
-    <script type="module">
-      import('/src/main.tsx').catch((error) => {
-        const detail = error instanceof Error ? error.stack || error.message : String(error);
-        if (window.__showBootError) {
-          window.__showBootError('系統啟動失敗', detail);
-        }
-      });
-    </script>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
