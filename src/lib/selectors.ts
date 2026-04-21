@@ -5,7 +5,6 @@ import type {
   ShiftMode,
   SmartAssignmentRow,
   SmartScheduleMode,
-  Station,
   StationRule,
   TeamName,
 } from "../types";
@@ -231,7 +230,6 @@ function compareScore(a: Array<number | string>, b: Array<number | string>) {
 export function buildSmartAssignments(
   team: TeamName,
   mode: Exclude<ShiftMode, "全部在職">,
-  stations: Station[],
   stationRules: StationRule[],
   people: Person[],
   qualifications: Qualification[],
