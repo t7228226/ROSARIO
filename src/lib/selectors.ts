@@ -116,7 +116,7 @@ export function getAttendanceForTeam(
   );
 
   const support = baseActive.filter(
-    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === ownDuty
+    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === supportDuty
   );
 
   const merged = dedupePeople([...own, ...support]);
