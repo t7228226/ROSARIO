@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
-import { PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
+import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
   deleteQualification,
   fetchBootstrapData,
@@ -15,6 +15,8 @@ import {
   getApplicableRules,
   getAttendanceForTeam,
   getDutyCode,
+  getQualifiedPeopleForStation,
+  getStationCoverage,
   getTeamOfPerson,
   qualificationBadge,
   REVIEW_TEAM_OPTIONS,
@@ -782,7 +784,7 @@ export default function App() {
               <button type="button" className="mobile-modal-close" onClick={() => setMobileDetailModal(null)}>×</button>
             </div>
             <div className="mobile-modal-body">
-              {mobileDetailModal.type === "person" && mobilePerson ? <PersonDetailView person={mobilePerson} qualifications={mobilePersonQualifications} /> : null}
+              {mobileDetailModal.type === "person" && mobilePerson ? <PersonDetailView person={mobilePerson} qualifications={mobilePersonQualifications} compact /> : null}
               {mobileDetailModal.type === "station" && mobileStation ? <StationDetailView station={mobileStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={mobileStationQualifications} people={data.people} /> : null}
               {mobileDetailModal.type === "review" && mobileReviewPerson ? (
                 <ReviewDetailView
@@ -796,9 +798,11 @@ export default function App() {
                   stations={data.stations}
                   onSave={() => handleSaveQualification()}
                   onDelete={handleDeleteQualification}
+                  compact
                 />
               ) : null}
             </div>
+            <button type="button" className="mobile-modal-fab-close" onClick={() => setMobileDetailModal(null)}>關閉</button>
           </div>
         </div>
       ) : null}
@@ -820,10 +824,6 @@ function ConfirmSelect({ value, options, onCommit, disabled = false }: { value: 
 
 function StatCard({ title, value, note }: { title: string; value: string; note: string }) {
   return <div className="stat-card"><span>{title}</span><strong>{value}</strong><small>{note}</small></div>;
-}
-
-function Info({ label, value }: { label: string; value: string }) {
-  return <div className="info-item"><span>{label}</span><strong>{value || "-"}</strong></div>;
 }
 
 function Empty({ text }: { text: string }) {
