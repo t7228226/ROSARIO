@@ -44,12 +44,15 @@ export function getDutyCode(team: TeamName, mode: Exclude<ShiftMode, "全部在�
   return `${TEAM_DUTY_MAP[team]}${mode}`;
 }
 
-function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班" | "全部在職">): string {
-  const group = TEAM_FIELD_GROUP[team];
+function getDayValueByGroup(person: Person, group: "A" | "B", mode: Exclude<ShiftMode, "當班" | "全部在職">): string {
   if (group === "A") {
     return mode === "第一天" ? String(person.aDay1 || "") : String(person.aDay2 || "");
   }
   return mode === "第一天" ? String(person.bDay1 || "") : String(person.bDay2 || "");
+}
+
+function getOwnDayValue(person: Person, team: TeamName, mode: Exclude<ShiftMode, "當班" | "全部在職">): string {
+  return getDayValueByGroup(person, TEAM_FIELD_GROUP[team], mode);
 }
 
 export function getPersonDutyDisplay(person: Person) {
@@ -95,6 +98,7 @@ export function getAttendanceForTeam(
   const ownDuty = TEAM_DUTY_MAP[selectedTeam];
   const supportTeam = TEAM_SUPPORT_MAP[selectedTeam];
   const supportDuty = TEAM_DUTY_MAP[supportTeam];
+  const selectedGroup = TEAM_FIELD_GROUP[selectedTeam];
 
   const baseActive = people.filter((person) => person.employmentStatus === "在職" && person.role !== "主任");
 
@@ -112,11 +116,11 @@ export function getAttendanceForTeam(
   }
 
   const own = baseActive.filter(
-    (person) => getTeamOfPerson(person) === selectedTeam && getOwnDayValue(person, selectedTeam, mode) === ownDuty
+    (person) => getTeamOfPerson(person) === selectedTeam && getDayValueByGroup(person, selectedGroup, mode) === ownDuty
   );
 
   const support = baseActive.filter(
-    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === supportDuty
+    (person) => getTeamOfPerson(person) === supportTeam && getDayValueByGroup(person, selectedGroup, mode) === supportDuty
   );
 
   const merged = dedupePeople([...own, ...support]);
@@ -283,7 +287,7 @@ export function buildSmartAssignments(
       stationId: rule.stationId,
       assigned,
       shortage: Math.max(0, rule.minRequired - assigned.length),
-      source: assigned.map((person) => (ownIds.has(person.id) ? "當班" : "支援")),
+      source: assigned.map((person) => (ownIds.has(person.id) ? "本班" : "支援")),
     };
   });
 }
