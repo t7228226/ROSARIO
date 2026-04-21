@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import {
   deleteQualification,
@@ -143,6 +143,7 @@ export default function App() {
   const [page, setPage] = useState<PageKey>("home");
   const [flash, setFlash] = useState("");
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const contentRef = useRef<HTMLElement | null>(null);
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
@@ -186,6 +187,10 @@ export default function App() {
   }
 
   function scrollToTop(behavior: ScrollBehavior = "smooth") {
+    if (contentRef.current) {
+      contentRef.current.scrollTo({ top: 0, behavior });
+      return;
+    }
     window.scrollTo({ top: 0, behavior });
   }
 
@@ -216,11 +221,13 @@ export default function App() {
   }, [page]);
 
   useEffect(() => {
-    const onScroll = () => setShowBackToTop(window.scrollY > 280);
-    window.addEventListener("scroll", onScroll, { passive: true });
+    const node = contentRef.current;
+    if (!node) return;
+    const onScroll = () => setShowBackToTop(node.scrollTop > 280);
+    node.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+    return () => node.removeEventListener("scroll", onScroll);
+  }, [loading]);
 
   useEffect(() => {
     setReviewKeyword("");
@@ -555,7 +562,7 @@ export default function App() {
         <div className="brand-card">
           <div className="brand-kicker">通用型檢測系統</div>
           <h1>站點資格管理</h1>
-          <p>提供幹部查詢站點資格、維護考核、分析缺口與執行試排。未登入只能查看首頁，登入後依系統權限顯示功能。</p>
+          <p>提供幹部查詢站點資格、維護考核、分析缺口與執行試排。</p>
         </div>
         <div className="control-card">
           <label>登入系統</label>
@@ -577,7 +584,7 @@ export default function App() {
           {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => setPage(item.key)}>{item.label}</button>)}
         </nav>
       </aside>
-      <main className="content">
+      <main className="content" ref={contentRef}>
         {flash ? <div className="flash"><span>{flash}</span><button type="button" className="flash-close" onClick={() => setFlash("")}>×</button></div> : null}
         {page === "home" ? <Layout title="首頁" subtitle="系統說明與登入入口。未登入不顯示其他功能。"><div className="grid three compact-home-stats"><StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" /><StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" /><StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" /></div><div className="panel intro-panel"><h3>系統說明</h3><p>這是通用型站點資格管理系統，提供查詢人員資格、查詢站點人選、站點考核、缺口分析、站點試排與智能試排。</p><p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p></div></Layout> : null}
         {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
