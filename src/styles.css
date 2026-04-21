@@ -9,6 +9,10 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
 }
@@ -22,7 +26,7 @@ select {
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 280px 1fr;
 }
 
 .loading {
@@ -31,20 +35,24 @@ select {
 }
 
 .sidebar {
-  padding: 24px;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  min-height: 100vh;
+  padding: 20px;
   background: #0f172a;
   color: white;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .brand-card,
 .control-card {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 18px;
-  padding: 18px;
+  border-radius: 16px;
+  padding: 16px;
 }
 
 .brand-kicker {
@@ -55,13 +63,14 @@ select {
 
 .brand-card h1 {
   margin: 0 0 8px;
-  font-size: 24px;
+  font-size: 22px;
 }
 
 .brand-card p {
   margin: 0;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.82);
+  font-size: 14px;
 }
 
 .control-card {
@@ -91,9 +100,9 @@ select {
 
 .nav-item {
   border: 0;
-  border-radius: 14px;
+  border-radius: 12px;
   text-align: left;
-  padding: 12px 14px;
+  padding: 11px 13px;
   background: rgba(255, 255, 255, 0.06);
   color: white;
   cursor: pointer;
@@ -104,9 +113,10 @@ select {
 }
 
 .content {
-  padding: 28px;
+  padding: 24px;
   display: grid;
-  gap: 20px;
+  gap: 18px;
+  align-content: start;
 }
 
 .flash {
@@ -133,7 +143,7 @@ select {
 
 .page-section {
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
 .page-header {
@@ -145,12 +155,13 @@ select {
 
 .page-header h2 {
   margin: 0;
-  font-size: 28px;
+  font-size: 26px;
 }
 
 .page-header p {
   margin: 8px 0 0;
   color: #475569;
+  line-height: 1.5;
 }
 
 .grid {
@@ -166,13 +177,17 @@ select {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.compact-home-stats {
+  max-width: 920px;
+}
+
 .stat-card,
 .action-card,
 .panel {
   background: white;
   border: 1px solid #dbe2ea;
-  border-radius: 18px;
-  padding: 18px;
+  border-radius: 16px;
+  padding: 16px;
 }
 
 .panel h3 {
@@ -193,42 +208,63 @@ select {
 
 .stat-card {
   display: grid;
-  gap: 8px;
+  gap: 6px;
+}
+
+.stat-card span,
+.stat-card small {
+  font-size: 13px;
 }
 
 .stat-card strong {
-  font-size: 34px;
+  font-size: 28px;
+}
+
+.intro-panel {
+  max-width: 920px;
+}
+
+.intro-panel p:last-child {
+  margin-bottom: 0;
 }
 
 .toolbar {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 input,
 select {
   width: 100%;
-  padding: 10px 12px;
-  border-radius: 12px;
+  max-width: 240px;
+  padding: 9px 11px;
+  border-radius: 10px;
   border: 1px solid #cbd5e1;
   background: white;
 }
 
+.control-card input,
+.control-card select {
+  max-width: 100%;
+}
+
 .cell-input {
-  min-width: 78px;
+  min-width: 72px;
   width: 100%;
-  padding: 8px 10px;
+  max-width: none;
+  padding: 7px 9px;
 }
 
 .primary,
 .ghost,
-.danger {
+.danger,
+.back-to-top {
   width: auto;
   border: 0;
   border-radius: 12px;
-  padding: 10px 16px;
+  padding: 9px 14px;
   cursor: pointer;
 }
 
@@ -248,21 +284,21 @@ select {
 }
 
 .list-scroll {
-  max-height: 580px;
+  max-height: 560px;
   overflow: auto;
   display: grid;
   gap: 8px;
 }
 
 .list-scroll.short {
-  max-height: 260px;
+  max-height: 240px;
 }
 
 .list-row {
   border: 1px solid #dbe2ea;
   background: #f8fafc;
   border-radius: 12px;
-  padding: 12px;
+  padding: 11px;
   text-align: left;
   display: grid;
   gap: 4px;
@@ -282,21 +318,25 @@ select {
 .detail-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 16px;
 }
 
 .info-item {
   background: #f8fafc;
-  border-radius: 14px;
-  padding: 12px;
+  border-radius: 12px;
+  padding: 11px;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .info-item span {
   color: #64748b;
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.info-item strong {
+  font-size: 14px;
 }
 
 .table {
@@ -310,7 +350,7 @@ select {
   text-align: left;
   vertical-align: middle;
   border-bottom: 1px solid #e2e8f0;
-  padding: 12px 10px;
+  padding: 11px 9px;
 }
 
 .table th {
@@ -353,7 +393,7 @@ select {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .compact-form {
@@ -374,10 +414,11 @@ select {
 }
 
 .chip {
-  padding: 8px 12px;
+  padding: 7px 11px;
   border-radius: 999px;
   background: #eff6ff;
   color: #1d4ed8;
+  font-size: 13px;
 }
 
 .empty,
@@ -385,9 +426,24 @@ select {
   color: #64748b;
 }
 
+.back-to-top {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 30;
+  background: #0f172a;
+  color: white;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+}
+
 @media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    min-height: auto;
   }
 
   .grid.three,
@@ -395,5 +451,10 @@ select {
   .form-grid,
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  input,
+  select {
+    max-width: 100%;
   }
 }
