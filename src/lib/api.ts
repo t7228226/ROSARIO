@@ -14,7 +14,7 @@ function ensureArray<T>(value: unknown): T[] {
 }
 
 function toBool(value: unknown) {
-  return String(value ?? "").toUpperCase() === "Y" || String(value ?? "") === "啟用";
+  return String(value ?? "").toUpperCase() === "Y" || String(value ?? "") === "啟用" || value === true;
 }
 
 function normalizePeople(rows: unknown[]): Person[] {
@@ -33,6 +33,13 @@ function normalizePeople(rows: unknown[]): Person[] {
         bDay2: String(item.bDay2 ?? item["(B)第二天"] ?? "").trim(),
         employmentStatus: String(item.employmentStatus ?? item["在職狀態"] ?? "").trim(),
         note: String(item.note ?? item["備註"] ?? "").trim(),
+        systemPermission: String(
+          item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
+        ).trim(),
+        permissionLevel: String(
+          item.permissionLevel ?? item.systemPermission ?? item["權限等級"] ?? item["系統權限"] ?? item["權限"] ?? ""
+        ).trim(),
+        isSuperAdmin: toBool(item.isSuperAdmin ?? item["最高權限"] ?? item["是否最高權限"]),
       } as Person;
     })
     .filter((item) => {
