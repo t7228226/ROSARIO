@@ -97,6 +97,10 @@ export function StationDetailView({
   people: Person[];
   compact?: boolean;
 }) {
+  const ownLabel = day === "當班" ? "本班人力" : "本班出勤";
+  const supportTeamLabel = day === "當班" || attendance.support.length === 0 ? "-" : attendance.supportTeam || "-";
+  const supportDutyLabel = day === "當班" || attendance.support.length === 0 ? "-" : attendance.supportDuty || "-";
+
   if (compact) {
     return (
       <>
@@ -111,8 +115,15 @@ export function StationDetailView({
           <Info compact label="本籍出勤" value={String(attendance.localCount)} />
           <Info compact label="菲籍出勤" value={String(attendance.filipinoCount)} />
           <Info compact label="越籍出勤" value={String(attendance.vietnamCount)} />
-          <Info compact label="當班人力" value={String(attendance.own.length)} />
+          <Info compact label={ownLabel} value={String(attendance.own.length)} />
           <Info compact label="支援人力" value={String(attendance.support.length)} />
+        </div>
+        <div className="compact-info-grid five-up">
+          <Info compact label="支援對班" value={supportTeamLabel} />
+          <Info compact label="支援代號" value={supportDutyLabel} />
+          <Info compact label="本班名單" value={String(attendance.own.length)} />
+          <Info compact label="支援名單" value={String(attendance.support.length)} />
+          <Info compact label="候選總數" value={String(qualifications.length)} />
         </div>
         <table className="table compact-table">
           <thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead>
@@ -124,7 +135,7 @@ export function StationDetailView({
                   <td>{item.employeeId}</td>
                   <td>{person?.name || item.employeeName || "-"}</td>
                   <td>{person ? String(getTeamOfPerson(person)) : "-"}</td>
-                  <td>{attendance.own.some((p) => p.id === item.employeeId) ? "當班" : "支援"}</td>
+                  <td>{attendance.own.some((p) => p.id === item.employeeId) ? "本班" : "支援"}</td>
                   <td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td>
                 </tr>
               );
@@ -146,10 +157,10 @@ export function StationDetailView({
         <Info label="菲籍出勤" value={String(attendance.filipinoCount)} />
         <Info label="越籍出勤" value={String(attendance.vietnamCount)} />
         <Info label="總出勤" value={String(attendance.totalCount)} />
-        <Info label="當班人力" value={String(attendance.own.length)} />
+        <Info label={ownLabel} value={String(attendance.own.length)} />
         <Info label="支援人力" value={String(attendance.support.length)} />
-        <Info label="支援對班" value={day === "當班" ? "-" : attendance.supportTeam || "-"} />
-        <Info label="支援代號" value={day === "當班" ? "-" : attendance.supportDuty || "-"} />
+        <Info label="支援對班" value={supportTeamLabel} />
+        <Info label="支援代號" value={supportDutyLabel} />
       </div>
       <table className="table">
         <thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead>
@@ -161,7 +172,7 @@ export function StationDetailView({
                 <td>{item.employeeId}</td>
                 <td>{person?.name || item.employeeName || "-"}</td>
                 <td>{person ? String(getTeamOfPerson(person)) : "-"}</td>
-                <td>{attendance.own.some((p) => p.id === item.employeeId) ? "當班" : "支援"}</td>
+                <td>{attendance.own.some((p) => p.id === item.employeeId) ? "本班" : "支援"}</td>
                 <td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td>
               </tr>
             );
