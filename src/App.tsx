@@ -142,6 +142,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<PageKey>("home");
   const [flash, setFlash] = useState("");
+  const [showBackToTop, setShowBackToTop] = useState(false);
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
@@ -184,6 +185,10 @@ export default function App() {
     setFlash(text);
   }
 
+  function scrollToTop(behavior: ScrollBehavior = "smooth") {
+    window.scrollTo({ top: 0, behavior });
+  }
+
   useEffect(() => {
     let active = true;
     async function loadBootstrap() {
@@ -204,6 +209,17 @@ export default function App() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    scrollToTop("auto");
+  }, [page]);
+
+  useEffect(() => {
+    const onScroll = () => setShowBackToTop(window.scrollY > 280);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
   useEffect(() => {
@@ -312,6 +328,7 @@ export default function App() {
     setCurrentUser(null);
     setPage("home");
     setFlashMessage("已登出。");
+    scrollToTop();
   }
 
   async function handleLogin() {
@@ -341,9 +358,11 @@ export default function App() {
       setLoginForm({ account: "", password: "" });
       setPage("home");
       setFlashMessage(`登入成功：${mergedUser.name}`);
+      scrollToTop();
     } catch {
       setFlashMessage("登入失敗，請確認 GAS login 已重新部署。");
       setPage("home");
+      scrollToTop();
     }
   }
 
@@ -536,14 +555,14 @@ export default function App() {
         <div className="brand-card">
           <div className="brand-kicker">通用型檢測系統</div>
           <h1>站點資格管理</h1>
-          <p>給幹部查詢與管理站點資格，未登入只能看首頁內容，登入後才顯示對應功能。</p>
+          <p>提供幹部查詢站點資格、維護考核、分析缺口與執行試排。未登入只能查看首頁，登入後依系統權限顯示功能。</p>
         </div>
         <div className="control-card">
           <label>登入系統</label>
           {currentUser ? (
             <div className="logged-user">
               <strong>{currentUser.name}</strong>
-              <span>{currentUser.id}｜職務 {currentUser.role || "-"}｜權限 {currentRole || "-"}</span>
+              <span>{currentUser.id}｜權限 {currentRole || "-"}</span>
               <button className="ghost" type="button" onClick={logout}>登出</button>
             </div>
           ) : (
@@ -560,7 +579,7 @@ export default function App() {
       </aside>
       <main className="content">
         {flash ? <div className="flash"><span>{flash}</span><button type="button" className="flash-close" onClick={() => setFlash("")}>×</button></div> : null}
-        {page === "home" ? <Layout title="首頁" subtitle="第一塊為系統說明，第二塊為登入。未登入不顯示查詢與管理功能。"><div className="grid three"><StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" /><StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" /><StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" /></div><div className="panel"><h3>系統定位</h3><p>這是通用型檢測系統，提供幹部進行站點資格查詢、考核維護、缺口分析、站點試排與智能試排。</p></div><div className="panel"><h3>權限規則</h3><ul><li>未登入：只能看首頁。</li><li>技術員：查詢人員資格、查詢站點人選。</li><li>領班：站點考核。</li><li>組長：站點缺口分析、站點試排。</li><li>主任以上：站點規則設定、人員名單管理、智能試排。</li><li>最高權限：額外可使用權限管理，決定站長以上人員系統權限。</li></ul></div></Layout> : null}
+        {page === "home" ? <Layout title="首頁" subtitle="系統說明與登入入口。未登入不顯示其他功能。"><div className="grid three compact-home-stats"><StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" /><StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" /><StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" /></div><div className="panel intro-panel"><h3>系統說明</h3><p>這是通用型站點資格管理系統，提供查詢人員資格、查詢站點人選、站點考核、缺口分析、站點試排與智能試排。</p><p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p></div></Layout> : null}
         {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
         {currentRole && page === "person-query" ? <Layout title="查詢人員資格" subtitle="可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。"><div className="grid two"><div className="panel"><div className="toolbar"><select value={personTeamFilter} onChange={(e) => setPersonTeamFilter(e.target.value)}><option value="全部班別">全部班別</option>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><input placeholder="輸入工號、姓名、角色、國籍" value={personKeyword} onChange={(e) => setPersonKeyword(e.target.value)} /></div><div className="list-scroll">{filteredPeople.map((person) => <button key={person.id} className={selectedEmployee?.id === person.id ? "list-row active" : "list-row"} onClick={() => setSelectedEmployeeId(person.id)}><strong>{person.name}</strong><span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span></button>)}</div></div><div className="panel">{selectedEmployee ? <>{(() => { const duty = getPersonDutyDisplay(selectedEmployee); return <><div className="detail-grid"><Info label="工號" value={selectedEmployee.id} /><Info label="姓名" value={selectedEmployee.name} /><Info label="班別" value={String(getTeamOfPerson(selectedEmployee))} /><Info label="職務" value={selectedEmployee.role} /><Info label="系統權限" value={String(getSystemPermission(selectedEmployee) || "-")} /></div><div className="detail-grid"><Info label="(A)第一天" value={duty.aDay1} /><Info label="(A)第二天" value={duty.aDay2} /><Info label="(B)第一天" value={duty.bDay1} /><Info label="(B)第二天" value={duty.bDay2} /></div></>; })()}<table className="table"><thead><tr><th>站點</th><th>狀態</th></tr></thead><tbody>{data.qualifications.filter((item) => item.employeeId === selectedEmployee.id).map((item) => <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.stationId}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>)}</tbody></table></> : <Empty text="此班別目前沒有可顯示人員。" />}</div></div></Layout> : null}
         {currentRole && page === "station-query" ? <Layout title="查詢站點人選" subtitle="新增班別與日別選項，可查看當班或第一天/第二天支援後的人選。"><div className="grid two"><div className="panel"><div className="toolbar"><select value={stationTeamFilter} onChange={(e) => setStationTeamFilter(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={stationDayFilter} onChange={(e) => setStationDayFilter(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><input placeholder="搜尋站點" value={stationKeyword} onChange={(e) => setStationKeyword(e.target.value)} /></div><div className="list-scroll">{filteredStations.map((station) => <button key={station.id} className={selectedStation?.id === station.id ? "list-row active" : "list-row"} onClick={() => setSelectedStationId(station.id)}><strong>{station.name}</strong><span>{station.id}</span></button>)}</div></div><div className="panel">{selectedStation ? <><div className="detail-grid"><Info label="站點代碼" value={selectedStation.id} /><Info label="站點名稱" value={selectedStation.name} /><Info label="班別" value={stationTeamFilter} /><Info label="日別" value={stationDayFilter} /><Info label="總出勤" value={String(stationAttendance.totalCount)} /><Info label="支援人力" value={String(stationAttendance.support.length)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead><tbody>{stationScopedQualifications.filter((item) => item.stationId === selectedStation.id).map((item) => { const person = data.people.find((p) => p.id === item.employeeId); return <tr key={`${item.employeeId}-${item.stationId}`}><td>{item.employeeId}</td><td>{person?.name || item.employeeName || "-"}</td><td>{person ? String(getTeamOfPerson(person)) : "-"}</td><td>{stationAttendance.own.some((p) => p.id === item.employeeId) ? "當班" : "支援"}</td><td><span className={qualificationBadge(item.status)}>{item.status || "空白"}</span></td></tr>; })}</tbody></table></> : <Empty text="找不到符合條件的站點。" />}</div></div></Layout> : null}
@@ -571,6 +590,7 @@ export default function App() {
         {currentRole && page === "people-management" && hasAccess("主任") ? <Layout title="人員名單管理" subtitle="職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></Layout> : null}
         {currentRole && page === "permission-admin" && hasAccess("最高權限") ? <Layout title="權限管理" subtitle="只有最高權限可見。此頁連動人員名單，僅顯示符合資格之幹部候選；P0033 固定為最高權限。"><div className="panel"><div className="toolbar"><input placeholder="搜尋工號、姓名、班別、職務、權限" value={permissionSearchKeyword} onChange={(e) => setPermissionSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>目前權限</th><th>調整權限</th><th>狀態</th></tr></thead><tbody>{permissionRows.map((person) => <tr key={person.id}><td>{person.id}</td><td>{person.name}</td><td>{String(getTeamOfPerson(person))}</td><td>{person.role}</td><td>{String(getSystemPermission(person) || "技術員")}</td><td>{person.id === "P0033" ? <span>最高權限（鎖定）</span> : <ConfirmSelect value={String(getSystemPermission(person) || "技術員")} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />}</td><td>{person.employmentStatus || "-"}</td></tr>)}</tbody></table></div></Layout> : null}
         {currentRole && page === "smart-schedule" && hasAccess("主任") ? <Layout title="智能試排" subtitle="提供當班優先、支援優先、資格優先三種模式，依四班 / 三日別運作。"><div className="panel"><div className="toolbar"><select value={smartShift} onChange={(e) => setSmartShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={smartDay} onChange={(e) => setSmartDay(e.target.value as Exclude<ShiftMode, "全部在職">)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={smartMode} onChange={(e) => setSmartMode(e.target.value as SmartScheduleMode)}>{SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><button className="primary" type="button" onClick={runSmartPlan}>一鍵試排</button></div><div className="detail-grid"><Info label="本籍出勤" value={String(smartAttendance.localCount)} /><Info label="菲籍出勤" value={String(smartAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(smartAttendance.vietnamCount)} /><Info label="總出勤" value={String(smartAttendance.totalCount)} /></div></div>{smartRules.length ? <><div className="panel floating-summary"><div className="detail-grid"><Info label="需排總人數" value={String(smartSummary.required)} /><Info label="已排總人數" value={String(smartSummary.assigned)} /><Info label="唯一人數" value={String(smartSummary.uniqueAssigned)} /><Info label="重複安排" value={String(smartSummary.duplicates)} /><Info label="缺口總數" value={String(smartSummary.shortage)} /></div></div><div className="grid two">{smartRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const selectedIds = smartAssignments[rule.stationId] || []; return <div className="panel" key={rule.stationId}><div className="panel-header"><h3>{station?.name || rule.stationId}</h3><span>需求 {rule.minRequired}</span></div><div className="toolbar"><button type="button" className="ghost" onClick={() => handleCustomAssign("smart", rule.stationId)}>自訂人選</button></div><div className="chips">{selectedIds.length ? selectedIds.map((id) => { const person = data.people.find((item) => item.id === id); return <span className="chip" key={id}>{person?.name || id}</span>; }) : <span className="muted">尚未安排</span>}</div></div>; })}</div></> : <Empty text="找不到此班別與日別的正式站點規則，無法執行智能試排。" />}</Layout> : null}
+        {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
       </main>
     </div>
   );
