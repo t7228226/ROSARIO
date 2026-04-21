@@ -4,13 +4,6 @@ const API_URL =
   import.meta.env.VITE_GAS_API_URL ||
   "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
 
-let localCache: AppBootstrap = {
-  people: [],
-  stations: [],
-  qualifications: [],
-  stationRules: [],
-};
-
 export interface LoginPayload {
   account: string;
   password: string;
@@ -30,7 +23,16 @@ function toBool(value: unknown) {
   return String(value ?? "").toUpperCase() === "Y" || String(value ?? "") === "啟用" || value === true;
 }
 
+function normalizePermissionValue(item: Record<string, unknown>) {
+  return String(
+    item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
+  ).trim();
+}
+
 function normalizePerson(item: Record<string, unknown>): Person {
+  const explicitPermission = normalizePermissionValue(item);
+  const permission = explicitPermission || "技術員";
+
   return {
     id: String(item.id ?? item["工號"] ?? "").trim(),
     name: String(item.name ?? item["姓名"] ?? item["正式姓名"] ?? "").trim(),
@@ -43,12 +45,8 @@ function normalizePerson(item: Record<string, unknown>): Person {
     bDay2: String(item.bDay2 ?? item["(B)第二天"] ?? "").trim(),
     employmentStatus: String(item.employmentStatus ?? item["在職狀態"] ?? "").trim(),
     note: String(item.note ?? item["備註"] ?? "").trim(),
-    systemPermission: String(
-      item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
-    ).trim(),
-    permissionLevel: String(
-      item.permissionLevel ?? item.systemPermission ?? item["權限等級"] ?? item["系統權限"] ?? item["權限"] ?? ""
-    ).trim(),
+    systemPermission: permission,
+    permissionLevel: permission,
     isSuperAdmin: toBool(item.isSuperAdmin ?? item["最高權限"] ?? item["是否最高權限"]),
   } as Person;
 }
@@ -170,19 +168,8 @@ async function request<T>(action: string, payload?: unknown, method: "GET" | "PO
 }
 
 export async function fetchBootstrapData(): Promise<AppBootstrap> {
-  try {
-    const raw = await request<unknown>("bootstrap", undefined, "GET");
-    const data = normalizeBootstrap(raw);
-
-    if (!data.people.length && !data.stations.length && !data.qualifications.length) {
-      return structuredClone(localCache);
-    }
-
-    localCache = data;
-    return data;
-  } catch {
-    return structuredClone(localCache);
-  }
+  const raw = await request<unknown>("bootstrap", undefined, "GET");
+  return normalizeBootstrap(raw);
 }
 
 export async function loginWithAccount(payload: LoginPayload): Promise<LoginResult> {
@@ -195,58 +182,20 @@ export async function loginWithAccount(payload: LoginPayload): Promise<LoginResu
 }
 
 export async function upsertQualification(payload: Qualification): Promise<Qualification> {
-  try {
-    await request("upsertQualification", payload, "POST");
-  } catch {
-    const index = localCache.qualifications.findIndex(
-      (item) => item.employeeId === payload.employeeId && item.stationId === payload.stationId
-    );
-    if (index >= 0) {
-      localCache.qualifications[index] = payload;
-    } else {
-      localCache.qualifications.push(payload);
-    }
-  }
+  await request("upsertQualification", payload, "POST");
   return payload;
 }
 
 export async function deleteQualification(payload: Pick<Qualification, "employeeId" | "stationId">): Promise<void> {
-  try {
-    await request("deleteQualification", payload, "POST");
-  } catch {
-    localCache.qualifications = localCache.qualifications.filter(
-      (item) => !(item.employeeId === payload.employeeId && item.stationId === payload.stationId)
-    );
-  }
+  await request("deleteQualification", payload, "POST");
 }
 
 export async function updateStationRule(payload: StationRule): Promise<StationRule> {
-  try {
-    await request("updateStationRule", payload, "POST");
-  } catch {
-    const rules = localCache.stationRules || [];
-    const exists = rules.some(
-      (rule) => rule.id === payload.id || (rule.team === payload.team && rule.dayKey === payload.dayKey && rule.stationId === payload.stationId)
-    );
-    localCache.stationRules = exists
-      ? rules.map((rule) =>
-          rule.id === payload.id || (rule.team === payload.team && rule.dayKey === payload.dayKey && rule.stationId === payload.stationId)
-            ? payload
-            : rule
-        )
-      : [...rules, payload];
-  }
+  await request("updateStationRule", payload, "POST");
   return payload;
 }
 
 export async function updatePerson(payload: Person): Promise<Person> {
-  try {
-    await request("updatePerson", payload, "POST");
-  } catch {
-    const exists = localCache.people.some((person) => person.id === payload.id);
-    localCache.people = exists
-      ? localCache.people.map((person) => (person.id === payload.id ? payload : person))
-      : [...localCache.people, payload];
-  }
+  await request("updatePerson", payload, "POST");
   return payload;
 }
