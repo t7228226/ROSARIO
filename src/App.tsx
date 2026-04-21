@@ -3,6 +3,7 @@ import Layout from "./components/Layout";
 import {
   deleteQualification,
   fetchBootstrapData,
+  loginWithAccount,
   updatePerson,
   updateStationRule,
   upsertQualification,
@@ -296,20 +297,36 @@ export default function App() {
     setFlashMessage("已登出。");
   }
 
-  function handleLogin() {
-    const normalized = loginForm.account.trim().toLowerCase();
-    if (!normalized) {
-      setFlashMessage("請輸入工號或姓名。");
+  async function handleLogin() {
+    const account = loginForm.account.trim();
+    const password = loginForm.password.trim();
+
+    if (!account) {
+      setFlashMessage("請輸入登入帳號。");
       return;
     }
-    const matched = data.people.find((person) => person.id.toLowerCase() === normalized || person.name.toLowerCase() === normalized);
-    if (!matched) {
-      setFlashMessage("查無此帳號。請輸入正確工號或姓名。");
+    if (!password) {
+      setFlashMessage("請輸入登入密碼。");
       return;
     }
-    setCurrentUser(matched);
-    setPage("home");
-    setFlashMessage(`登入成功：${matched.name}`);
+
+    try {
+      const result = await loginWithAccount({ account, password });
+      if (!result.ok || !result.user) {
+        setFlashMessage(result.message || "登入失敗。");
+        return;
+      }
+
+      const bootstrapUser = data.people.find((person) => person.id === result.user?.id);
+      const mergedUser = bootstrapUser ? { ...bootstrapUser, ...result.user } : result.user;
+
+      setCurrentUser(mergedUser);
+      setLoginForm({ account: "", password: "" });
+      setPage("home");
+      setFlashMessage(`登入成功：${mergedUser.name}`);
+    } catch {
+      setFlashMessage("登入失敗，請確認 GAS login 已重新部署。");
+    }
   }
 
   async function persistQualification(employee: Person, stationId: string, status: QualificationStatus) {
@@ -513,8 +530,8 @@ export default function App() {
             </div>
           ) : (
             <>
-              <input placeholder="工號或姓名" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
-              <input type="password" placeholder="密碼（暫占位）" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
+              <input placeholder="登入帳號" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
+              <input type="password" placeholder="登入密碼" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
               <button className="primary" type="button" onClick={handleLogin}>登入</button>
             </>
           )}
