@@ -131,33 +131,14 @@ export function getRuleDayKey(team: TeamName, mode: Exclude<ShiftMode, "全部�
 export function getApplicableRules(
   team: TeamName,
   mode: Exclude<ShiftMode, "全部在職">,
-  stationRules: StationRule[],
-  stations: Station[]
+  stationRules: StationRule[]
 ): StationRule[] {
   const targetKey = getRuleDayKey(team, mode);
   const matched = stationRules.filter(
     (rule) => rule.team === team && rule.dayKey === targetKey && rule.enabled !== false
   );
 
-  if (matched.length) {
-    return [...matched].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
-  }
-
-  return stations.map((station) => ({
-    id: `${team}-${targetKey}-${station.id}`,
-    team,
-    dayKey: targetKey,
-    stationId: station.id,
-    minRequired: station.normalMin,
-    backupTarget: station.backupTarget ?? 0,
-    priority: station.priority ?? 999,
-    isMandatory: station.isMandatory ?? false,
-    trainingCanFill: false,
-    qualificationLimit: "不限",
-    canShare: true,
-    enabled: true,
-    note: station.note,
-  }));
+  return [...matched].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 }
 
 export function qualificationBadge(status: string): string {
@@ -257,7 +238,7 @@ export function buildSmartAssignments(
   strategy: SmartScheduleMode = "當班優先"
 ): SmartAssignmentRow[] {
   const attendance = getAttendanceForTeam(people, team, mode);
-  const rules = getApplicableRules(team, mode, stationRules, stations);
+  const rules = getApplicableRules(team, mode, stationRules);
   const activePeople = attendance.all;
   const ownIds = new Set(attendance.own.map((person) => person.id));
   const supportIds = new Set(attendance.support.map((person) => person.id));
