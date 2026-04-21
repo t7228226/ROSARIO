@@ -24,9 +24,7 @@ function toBool(value: unknown) {
 }
 
 function normalizePermissionValue(item: Record<string, unknown>) {
-  return String(
-    item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
-  ).trim();
+  return String(item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? "").trim();
 }
 
 function normalizePerson(item: Record<string, unknown>): Person {
@@ -35,9 +33,9 @@ function normalizePerson(item: Record<string, unknown>): Person {
 
   return {
     id: String(item.id ?? item["工號"] ?? "").trim(),
-    name: String(item.name ?? item["姓名"] ?? item["正式姓名"] ?? "").trim(),
+    name: String(item.name ?? item["姓名"] ?? "").trim(),
     shift: String(item.shift ?? item["班別"] ?? "").trim(),
-    role: String(item.role ?? item["職務"] ?? item["身分標籤"] ?? "").trim(),
+    role: String(item.role ?? item["職務"] ?? "").trim(),
     nationality: String(item.nationality ?? item["國籍"] ?? "").trim(),
     aDay1: String(item.aDay1 ?? item["(A)第一天"] ?? "").trim(),
     aDay2: String(item.aDay2 ?? item["(A)第二天"] ?? "").trim(),
@@ -47,7 +45,7 @@ function normalizePerson(item: Record<string, unknown>): Person {
     note: String(item.note ?? item["備註"] ?? "").trim(),
     systemPermission: permission,
     permissionLevel: permission,
-    isSuperAdmin: toBool(item.isSuperAdmin ?? item["最高權限"] ?? item["是否最高權限"]),
+    isSuperAdmin: toBool(item.isSuperAdmin ?? item["是否最高權限"]),
   } as Person;
 }
 
@@ -69,7 +67,7 @@ function normalizeStations(rows: unknown[]): Station[] {
       const item = row as Record<string, unknown>;
       return {
         id: String(item.id ?? item["站點代碼"] ?? "").trim(),
-        name: String(item.name ?? item["站點名稱"] ?? item["規則ID"] ?? "").trim(),
+        name: String(item.name ?? item["站點名稱"] ?? "").trim(),
         normalMin: Number(item.normalMin ?? item["最低需求"] ?? 0),
         reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休單批最低"] ?? item["備援目標"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
@@ -105,7 +103,7 @@ function normalizeRules(rows: unknown[]): StationRule[] {
         id: String(item.id ?? item["規則ID"] ?? item["唯一主鍵"] ?? "").trim(),
         team: String(item.team ?? item["班別"] ?? "").trim(),
         dayKey: String(item.dayKey ?? item["日別"] ?? "").trim(),
-        stationId: String(item.stationId ?? item["站點代碼"] ?? item["對應 02_站點主表"] ?? "").trim(),
+        stationId: String(item.stationId ?? item["站點代碼"] ?? "").trim(),
         minRequired: Number(item.minRequired ?? item["最低需求"] ?? 0),
         backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
