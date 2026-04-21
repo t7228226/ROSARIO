@@ -1,13 +1,15 @@
 import type { AppBootstrap, Person, Qualification, Station, StationRule } from "../types";
-import { mockBootstrap } from "./mockData";
 
 const API_URL =
   import.meta.env.VITE_GAS_API_URL ||
   "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
 
-const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
-
-let localCache: AppBootstrap = structuredClone(mockBootstrap);
+let localCache: AppBootstrap = {
+  people: [],
+  stations: [],
+  qualifications: [],
+  stationRules: [],
+};
 
 export interface LoginPayload {
   account: string;
@@ -142,10 +144,6 @@ function normalizeBootstrap(payload: unknown): AppBootstrap {
 }
 
 async function request<T>(action: string, payload?: unknown, method: "GET" | "POST" = "POST"): Promise<T> {
-  if (USE_MOCK) {
-    throw new Error("mock mode");
-  }
-
   if (method === "GET") {
     const url = new URL(API_URL);
     url.searchParams.set("action", action);
@@ -188,13 +186,6 @@ export async function fetchBootstrapData(): Promise<AppBootstrap> {
 }
 
 export async function loginWithAccount(payload: LoginPayload): Promise<LoginResult> {
-  if (USE_MOCK) {
-    const fallbackUser = localCache.people.find((person) => person.id === payload.account || person.name === payload.account);
-    return fallbackUser
-      ? { ok: true, message: "登入成功", user: fallbackUser }
-      : { ok: false, message: "查無此登入帳號" };
-  }
-
   const raw = await request<unknown>("login", payload, "POST");
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const ok = Boolean(obj.ok);
