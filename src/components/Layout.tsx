@@ -3,11 +3,10 @@ import type { ReactNode } from "react";
 interface LayoutProps {
   title: string;
   subtitle?: string;
-  actions?: ReactNode;
   children: ReactNode;
 }
 
-export default function Layout({ title, subtitle, actions, children }: LayoutProps) {
+export default function Layout({ title, subtitle, children }: LayoutProps) {
   return (
     <section className="page-section">
       <div className="page-header">
@@ -15,7 +14,6 @@ export default function Layout({ title, subtitle, actions, children }: LayoutPro
           <h2>{title}</h2>
           {subtitle ? <p>{subtitle}</p> : null}
         </div>
-        {actions ? <div className="page-actions">{actions}</div> : null}
       </div>
       {children}
     </section>
