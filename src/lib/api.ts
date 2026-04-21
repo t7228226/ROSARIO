@@ -157,7 +157,7 @@ async function request<T>(action: string, payload?: unknown, method: "GET" | "PO
   const response = await fetch(API_URL, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "text/plain;charset=utf-8",
     },
     body: JSON.stringify({ action, payload }),
   });
