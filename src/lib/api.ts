@@ -9,6 +9,17 @@ const USE_MOCK = String(import.meta.env.VITE_USE_MOCK || "false") !== "false";
 
 let localCache: AppBootstrap = structuredClone(mockBootstrap);
 
+export interface LoginPayload {
+  account: string;
+  password: string;
+}
+
+export interface LoginResult {
+  ok: boolean;
+  message: string;
+  user?: Person;
+}
+
 function ensureArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -17,31 +28,32 @@ function toBool(value: unknown) {
   return String(value ?? "").toUpperCase() === "Y" || String(value ?? "") === "啟用" || value === true;
 }
 
+function normalizePerson(item: Record<string, unknown>): Person {
+  return {
+    id: String(item.id ?? item["工號"] ?? "").trim(),
+    name: String(item.name ?? item["姓名"] ?? item["正式姓名"] ?? "").trim(),
+    shift: String(item.shift ?? item["班別"] ?? "").trim(),
+    role: String(item.role ?? item["職務"] ?? item["身分標籤"] ?? "").trim(),
+    nationality: String(item.nationality ?? item["國籍"] ?? "").trim(),
+    aDay1: String(item.aDay1 ?? item["(A)第一天"] ?? "").trim(),
+    aDay2: String(item.aDay2 ?? item["(A)第二天"] ?? "").trim(),
+    bDay1: String(item.bDay1 ?? item["(B)第一天"] ?? "").trim(),
+    bDay2: String(item.bDay2 ?? item["(B)第二天"] ?? "").trim(),
+    employmentStatus: String(item.employmentStatus ?? item["在職狀態"] ?? "").trim(),
+    note: String(item.note ?? item["備註"] ?? "").trim(),
+    systemPermission: String(
+      item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
+    ).trim(),
+    permissionLevel: String(
+      item.permissionLevel ?? item.systemPermission ?? item["權限等級"] ?? item["系統權限"] ?? item["權限"] ?? ""
+    ).trim(),
+    isSuperAdmin: toBool(item.isSuperAdmin ?? item["最高權限"] ?? item["是否最高權限"]),
+  } as Person;
+}
+
 function normalizePeople(rows: unknown[]): Person[] {
   return rows
-    .map((row) => {
-      const item = row as Record<string, unknown>;
-      return {
-        id: String(item.id ?? item["工號"] ?? "").trim(),
-        name: String(item.name ?? item["姓名"] ?? item["正式姓名"] ?? "").trim(),
-        shift: String(item.shift ?? item["班別"] ?? "").trim(),
-        role: String(item.role ?? item["職務"] ?? item["身分標籤"] ?? "").trim(),
-        nationality: String(item.nationality ?? item["國籍"] ?? "").trim(),
-        aDay1: String(item.aDay1 ?? item["(A)第一天"] ?? "").trim(),
-        aDay2: String(item.aDay2 ?? item["(A)第二天"] ?? "").trim(),
-        bDay1: String(item.bDay1 ?? item["(B)第一天"] ?? "").trim(),
-        bDay2: String(item.bDay2 ?? item["(B)第二天"] ?? "").trim(),
-        employmentStatus: String(item.employmentStatus ?? item["在職狀態"] ?? "").trim(),
-        note: String(item.note ?? item["備註"] ?? "").trim(),
-        systemPermission: String(
-          item.systemPermission ?? item.permissionLevel ?? item["系統權限"] ?? item["權限等級"] ?? item["權限"] ?? ""
-        ).trim(),
-        permissionLevel: String(
-          item.permissionLevel ?? item.systemPermission ?? item["權限等級"] ?? item["系統權限"] ?? item["權限"] ?? ""
-        ).trim(),
-        isSuperAdmin: toBool(item.isSuperAdmin ?? item["最高權限"] ?? item["是否最高權限"]),
-      } as Person;
-    })
+    .map((row) => normalizePerson(row as Record<string, unknown>))
     .filter((item) => {
       if (!item.id || !item.name) return false;
       if (item.id.includes("唯一主鍵") || item.name.includes("正式姓名") || item.shift.includes("下拉選單")) {
@@ -173,6 +185,22 @@ export async function fetchBootstrapData(): Promise<AppBootstrap> {
   } catch {
     return structuredClone(localCache);
   }
+}
+
+export async function loginWithAccount(payload: LoginPayload): Promise<LoginResult> {
+  if (USE_MOCK) {
+    const fallbackUser = localCache.people.find((person) => person.id === payload.account || person.name === payload.account);
+    return fallbackUser
+      ? { ok: true, message: "登入成功", user: fallbackUser }
+      : { ok: false, message: "查無此登入帳號" };
+  }
+
+  const raw = await request<unknown>("login", payload, "POST");
+  const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const ok = Boolean(obj.ok);
+  const message = String(obj.message ?? (ok ? "登入成功" : "登入失敗"));
+  const user = obj.user && typeof obj.user === "object" ? normalizePerson(obj.user as Record<string, unknown>) : undefined;
+  return { ok, message, user };
 }
 
 export async function upsertQualification(payload: Qualification): Promise<Qualification> {
