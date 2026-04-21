@@ -273,7 +273,8 @@ select {
 .primary,
 .ghost,
 .danger,
-.back-to-top {
+.back-to-top,
+.mobile-modal-close {
   width: auto;
   border: 0;
   border-radius: 10px;
@@ -454,6 +455,51 @@ select {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
 
+.mobile-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 100;
+  padding: 12px;
+}
+
+.mobile-modal {
+  width: min(100%, 720px);
+  max-height: 88vh;
+  background: white;
+  border-radius: 18px 18px 0 0;
+  overflow: hidden;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  box-shadow: 0 -8px 32px rgba(15, 23, 42, 0.2);
+}
+
+.mobile-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.mobile-modal-close {
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.mobile-modal-body {
+  overflow: auto;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     height: auto;
@@ -481,5 +527,9 @@ select {
   input,
   select {
     max-width: 100%;
+  }
+
+  .mobile-modal-backdrop {
+    align-items: flex-end;
   }
 }
