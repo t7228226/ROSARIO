@@ -198,11 +198,16 @@ export default function App() {
   }
 
   function scrollToTop(behavior: ScrollBehavior = "smooth") {
-    if (contentRef.current) {
+    if (contentRef.current && !isMobileView) {
       contentRef.current.scrollTo({ top: 0, behavior });
       return;
     }
     window.scrollTo({ top: 0, behavior });
+  }
+
+  function scrollMainIntoView(behavior: ScrollBehavior = "smooth") {
+    if (!contentRef.current) return;
+    contentRef.current.scrollIntoView({ behavior, block: "start" });
   }
 
   function scrollToSection(target: HTMLDivElement | null) {
@@ -216,6 +221,18 @@ export default function App() {
       return;
     }
     requestAnimationFrame(() => scrollToSection(target));
+  }
+
+  function handleNavigate(nextPage: PageKey) {
+    setPage(nextPage);
+    setMobileDetailModal(null);
+    if (isMobileView) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollMainIntoView("smooth");
+        });
+      });
+    }
   }
 
   useEffect(() => {
@@ -248,18 +265,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isMobileView) {
+      requestAnimationFrame(() => {
+        scrollMainIntoView("smooth");
+      });
+      return;
+    }
     scrollToTop("auto");
     setMobileDetailModal(null);
-  }, [page]);
+  }, [page, isMobileView]);
 
   useEffect(() => {
     const node = contentRef.current;
-    if (!node) return;
+    if (!node || isMobileView) return;
     const onScroll = () => setShowBackToTop(node.scrollTop > 280);
     node.addEventListener("scroll", onScroll, { passive: true });
     onScroll();
     return () => node.removeEventListener("scroll", onScroll);
-  }, [loading]);
+  }, [loading, isMobileView]);
+
+  useEffect(() => {
+    const onWindowScroll = () => setShowBackToTop(window.scrollY > 280);
+    if (!isMobileView) return;
+    window.addEventListener("scroll", onWindowScroll, { passive: true });
+    onWindowScroll();
+    return () => window.removeEventListener("scroll", onWindowScroll);
+  }, [isMobileView]);
 
   useEffect(() => {
     setReviewKeyword("");
@@ -619,7 +650,7 @@ export default function App() {
             )}
           </div>
           <nav className="nav-list">
-            {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => setPage(item.key)}>{item.label}</button>)}
+            {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => handleNavigate(item.key)}>{item.label}</button>)}
           </nav>
         </aside>
         <main className="content" ref={contentRef}>
