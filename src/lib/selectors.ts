@@ -78,6 +78,15 @@ function countByNationality(people: Person[]) {
   return { localCount, filipinoCount, vietnamCount, totalCount: people.length };
 }
 
+function dedupePeople(people: Person[]) {
+  const seen = new Set<string>();
+  return people.filter((person) => {
+    if (seen.has(person.id)) return false;
+    seen.add(person.id);
+    return true;
+  });
+}
+
 export function getAttendanceForTeam(
   people: Person[],
   selectedTeam: TeamName,
@@ -107,10 +116,10 @@ export function getAttendanceForTeam(
   );
 
   const support = baseActive.filter(
-    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === supportDuty
+    (person) => getTeamOfPerson(person) === supportTeam && getOwnDayValue(person, supportTeam, mode) === ownDuty
   );
 
-  const merged = [...own, ...support.filter((person) => !own.some((item) => item.id === person.id))];
+  const merged = dedupePeople([...own, ...support]);
 
   return {
     own,
