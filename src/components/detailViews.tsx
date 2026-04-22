@@ -1,5 +1,6 @@
 import {
-  getPersonDutyDisplay,
+  getOwnAttendanceLabel,
+  getOwnGroupDutyDisplay,
   getTeamOfPerson,
   qualificationBadge,
 } from "../lib/selectors";
@@ -10,7 +11,7 @@ export function Info({ label, value, compact = false }: { label: string; value: 
 }
 
 export function PersonDetailView({ person, qualifications, compact = false }: { person: Person; qualifications: Qualification[]; compact?: boolean }) {
-  const duty = getPersonDutyDisplay(person);
+  const duty = getOwnGroupDutyDisplay(person);
   if (compact) {
     return (
       <>
@@ -22,11 +23,11 @@ export function PersonDetailView({ person, qualifications, compact = false }: { 
           <Info compact label="國籍" value={person.nationality} />
         </div>
         <div className="compact-info-grid five-up">
-          <Info compact label="(A)第一天" value={duty.aDay1} />
-          <Info compact label="(A)第二天" value={duty.aDay2} />
-          <Info compact label="(B)第一天" value={duty.bDay1} />
-          <Info compact label="(B)第二天" value={duty.bDay2} />
+          <Info compact label="第一天" value={duty.firstDay} />
+          <Info compact label="第二天" value={duty.secondDay} />
           <Info compact label="資格數" value={String(qualifications.length)} />
+          <Info compact label="在職狀態" value={person.employmentStatus} />
+          <Info compact label="備註" value={person.note || "-"} />
         </div>
         <table className="table compact-table">
           <thead><tr><th>站點</th><th>狀態</th></tr></thead>
@@ -50,11 +51,11 @@ export function PersonDetailView({ person, qualifications, compact = false }: { 
         <Info label="姓名" value={person.name} />
         <Info label="職務" value={person.role} />
         <Info label="班別" value={String(getTeamOfPerson(person))} />
-        <Info label="(A)第一天" value={duty.aDay1} />
-        <Info label="(A)第二天" value={duty.aDay2} />
         <Info label="國籍" value={person.nationality} />
-        <Info label="(B)第一天" value={duty.bDay1} />
-        <Info label="(B)第二天" value={duty.bDay2} />
+        <Info label="第一天" value={duty.firstDay} />
+        <Info label="第二天" value={duty.secondDay} />
+        <Info label="在職狀態" value={person.employmentStatus} />
+        <Info label="備註" value={person.note || "-"} />
       </div>
       <table className="table">
         <thead><tr><th>站點</th><th>狀態</th></tr></thead>
@@ -91,15 +92,13 @@ export function StationDetailView({
     own: Person[];
     support: Person[];
     supportTeam?: string;
-    supportDuty?: string;
   };
   qualifications: Qualification[];
   people: Person[];
   compact?: boolean;
 }) {
-  const ownLabel = day === "當班" ? "本班人力" : "本班出勤";
+  const ownLabel = getOwnAttendanceLabel(day as "當班" | "第一天" | "第二天");
   const supportTeamLabel = day === "當班" || attendance.support.length === 0 ? "-" : attendance.supportTeam || "-";
-  const supportDutyLabel = day === "當班" || attendance.support.length === 0 ? "-" : attendance.supportDuty || "-";
 
   if (compact) {
     return (
@@ -120,10 +119,10 @@ export function StationDetailView({
         </div>
         <div className="compact-info-grid five-up">
           <Info compact label="支援對班" value={supportTeamLabel} />
-          <Info compact label="支援代號" value={supportDutyLabel} />
           <Info compact label="本班名單" value={String(attendance.own.length)} />
           <Info compact label="支援名單" value={String(attendance.support.length)} />
           <Info compact label="候選總數" value={String(qualifications.length)} />
+          <Info compact label="來源口徑" value="本班 / 支援" />
         </div>
         <table className="table compact-table">
           <thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead>
@@ -160,7 +159,6 @@ export function StationDetailView({
         <Info label={ownLabel} value={String(attendance.own.length)} />
         <Info label="支援人力" value={String(attendance.support.length)} />
         <Info label="支援對班" value={supportTeamLabel} />
-        <Info label="支援代號" value={supportDutyLabel} />
       </div>
       <table className="table">
         <thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>來源</th><th>資格</th></tr></thead>
@@ -208,7 +206,7 @@ export function ReviewDetailView({
   onDelete: (employeeId: string, stationId: string) => void;
   compact?: boolean;
 }) {
-  const duty = getPersonDutyDisplay(person);
+  const duty = getOwnGroupDutyDisplay(person);
   return (
     <>
       <div className={compact ? "compact-info-grid five-up" : "detail-grid"}>
@@ -219,11 +217,11 @@ export function ReviewDetailView({
         <Info compact={compact} label="系統權限" value={permission} />
       </div>
       <div className={compact ? "compact-info-grid five-up" : "detail-grid"}>
-        <Info compact={compact} label="(A)第一天" value={duty.aDay1} />
-        <Info compact={compact} label="(A)第二天" value={duty.aDay2} />
-        <Info compact={compact} label="(B)第一天" value={duty.bDay1} />
-        <Info compact={compact} label="(B)第二天" value={duty.bDay2} />
+        <Info compact={compact} label="第一天" value={duty.firstDay} />
+        <Info compact={compact} label="第二天" value={duty.secondDay} />
         <Info compact={compact} label="資格數" value={String(qualifications.length)} />
+        <Info compact={compact} label="在職狀態" value={person.employmentStatus} />
+        <Info compact={compact} label="備註" value={person.note || "-"} />
       </div>
       <div className="form-grid compact-form">
         <div>
