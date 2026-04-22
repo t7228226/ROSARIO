@@ -1,6 +1,6 @@
 # 站點資格管理 App
 
-這是一套依照「B班原始 Excel 升級成通用型系統」思路製作的 React + TypeScript 網頁 App。
+這是一套依照「站點資格管理通用邏輯」製作的 React + TypeScript 網頁 App。
 
 ## 已完成方向
 
@@ -23,8 +23,8 @@
   - 避免重複新增同一人同一站點
   - 站點/人員不存在時阻擋送出
 - 通用化
-  - 不綁死 B 班
-  - 以班別 / 第一天 / 第二天模式切換分析
+  - 以四班共用邏輯運作
+  - 以班別 / 當班 / 第一天 / 第二天模式切換分析
 - 手機測試友善
   - 已加入 GitHub Pages 自動部署 workflow
   - 可部署後直接以手機開網址測試
@@ -92,7 +92,8 @@ VITE_USE_MOCK=true
 {
   "people": [],
   "stations": [],
-  "qualifications": []
+  "qualifications": [],
+  "stationRules": []
 }
 ```
 
@@ -131,11 +132,13 @@ VITE_USE_MOCK=true
   "action": "updateStationRule",
   "payload": {
     "id": "STR",
-    "normalMin": 4,
-    "reliefMinPerBatch": 2,
+    "team": "婷芬班",
+    "dayKey": "第一天",
+    "stationId": "STR",
+    "minRequired": 4,
+    "backupTarget": 2,
     "priority": 1,
-    "isMandatory": true,
-    "backupTarget": 4
+    "isMandatory": true
   }
 }
 ```
@@ -149,11 +152,13 @@ VITE_USE_MOCK=true
   "payload": {
     "id": "P0001",
     "name": "王小明",
-    "shift": "B班",
+    "shift": "婷芬班",
     "role": "作業員",
     "nationality": "台籍",
-    "day1": "Y",
-    "day2": "N",
+    "aDay1": "日A",
+    "aDay2": "日A",
+    "bDay1": "",
+    "bDay2": "",
     "employmentStatus": "在職"
   }
 }
