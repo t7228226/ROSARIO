@@ -68,12 +68,12 @@ function normalizeStations(rows: unknown[]): Station[] {
       return {
         id: String(item.id ?? item["站點代碼"] ?? "").trim(),
         name: String(item.name ?? item["站點名稱"] ?? "").trim(),
-        normalMin: Number(item.normalMin ?? item["最低需求"] ?? 0),
-        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休單批最低"] ?? item["備援目標"] ?? 0),
+        normalMin: Number(item.normalMin ?? item["正班最低人數"] ?? item["最低需求"] ?? 0),
+        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休最低人數"] ?? item["輪休單批最低"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
         isMandatory: toBool(item.isMandatory ?? item["是否必站"]),
-        backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
-        description: String(item.description ?? item["說明"] ?? "").trim(),
+        backupTarget: Number(item.backupTarget ?? item["備援目標人數"] ?? item["備援目標"] ?? 0),
+        description: String(item.description ?? item["站點群組"] ?? item["說明"] ?? "").trim(),
         note: String(item.note ?? item["備註"] ?? "").trim(),
       } as Station;
     })
