@@ -146,15 +146,8 @@ export function getAttendanceForTeam(people: Person[], selectedTeam: TeamName, m
   };
 }
 
-export function getRuleDayKey(_team: TeamName, mode: ShiftMode): string {
-  return mode;
-}
-
-export function getApplicableRules(team: TeamName, mode: ShiftMode, stationRules: StationRule[]): StationRule[] {
-  const targetKey = getRuleDayKey(team, mode);
-  const matched = stationRules.filter(
-    (rule) => rule.team === team && rule.dayKey === targetKey && rule.enabled !== false
-  );
+export function getApplicableRules(team: TeamName, _mode: ShiftMode, stationRules: StationRule[]): StationRule[] {
+  const matched = stationRules.filter((rule) => rule.team === team && rule.enabled !== false);
   return [...matched].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 }
 
