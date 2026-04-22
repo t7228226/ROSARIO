@@ -42,9 +42,10 @@ export interface Station {
 export interface StationRule {
   id: string;
   team: string;
-  dayKey: string;
+  dayKey?: string;
   stationId: string;
   minRequired: number;
+  reliefMinPerBatch?: number | null;
   backupTarget?: number | null;
   priority?: number | null;
   isMandatory?: boolean | null;
