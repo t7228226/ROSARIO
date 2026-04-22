@@ -8,6 +8,8 @@ export type TeamName = "婷芬班" | "美香班" | "俊志班" | "翊展班";
 
 export type SmartScheduleMode = "當班優先" | "支援優先" | "資格優先";
 
+export type AssignmentSource = "本班" | "支援";
+
 export interface Person {
   id: string;
   name: string;
@@ -72,8 +74,6 @@ export interface AttendanceSummary {
   own: Person[];
   support: Person[];
   all: Person[];
-  ownDuty: string;
-  supportDuty: string;
   supportTeam: TeamName;
   localCount: number;
   filipinoCount: number;
@@ -85,5 +85,5 @@ export interface SmartAssignmentRow {
   stationId: string;
   assigned: Person[];
   shortage: number;
-  source: string[];
+  source: AssignmentSource[];
 }
