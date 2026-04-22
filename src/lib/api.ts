@@ -105,17 +105,18 @@ function normalizeRules(rows: unknown[]): StationRule[] {
         dayKey: String(item.dayKey ?? item["日別"] ?? "").trim(),
         stationId: String(item.stationId ?? item["站點代碼"] ?? "").trim(),
         minRequired: Number(item.minRequired ?? item["最低需求"] ?? 0),
+        reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休需求(單批)"] ?? item["輪休需求"] ?? item["輪休單批最低"] ?? 0),
         backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
-        isMandatory: toBool(item.isMandatory ?? item["是否必站"]),
-        trainingCanFill: toBool(item.trainingCanFill ?? item["訓練中可補位"]),
+        isMandatory: toBool(item.isMandatory ?? item["必站"] ?? item["是否必站"]),
+        trainingCanFill: toBool(item.trainingCanFill ?? item["訓練中"] ?? item["訓練中可補位"]),
         qualificationLimit: String(item.qualificationLimit ?? item["資格限制"] ?? "不限").trim(),
-        canShare: toBool(item.canShare ?? item["可否共用人力"]),
+        canShare: toBool(item.canShare ?? item["支援補位"] ?? item["可否共用人力"]),
         enabled: String(item.enabled ?? item["啟用狀態"] ?? "") !== "停用",
         note: String(item.note ?? item["備註"] ?? "").trim(),
       } as StationRule;
     })
-    .filter((item) => item.stationId && item.team && item.dayKey && !item.id.includes("唯一主鍵"));
+    .filter((item) => item.stationId && item.team && !item.id.includes("唯一主鍵"));
 }
 
 function normalizeBootstrap(payload: unknown): AppBootstrap {
