@@ -336,7 +336,7 @@ select {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 14px;
 }
@@ -347,21 +347,16 @@ select {
   margin-bottom: 12px;
 }
 
-.compact-info-grid.three-up {
-  grid-template-columns: repeat(3, minmax(120px, 1fr));
-}
-
-.compact-info-grid.four-up {
-  grid-template-columns: repeat(4, minmax(120px, 1fr));
-}
-
-.compact-info-grid.five-up {
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+.compact-info-grid.three-up,
+.compact-info-grid.four-up,
+.compact-info-grid.five-up,
+.compact-info-grid.six-up {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(7, minmax(120px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -398,6 +393,7 @@ select {
   padding: 10px;
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .info-item.compact {
@@ -574,12 +570,6 @@ select {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
 }
 
-@media (max-width: 1100px) {
-  .summary-strip {
-    grid-template-columns: repeat(4, minmax(120px, 1fr));
-  }
-}
-
 @media (max-width: 900px) {
   .app-shell {
     height: auto;
@@ -599,9 +589,17 @@ select {
 
   .grid.three,
   .grid.two,
-  .form-grid,
-  .detail-grid {
+  .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .detail-grid,
+  .compact-info-grid.three-up,
+  .compact-info-grid.four-up,
+  .compact-info-grid.five-up,
+  .compact-info-grid.six-up,
+  .summary-strip {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
   input,
@@ -611,21 +609,6 @@ select {
 
   .mobile-modal-backdrop {
     align-items: flex-end;
-  }
-
-  .compact-info-grid,
-  .summary-strip {
-    overflow-x: auto;
-    padding-bottom: 2px;
-  }
-
-  .compact-info-grid.three-up,
-  .compact-info-grid.four-up,
-  .compact-info-grid.five-up,
-  .summary-strip {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(132px, 1fr);
-    grid-template-columns: none;
   }
 
   .mobile-modal {
