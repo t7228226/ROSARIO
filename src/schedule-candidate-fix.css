@@ -1,12 +1,12 @@
-/* 站點試排候選人小方塊：固定三段排列，只露出姓名、工號、班別；不顯示國籍 */
+/* 站點試排候選人小方塊：固定三段排列，只顯示姓名、工號、班別，不顯示國籍 */
 .list-scroll.short .list-row {
   width: 112px !important;
-  min-height: 78px !important;
+  min-height: 88px !important;
   padding: 8px 10px !important;
   display: grid !important;
   grid-template-rows: auto auto auto !important;
   align-content: start !important;
-  gap: 3px !important;
+  gap: 4px !important;
 }
 
 .list-scroll.short .list-row strong {
@@ -19,14 +19,23 @@
   text-overflow: ellipsis !important;
 }
 
-.list-scroll.short .list-row span {
-  display: block !important;
-  width: 86px !important;
-  max-width: 86px !important;
+.list-scroll.short .list-row > span {
+  display: grid !important;
+  gap: 2px !important;
+  width: 100% !important;
+  max-width: 100% !important;
   font-size: 11px !important;
   line-height: 1.25 !important;
+  color: #64748b !important;
+  white-space: normal !important;
+  overflow: hidden !important;
+}
+
+.list-scroll.short .candidate-code,
+.list-scroll.short .candidate-team {
+  display: block !important;
+  width: 100% !important;
   white-space: nowrap !important;
   overflow: hidden !important;
-  text-overflow: clip !important;
-  word-break: keep-all !important;
+  text-overflow: ellipsis !important;
 }
