@@ -165,13 +165,15 @@ async function updateScheduleTip(section: Element) {
 }
 
 function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
+  Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short")).forEach((list) => {
+    if (!frame.contains(list)) list.remove();
+  });
   Array.from(panel.children).forEach((child) => {
     if (child === frame) return;
     if (!(child instanceof HTMLElement)) return;
     if (child.querySelector("h3") || child.querySelector("button") || child.classList.contains("schedule-two-area-frame")) return;
-    const hasShortTags = child.querySelector(".list-row, .candidate-chip") || child.classList.contains("list-row") || child.classList.contains("candidate-chip");
-    const text = (child.textContent || "").trim();
-    if (hasShortTags && text && !child.closest(".schedule-two-area-frame")) child.remove();
+    const hasTags = child.querySelector(".list-row, .candidate-chip") || child.classList.contains("list-row") || child.classList.contains("candidate-chip");
+    if (hasTags && !frame.contains(child)) child.remove();
   });
 }
 
@@ -182,8 +184,9 @@ function forcePanelLayout(panel: Element) {
     customButton.style.float = "right";
     customButton.style.marginRight = "18px";
   }
-  const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
-  let frame = panel.querySelector(".schedule-two-area-frame") as HTMLElement | null;
+  const existingFrame = panel.querySelector(".schedule-two-area-frame") as HTMLElement | null;
+  const wrap = existingFrame?.querySelector(".list-scroll.short") as HTMLElement | null || panel.querySelector(".list-scroll.short") as HTMLElement | null;
+  let frame = existingFrame;
   if (!frame) {
     frame = document.createElement("div");
     frame.className = "schedule-two-area-frame";
@@ -232,7 +235,7 @@ function classifyScheduleTags(section: Element) {
         tag.classList.add("schedule-tag-pending");
       }
     });
-    const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
+    const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
     if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
   });
 }
