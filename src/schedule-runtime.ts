@@ -35,14 +35,18 @@ async function getBootstrapData() {
   return loadingData;
 }
 
-function getScheduleSections() {
-  return Array.from(document.querySelectorAll(".page-section")).filter((section) => {
-    const title = section.querySelector("h2")?.textContent || "";
-    return title.includes("站點試排") || title.includes("智能試排");
+function getScheduleSummaryStrips() {
+  return Array.from(document.querySelectorAll(".summary-strip")).filter((strip) => {
+    const section = strip.closest(".page-section") || strip.parentElement;
+    const title = section?.querySelector("h2")?.textContent || "";
+    const labels = Array.from(strip.querySelectorAll(":scope > .summary-card span")).map((span) => span.textContent?.trim() || "");
+    const hasScheduleLabels = labels.some((label) => ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"].includes(label));
+    return title.includes("站點試排") || title.includes("智能試排") || hasScheduleLabels;
   });
 }
 
-function getSelectedScheduleMode(section: Element) {
+function getSelectedScheduleMode(strip: Element) {
+  const section = strip.closest(".page-section") || strip.parentElement || document.body;
   const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value);
   const team = values.find((value) => teamSet.has(value)) as TeamName | undefined;
   const day = values.find((value) => daySet.has(value)) as ShiftMode | undefined;
@@ -50,21 +54,16 @@ function getSelectedScheduleMode(section: Element) {
   return { team, day };
 }
 
-function getAssignedCount(cards: Element[], section: Element) {
-  const labelValues = cards.map((card) => ({
-    label: card.querySelector("span")?.textContent?.trim() || "",
-    value: readStrong(card),
-  }));
-
-  const uniqueCard = labelValues.find((item) => item.label === "唯一人數" || item.label === "已排人數" || item.label === "已排總人數");
-  if (uniqueCard) {
-    return uniqueCard.value;
-  }
+function getAssignedCount(cards: Element[], strip: Element) {
+  const section = strip.closest(".page-section") || strip.parentElement || document.body;
+  const assignedCard = cards.find((card) => {
+    const label = card.querySelector("span")?.textContent?.trim();
+    return label === "已排總人數" || label === "已排人數";
+  });
+  if (assignedCard) return readStrong(assignedCard);
 
   const stored = cards[0]?.getAttribute("data-schedule-assigned");
-  if (stored !== null && stored !== undefined) {
-    return Number(stored) || 0;
-  }
+  if (stored !== null && stored !== undefined) return Number(stored) || 0;
 
   const activePeople = new Set<string>();
   section.querySelectorAll(".list-scroll.short .list-row.active strong").forEach((node) => {
@@ -75,17 +74,18 @@ function getAssignedCount(cards: Element[], section: Element) {
 }
 
 function writeSummaryCards(cards: Element[], total: number, pending: number, support: number, assigned: number) {
-  if (cards.length < 3) return;
+  if (cards.length < 4) return;
   cards[0].setAttribute("data-schedule-assigned", String(assigned));
 
   setText(cards[0].querySelector("span"), "出勤總人數");
   setText(cards[0].querySelector("strong"), String(total));
 
-  setText(cards[1].querySelector("span"), "尚未安排人數");
-  setText(cards[1].querySelector("strong"), String(pending));
+  // 第 2 張卡保留「已排總人數」。使用者要求修改的是原第 3 張「唯一人數」。
+  setText(cards[2].querySelector("span"), "尚未安排人數");
+  setText(cards[2].querySelector("strong"), String(pending));
 
-  setText(cards[2].querySelector("span"), "支援人數");
-  setText(cards[2].querySelector("strong"), String(support));
+  setText(cards[3].querySelector("span"), "支援人數");
+  setText(cards[3].querySelector("strong"), String(support));
 }
 
 function ensureFloatingTip() {
@@ -110,28 +110,46 @@ function updateFloatingTip(assigned: number, pending: number) {
   tip.classList.add("show");
 }
 
+function syncLabelsImmediately() {
+  for (const strip of getScheduleSummaryStrips()) {
+    const cards = Array.from(strip.querySelectorAll(":scope > .summary-card"));
+    if (cards.length < 4) continue;
+    const total = readStrong(cards[0]);
+    const assigned = getAssignedCount(cards, strip);
+    const pending = Math.max(0, total - assigned);
+    const supportFallback = readStrong(cards[3]);
+    writeSummaryCards(cards, total, pending, supportFallback, assigned);
+  }
+}
+
 async function syncScheduleSummary() {
-  const data = await getBootstrapData();
+  syncLabelsImmediately();
+
+  let data: AppBootstrap | null = null;
+  try {
+    data = await getBootstrapData();
+  } catch {
+    data = null;
+  }
+
   let activeAssigned = 0;
   let activePending = 0;
 
-  for (const section of getScheduleSections()) {
-    const mode = getSelectedScheduleMode(section);
-    const strip = section.querySelector(".summary-strip");
-    if (!mode || !strip) continue;
-
+  for (const strip of getScheduleSummaryStrips()) {
     const cards = Array.from(strip.querySelectorAll(":scope > .summary-card"));
-    if (cards.length < 3) continue;
+    if (cards.length < 4) continue;
 
-    const attendance = getAttendanceForTeam(data.people, mode.team, mode.day);
-    const total = attendance.all.length;
-    const support = attendance.support.length;
-    const assigned = getAssignedCount(cards, section);
+    const mode = getSelectedScheduleMode(strip);
+    const assigned = getAssignedCount(cards, strip);
+    const currentTotal = readStrong(cards[0]);
+    const attendance = data && mode ? getAttendanceForTeam(data.people, mode.team, mode.day) : null;
+    const total = attendance ? attendance.all.length : currentTotal;
+    const support = attendance ? attendance.support.length : readStrong(cards[3]);
     const pending = Math.max(0, total - assigned);
 
     writeSummaryCards(cards, total, pending, support, assigned);
 
-    const rect = section.getBoundingClientRect();
+    const rect = strip.getBoundingClientRect();
     const isVisible = rect.width > 0 && rect.height > 0;
     if (isVisible && assigned > 0) {
       activeAssigned = assigned;
@@ -143,6 +161,7 @@ async function syncScheduleSummary() {
 }
 
 function scheduleSync() {
+  syncLabelsImmediately();
   window.requestAnimationFrame(() => {
     syncScheduleSummary().catch(() => undefined);
   });
@@ -163,4 +182,6 @@ export function installScheduleRuntime() {
   }
 
   scheduleSync();
+  window.setTimeout(scheduleSync, 250);
+  window.setTimeout(scheduleSync, 1000);
 }
