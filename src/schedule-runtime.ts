@@ -34,9 +34,10 @@ function removeScheduleSummaryRows() {
   });
 
   rows.forEach((row) => {
-    (row as HTMLElement).style.display = "none";
-    row.setAttribute("data-schedule-summary-removed", "true");
+    row.remove();
   });
+
+  document.querySelectorAll(".floating-schedule-tip").forEach((node) => node.remove());
 }
 
 function scheduleRemove() {
