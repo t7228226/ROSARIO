@@ -10,11 +10,16 @@ const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"];
 const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [class*='panel'], [class*='card']";
+const removableScheduleTagSelectors = ".candidate-chip, .list-row, .chip, .tag, .pill, button";
 
 async function getBootstrapData() {
   if (cachedData) return cachedData;
   if (!loadingData) loadingData = fetchBootstrapData().then((data) => (cachedData = data));
   return loadingData;
+}
+
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, "").trim();
 }
 
 function hasScheduleSummaryText(node: Element) {
@@ -180,6 +185,37 @@ function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
   });
 }
 
+function removeLooseScheduleTags(panel: Element, frame: HTMLElement) {
+  const frameNames = new Set<string>();
+  frame.querySelectorAll<HTMLElement>(".list-row, .candidate-chip").forEach((tag) => {
+    const name = normalizeText(getTagName(tag));
+    if (name) frameNames.add(name);
+  });
+
+  panel.querySelectorAll<HTMLElement>(removableScheduleTagSelectors).forEach((node) => {
+    if (frame.contains(node)) return;
+    const text = normalizeText(getTagName(node));
+    if (!text || text.includes("自訂人選")) return;
+    if (!frameNames.has(text)) return;
+
+    const removable = node.closest<HTMLElement>(removableScheduleTagSelectors) || node;
+    removable.style.display = "none";
+    removable.remove();
+  });
+
+  Array.from(panel.children).forEach((child) => {
+    if (child === frame || frame.contains(child)) return;
+    if (child.querySelector("button")?.textContent?.includes("自訂人選")) return;
+    const text = normalizeText(child.textContent || "");
+    if (!text) return;
+    const containsOnlyScheduleNames = Array.from(frameNames).some((name) => text.includes(name)) && !text.includes("已安排") && !text.includes("尚未安排");
+    if (containsOnlyScheduleNames) {
+      (child as HTMLElement).style.display = "none";
+      child.remove();
+    }
+  });
+}
+
 function forcePanelLayout(panel: Element) {
   panel.querySelectorAll(".schedule-section-headings, .schedule-fixed-title").forEach((node) => node.remove());
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
@@ -217,6 +253,7 @@ function forcePanelLayout(panel: Element) {
     Array.from(assignedTags.querySelectorAll<HTMLElement>(".list-row:not(.active), .candidate-chip:not(.active)")).forEach((tag) => wrap?.appendChild(tag));
   }
   removeOriginalMiniChips(panel, frame);
+  removeLooseScheduleTags(panel, frame);
 }
 
 function classifyScheduleTags(section: Element) {
