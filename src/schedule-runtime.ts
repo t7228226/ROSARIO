@@ -5,7 +5,6 @@ import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
-let confirmedConflictClick: Element | null = null;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
@@ -117,6 +116,11 @@ function getAssignedMap(section: Element) {
   return map;
 }
 
+function findTagByName(panel: Element, name: string, activeOnly = false) {
+  const selector = activeOnly ? ".list-scroll.short .list-row.active, .candidate-chip.active" : ".list-scroll.short .list-row, .candidate-chip";
+  return Array.from(panel.querySelectorAll<HTMLElement>(selector)).find((tag) => getTagName(tag) === name) || null;
+}
+
 function countAssignedPeople(section: Element) {
   return getAssignedMap(section).size;
 }
@@ -211,23 +215,23 @@ function conflictPromptHandler(event: Event) {
   const target = event.target as Element | null;
   const tag = target?.closest(".list-scroll.short .list-row.schedule-tag-conflict, .candidate-chip.schedule-tag-conflict") as HTMLElement | null;
   if (!tag) return;
-  if (confirmedConflictClick === tag) {
-    confirmedConflictClick = null;
-    return;
-  }
   const section = getVisibleScheduleSection();
   const toPanel = tag.closest(".panel");
   if (!section || !toPanel) return;
   const name = getTagName(tag);
   const fromPanel = getAssignedMap(section).get(name);
-  if (!name || !fromPanel) return;
+  if (!name || !fromPanel || fromPanel === toPanel) return;
   event.preventDefault();
   event.stopPropagation();
   const ok = window.confirm(`${name} 已安排在「${getStationTitle(fromPanel)}」。是否更換到「${getStationTitle(toPanel)}」？`);
-  if (ok) {
-    confirmedConflictClick = tag;
-    window.setTimeout(() => tag.click(), 0);
-  }
+  if (!ok) return;
+  const oldTag = findTagByName(fromPanel, name, true);
+  if (oldTag) oldTag.click();
+  window.setTimeout(() => {
+    const newTag = findTagByName(toPanel, name, false);
+    if (newTag) newTag.click();
+    window.setTimeout(scheduleRuntime, 30);
+  }, 30);
 }
 
 function scheduleRuntime() {
