@@ -1,5 +1,6 @@
 /* 站點試排專用：候選人改為按鈕標籤，不再沿用人員清單外觀 */
-.list-scroll.short {
+.list-scroll.short,
+.schedule-area-tags {
   max-height: none;
   overflow: visible;
   display: flex;
@@ -8,24 +9,28 @@
   gap: 8px;
 }
 
-.list-scroll.short .list-row {
-  width: auto;
-  min-width: 74px;
-  min-height: 38px;
-  padding: 8px 12px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+.list-scroll.short .list-row,
+.schedule-area-tags .list-row,
+.schedule-area-tags .candidate-chip {
+  width: auto !important;
+  min-width: 74px !important;
+  min-height: 38px !important;
+  padding: 8px 12px !important;
+  border-radius: 999px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
   background: #f8fafc;
   border: 1px solid #cbd5e1;
   color: #172033;
   text-align: center;
-  box-shadow: none;
+  box-shadow: none !important;
 }
 
-.list-scroll.short .list-row strong {
+.list-scroll.short .list-row strong,
+.schedule-area-tags .list-row strong,
+.schedule-area-tags .candidate-chip strong {
   font-size: 14px;
   line-height: 1;
   color: #0f172a;
@@ -35,23 +40,59 @@
 }
 
 .list-scroll.short .list-row span,
-.list-scroll.short .list-row small {
+.list-scroll.short .list-row small,
+.schedule-area-tags .list-row span,
+.schedule-area-tags .list-row small,
+.schedule-area-tags .candidate-chip span,
+.schedule-area-tags .candidate-chip small {
   display: none !important;
 }
 
-.list-scroll.short .list-row.active {
+.list-scroll.short .list-row.active,
+.schedule-area-tags .list-row.active,
+.schedule-area-tags .candidate-chip.active {
   background: #2563eb;
   border-color: #2563eb;
   color: white;
 }
 
-.list-scroll.short .list-row.active strong {
+.list-scroll.short .list-row.active strong,
+.schedule-area-tags .list-row.active strong,
+.schedule-area-tags .candidate-chip.active strong {
   color: white;
 }
 
-.list-scroll.short .list-row:focus-visible {
+.list-scroll.short .list-row:focus-visible,
+.schedule-area-tags .list-row:focus-visible,
+.schedule-area-tags .candidate-chip:focus-visible {
   outline: 3px solid rgba(37, 99, 235, 0.28);
   outline-offset: 2px;
+}
+
+.schedule-two-area-frame {
+  width: 100%;
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.schedule-area {
+  width: 100%;
+}
+
+.schedule-area-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.schedule-area-assigned .schedule-area-tags {
+  min-height: 38px;
+}
+
+.schedule-area-pending .list-scroll.short {
+  margin-top: 0;
 }
 
 /* === 新增分類顏色 === */
@@ -80,16 +121,6 @@
   border: 1px solid #cbd5e1 !important;
   color: #172033 !important;
 }
-
-/* === 新增分組顯示 === */
-.schedule-tag-groups{display:flex;flex-direction:column;gap:6px;margin-top:6px}
-.schedule-group{display:flex;flex-direction:column;gap:4px}
-.schedule-group-title{font-size:12px;font-weight:700;color:#475569}
-.schedule-group-tags{display:flex;flex-wrap:wrap;gap:6px}
-.schedule-mirror-tag{border-radius:999px;padding:6px 10px;font-size:13px;font-weight:700;border:1px solid #cbd5e1;background:#f8fafc;color:#172033;cursor:pointer}
-.schedule-mirror-tag.schedule-tag-selected{background:#2563eb;border:2px solid #22c55e;color:#fff}
-.schedule-mirror-tag.schedule-tag-conflict{background:#fee2e2;border:2px solid #ef4444;color:#7f1d1d}
-.schedule-mirror-tag.schedule-tag-pending{background:#f8fafc;border:1px solid #cbd5e1;color:#172033}
 
 .square-schedule-tip {
   position: fixed !important;
@@ -123,14 +154,17 @@
 }
 
 @media (max-width: 900px) {
-  .list-scroll.short {
+  .list-scroll.short,
+  .schedule-area-tags {
     gap: 7px;
   }
 
-  .list-scroll.short .list-row {
-    min-width: 68px;
-    min-height: 36px;
-    padding: 8px 11px;
+  .list-scroll.short .list-row,
+  .schedule-area-tags .list-row,
+  .schedule-area-tags .candidate-chip {
+    min-width: 68px !important;
+    min-height: 36px !important;
+    padding: 8px 11px !important;
   }
 
   .square-schedule-tip {
