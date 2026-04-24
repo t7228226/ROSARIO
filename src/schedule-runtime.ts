@@ -165,56 +165,61 @@ async function updateScheduleTip(section: Element) {
 }
 
 function forcePanelLayout(panel: Element) {
+  panel.querySelectorAll(".schedule-section-headings, .schedule-fixed-title").forEach((node) => node.remove());
+
   const h3 = panel.querySelector("h3") as HTMLElement | null;
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
   if (h3 && customButton) {
-    h3.style.display = "inline-flex";
-    h3.style.alignItems = "center";
-    h3.style.marginRight = "20px";
-    customButton.style.display = "inline-flex";
-    customButton.style.marginLeft = "20px";
-    customButton.style.verticalAlign = "middle";
+    customButton.style.float = "right";
+    customButton.style.marginRight = "18px";
   }
 
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
-  if (!wrap) return;
-  panel.querySelectorAll(".schedule-section-headings").forEach((node) => node.remove());
-  let assignedTitle = panel.querySelector(".schedule-title-assigned") as HTMLElement | null;
-  let pendingTitle = panel.querySelector(".schedule-title-pending") as HTMLElement | null;
-  if (!assignedTitle) {
-    assignedTitle = document.createElement("div");
-    assignedTitle.className = "schedule-fixed-title schedule-title-assigned";
-    assignedTitle.textContent = "已安排";
+  if (!wrap || !wrap.parentElement) return;
+
+  let frame = panel.querySelector(".schedule-two-area-frame") as HTMLElement | null;
+  if (!frame) {
+    frame = document.createElement("div");
+    frame.className = "schedule-two-area-frame";
   }
-  if (!pendingTitle) {
-    pendingTitle = document.createElement("div");
-    pendingTitle.className = "schedule-fixed-title schedule-title-pending";
-    pendingTitle.textContent = "尚未安排";
+  if (frame.parentElement !== wrap.parentElement) wrap.parentElement.insertBefore(frame, wrap);
+  if (wrap.parentElement !== frame) frame.appendChild(wrap);
+
+  let assignedArea = frame.querySelector(".schedule-area-assigned") as HTMLElement | null;
+  let pendingArea = frame.querySelector(".schedule-area-pending") as HTMLElement | null;
+  if (!assignedArea) {
+    assignedArea = document.createElement("div");
+    assignedArea.className = "schedule-area schedule-area-assigned";
+    assignedArea.innerHTML = `<div class="schedule-area-title">已安排</div><div class="schedule-area-tags assigned-tags"></div>`;
+    frame.insertBefore(assignedArea, wrap);
   }
-  if (wrap.parentElement) {
-    wrap.parentElement.insertBefore(assignedTitle, wrap);
-    wrap.parentElement.insertBefore(pendingTitle, wrap);
+  if (!pendingArea) {
+    pendingArea = document.createElement("div");
+    pendingArea.className = "schedule-area schedule-area-pending";
+    pendingArea.innerHTML = `<div class="schedule-area-title">尚未安排</div>`;
+    frame.appendChild(pendingArea);
   }
+  const assignedTags = assignedArea.querySelector(".assigned-tags") as HTMLElement | null;
+  if (assignedTags) {
+    Array.from(wrap.querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active")).forEach((tag) => assignedTags.appendChild(tag));
+  }
+  if (wrap.parentElement !== pendingArea) pendingArea.appendChild(wrap);
 }
 
 function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
   getStationPanels(section).forEach((panel) => {
     forcePanelLayout(panel);
-    Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
+    Array.from(panel.querySelectorAll(".list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
       tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
-      (tag as HTMLElement).style.order = "20";
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
-        (tag as HTMLElement).style.order = "0";
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        (tag as HTMLElement).style.order = "99";
       } else {
         tag.classList.add("schedule-tag-pending");
-        (tag as HTMLElement).style.order = "20";
       }
     });
   });
