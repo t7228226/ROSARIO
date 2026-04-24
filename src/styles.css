@@ -530,6 +530,31 @@ select {
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
 }
 
+.floating-schedule-tip {
+  position: fixed;
+  right: 18px;
+  bottom: 76px;
+  z-index: 80;
+  min-width: 112px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.94);
+  color: white;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.24);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.55;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.floating-schedule-tip.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .mobile-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -630,6 +655,13 @@ select {
 
   .mobile-modal {
     max-height: 92vh;
+  }
+
+  .floating-schedule-tip {
+    right: 12px;
+    bottom: 72px;
+    min-width: 104px;
+    font-size: 13px;
   }
 }
 
