@@ -1,0 +1,14 @@
+/* 站點試排候選人小方塊：只顯示姓名、工號、班別；視覺上移除國籍 */
+.list-scroll.short .list-row {
+  width: 112px;
+  min-height: 76px;
+}
+
+.list-scroll.short .list-row span {
+  width: 86px;
+  max-width: 86px;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
