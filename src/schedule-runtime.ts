@@ -101,7 +101,7 @@ function getTagName(tag: Element) {
 function getAssignedMap(section: Element) {
   const map = new Map<string, Element>();
   getStationPanels(section).forEach((panel) => {
-    panel.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active").forEach((tag) => {
+    panel.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active, .assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((tag) => {
       const name = getTagName(tag);
       if (name) map.set(name, panel);
     });
@@ -152,7 +152,7 @@ async function updateScheduleTip(section: Element) {
   let attendanceTotal = await getAttendanceTotal(section);
   if (attendanceTotal <= 0) {
     const allNames = new Set<string>();
-    section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").forEach((tag) => {
+    section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((tag) => {
       const name = getTagName(tag);
       if (name) allNames.add(name);
     });
@@ -166,44 +166,40 @@ async function updateScheduleTip(section: Element) {
 
 function forcePanelLayout(panel: Element) {
   panel.querySelectorAll(".schedule-section-headings, .schedule-fixed-title").forEach((node) => node.remove());
-
-  const h3 = panel.querySelector("h3") as HTMLElement | null;
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
-  if (h3 && customButton) {
+  if (customButton) {
     customButton.style.float = "right";
     customButton.style.marginRight = "18px";
   }
-
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
-  if (!wrap || !wrap.parentElement) return;
-
+  if (!wrap) return;
   let frame = panel.querySelector(".schedule-two-area-frame") as HTMLElement | null;
   if (!frame) {
     frame = document.createElement("div");
     frame.className = "schedule-two-area-frame";
   }
-  if (frame.parentElement !== wrap.parentElement) wrap.parentElement.insertBefore(frame, wrap);
-  if (wrap.parentElement !== frame) frame.appendChild(wrap);
-
+  if (frame.parentElement !== panel) panel.appendChild(frame);
   let assignedArea = frame.querySelector(".schedule-area-assigned") as HTMLElement | null;
+  let assignedTags = frame.querySelector(".assigned-tags") as HTMLElement | null;
   let pendingArea = frame.querySelector(".schedule-area-pending") as HTMLElement | null;
   if (!assignedArea) {
     assignedArea = document.createElement("div");
     assignedArea.className = "schedule-area schedule-area-assigned";
     assignedArea.innerHTML = `<div class="schedule-area-title">已安排</div><div class="schedule-area-tags assigned-tags"></div>`;
-    frame.insertBefore(assignedArea, wrap);
+    frame.appendChild(assignedArea);
   }
+  assignedTags = frame.querySelector(".assigned-tags") as HTMLElement | null;
   if (!pendingArea) {
     pendingArea = document.createElement("div");
     pendingArea.className = "schedule-area schedule-area-pending";
     pendingArea.innerHTML = `<div class="schedule-area-title">尚未安排</div>`;
     frame.appendChild(pendingArea);
   }
-  const assignedTags = assignedArea.querySelector(".assigned-tags") as HTMLElement | null;
+  if (pendingArea && wrap.parentElement !== pendingArea) pendingArea.appendChild(wrap);
   if (assignedTags) {
-    Array.from(wrap.querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active")).forEach((tag) => assignedTags.appendChild(tag));
+    Array.from(pendingArea?.querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active") || []).forEach((tag) => assignedTags?.appendChild(tag));
+    Array.from(assignedTags.querySelectorAll<HTMLElement>(".list-row:not(.active), .candidate-chip:not(.active)")).forEach((tag) => wrap.appendChild(tag));
   }
-  if (wrap.parentElement !== pendingArea) pendingArea.appendChild(wrap);
 }
 
 function classifyScheduleTags(section: Element) {
