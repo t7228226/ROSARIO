@@ -91,8 +91,7 @@ function removeScheduleSummaryRows() {
 }
 
 function getVisibleScheduleSection() {
-  const sections = Array.from(document.querySelectorAll(".page-section"));
-  return sections.find((section) => {
+  return Array.from(document.querySelectorAll(".page-section")).find((section) => {
     const title = section.querySelector("h2")?.textContent || "";
     const rect = section.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && (title.includes("站點試排") || title.includes("智能試排"));
@@ -113,10 +112,6 @@ function getSelectedScheduleMode(section: Element) {
 
 function getTagName(tag: Element) {
   return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
-}
-
-function getStationTitle(panel: Element) {
-  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
 }
 
 function getAssignedMap(section: Element) {
@@ -156,7 +151,6 @@ function hideScheduleTip() {
 async function getAttendanceTotal(section: Element) {
   const mode = getSelectedScheduleMode(section);
   if (!mode) return 0;
-
   try {
     const data = await getBootstrapData();
     return getAttendanceForTeam(data.people, mode.team, mode.day).all.length;
@@ -188,55 +182,33 @@ async function updateScheduleTip(section: Element) {
   tip.classList.add("show");
 }
 
-function tagClickGuard(event: Event) {
-  const target = event.target as Element | null;
-  const tag = target?.closest(".list-scroll.short .list-row, .candidate-chip");
-  if (!tag || !tag.classList.contains("schedule-tag-conflict")) return;
-
-  const section = getVisibleScheduleSection();
-  if (!section) return;
-  const name = getTagName(tag);
-  const assignedPanel = getAssignedMap(section).get(name);
-  const currentPanel = tag.closest(".panel");
-  if (!name || !assignedPanel || !currentPanel || assignedPanel === currentPanel) return;
-
-  const from = getStationTitle(assignedPanel);
-  const to = getStationTitle(currentPanel);
-  const ok = window.confirm(`${name} 已安排在「${from}」。是否更換到「${to}」？`);
-  if (!ok) {
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
-  }
-}
-
 function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
 
   getStationPanels(section).forEach((panel) => {
-    const assignedWrap = panel.querySelector(".list-scroll.short") || panel;
-    const pendingWrap = panel.querySelector(".list-scroll.short") || panel;
+    const wrap = panel.querySelector(".list-scroll.short") || panel;
+    const selected: Element[] = [];
+    const conflict: Element[] = [];
+    const pending: Element[] = [];
 
-    const tags = Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip"));
-    tags.forEach((tag) => {
+    Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
       tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
 
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
-        assignedWrap.prepend(tag);
-        return;
-      }
-
-      if (assignedPanel && assignedPanel !== panel) {
+        selected.push(tag);
+      } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        pendingWrap.prepend(tag);
-        return;
+        conflict.push(tag);
+      } else {
+        tag.classList.add("schedule-tag-pending");
+        pending.push(tag);
       }
-
-      tag.classList.add("schedule-tag-pending");
     });
+
+    [...selected, ...conflict, ...pending].forEach((tag) => wrap.appendChild(tag));
   });
 }
 
@@ -248,21 +220,19 @@ function scheduleRuntime() {
     return;
   }
 
-  classifyScheduleTags(section);
-  window.requestAnimationFrame(() => {
+  window.setTimeout(() => {
     removeScheduleSummaryRows();
     classifyScheduleTags(section);
     updateScheduleTip(section).catch(() => undefined);
-  });
+  }, 0);
 }
 
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
 
-  window.addEventListener("click", tagClickGuard, true);
-  window.addEventListener("click", scheduleRuntime, true);
-  window.addEventListener("change", scheduleRuntime, true);
+  window.addEventListener("click", scheduleRuntime, false);
+  window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
 
   const root = document.getElementById("root");
