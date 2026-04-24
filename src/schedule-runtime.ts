@@ -217,20 +217,23 @@ function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
   getStationPanels(section).forEach((panel) => {
     forcePanelLayout(panel);
-    Array.from(panel.querySelectorAll(".list-row, .candidate-chip")).forEach((tag) => {
+    const conflictTags: HTMLElement[] = [];
+    Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
       tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
+      tag.style.marginLeft = "";
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        (tag as HTMLElement).style.marginLeft = "auto";
+        conflictTags.push(tag);
       } else {
         tag.classList.add("schedule-tag-pending");
-        (tag as HTMLElement).style.marginLeft = "";
       }
     });
+    const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
+    if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
   });
 }
 
