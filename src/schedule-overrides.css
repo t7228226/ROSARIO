@@ -9,6 +9,25 @@
   gap: 8px;
 }
 
+/* 強制刪除感：隱藏大框架外的原始小標籤來源，只保留框架內兩區塊 */
+.panel > .list-scroll.short,
+.panel > .candidate-chip,
+.panel > .list-row,
+.panel > div:not(.schedule-two-area-frame):not(.schedule-area):not(.schedule-station-header) > .candidate-chip,
+.panel > div:not(.schedule-two-area-frame):not(.schedule-area):not(.schedule-station-header) > .list-row {
+  display: none !important;
+}
+
+.schedule-two-area-frame .list-scroll.short,
+.schedule-two-area-frame .schedule-area-tags {
+  display: flex !important;
+}
+
+.schedule-two-area-frame .candidate-chip,
+.schedule-two-area-frame .list-row {
+  display: inline-flex !important;
+}
+
 .list-scroll.short .list-row,
 .schedule-area-tags .list-row,
 .schedule-area-tags .candidate-chip {
