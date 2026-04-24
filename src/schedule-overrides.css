@@ -1,0 +1,68 @@
+/* 站點試排專用：候選人改為按鈕標籤，不再沿用人員清單外觀 */
+.list-scroll.short {
+  max-height: none;
+  overflow: visible;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.list-scroll.short .list-row {
+  width: auto;
+  min-width: 74px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  color: #172033;
+  text-align: center;
+  box-shadow: none;
+}
+
+.list-scroll.short .list-row strong {
+  font-size: 14px;
+  line-height: 1;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* 試排候選按鈕只保留姓名；國籍、角色、工號等清單欄位全部不顯示 */
+.list-scroll.short .list-row span,
+.list-scroll.short .list-row small {
+  display: none !important;
+}
+
+.list-scroll.short .list-row.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: white;
+}
+
+.list-scroll.short .list-row.active strong {
+  color: white;
+}
+
+.list-scroll.short .list-row:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.28);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .list-scroll.short {
+    gap: 7px;
+  }
+
+  .list-scroll.short .list-row {
+    min-width: 68px;
+    min-height: 36px;
+    padding: 8px 11px;
+  }
+}
