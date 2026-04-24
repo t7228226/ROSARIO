@@ -5,6 +5,7 @@ import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
+let pendingMove: { name: string; toPanel: Element } | null = null;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
@@ -13,12 +14,7 @@ const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [cla
 
 async function getBootstrapData() {
   if (cachedData) return cachedData;
-  if (!loadingData) {
-    loadingData = fetchBootstrapData().then((data) => {
-      cachedData = data;
-      return data;
-    });
-  }
+  if (!loadingData) loadingData = fetchBootstrapData().then((data) => (cachedData = data));
   return loadingData;
 }
 
@@ -40,12 +36,10 @@ function hasVisibleContent(node: Element) {
 function findSummaryRowFromLabel(labelNode: Element) {
   const card = labelNode.closest(".summary-card, .info-item, [class*='card']") || labelNode.parentElement;
   let current = card?.parentElement || null;
-
   while (current && current !== document.body) {
     if (hasScheduleSummaryText(current)) return current;
     current = current.parentElement;
   }
-
   return card?.parentElement || card || null;
 }
 
@@ -53,9 +47,7 @@ function removeEmptyWrappers(start: Element | null) {
   let current = start;
   while (current && current !== document.body && !current.classList.contains("page-section")) {
     const parent = current.parentElement;
-    const isKnownPanel = current.matches(removablePanelSelectors);
-    const isEmpty = !hasVisibleContent(current);
-    if (isKnownPanel && isEmpty) {
+    if (current.matches(removablePanelSelectors) && !hasVisibleContent(current)) {
       current.remove();
       current = parent;
       continue;
@@ -66,25 +58,21 @@ function removeEmptyWrappers(start: Element | null) {
 
 function removeScheduleSummaryRows() {
   const rows = new Set<Element>();
-
   document.querySelectorAll(".summary-strip, .compact-info-grid, .detail-grid").forEach((node) => {
     if (hasScheduleSummaryText(node)) rows.add(node);
   });
-
   document.querySelectorAll("span, strong, div").forEach((node) => {
     const text = node.textContent?.trim() || "";
     if (!summaryLabels.includes(text)) return;
     const row = findSummaryRowFromLabel(node);
     if (row) rows.add(row);
   });
-
   rows.forEach((row) => {
     const parent = row.parentElement;
     const panel = row.closest(removablePanelSelectors);
     row.remove();
     removeEmptyWrappers(panel || parent);
   });
-
   document.querySelectorAll(removablePanelSelectors).forEach((node) => {
     if (!hasVisibleContent(node)) node.remove();
   });
@@ -112,6 +100,10 @@ function getSelectedScheduleMode(section: Element) {
 
 function getTagName(tag: Element) {
   return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
+}
+
+function getStationTitle(panel: Element) {
+  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
 }
 
 function getAssignedMap(section: Element) {
@@ -165,7 +157,6 @@ async function updateScheduleTip(section: Element) {
     hideScheduleTip();
     return;
   }
-
   let attendanceTotal = await getAttendanceTotal(section);
   if (attendanceTotal <= 0) {
     const allNames = new Set<string>();
@@ -175,31 +166,103 @@ async function updateScheduleTip(section: Element) {
     });
     attendanceTotal = allNames.size;
   }
-
   const pending = Math.max(0, attendanceTotal - assigned);
   const tip = ensureScheduleTip();
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
   tip.classList.add("show");
 }
 
+function ensureTagGroups(panel: Element) {
+  const oldWrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
+  if (!oldWrap) return null;
+  let box = panel.querySelector(".schedule-tag-groups") as HTMLElement | null;
+  if (!box) {
+    box = document.createElement("div");
+    box.className = "schedule-tag-groups";
+    box.innerHTML = `<div class="schedule-group schedule-group-assigned"><div class="schedule-group-title">已安排</div><div class="schedule-group-tags"></div></div><div class="schedule-group schedule-group-pending"><div class="schedule-group-title">尚未安排</div><div class="schedule-group-tags"></div></div><div class="schedule-group schedule-group-conflict"><div class="schedule-group-title">其他站已安排</div><div class="schedule-group-tags"></div></div>`;
+    oldWrap.parentElement?.insertBefore(box, oldWrap);
+    oldWrap.style.display = "none";
+  }
+  return {
+    oldWrap,
+    assignedBox: box.querySelector(".schedule-group-assigned .schedule-group-tags") as HTMLElement,
+    pendingBox: box.querySelector(".schedule-group-pending .schedule-group-tags") as HTMLElement,
+    conflictBox: box.querySelector(".schedule-group-conflict .schedule-group-tags") as HTMLElement,
+  };
+}
+
+function mirrorButton(source: Element, group: HTMLElement, className: string, name: string) {
+  let mirror = group.querySelector<HTMLElement>(`[data-schedule-name="${CSS.escape(name)}"]`);
+  if (!mirror) {
+    mirror = document.createElement("button");
+    mirror.type = "button";
+    mirror.className = "schedule-mirror-tag";
+    mirror.setAttribute("data-schedule-name", name);
+    mirror.addEventListener("click", () => (source as HTMLElement).click());
+    group.appendChild(mirror);
+  }
+  mirror.className = `schedule-mirror-tag ${className}`;
+  mirror.textContent = name;
+  mirror.style.display = "inline-flex";
+}
+
 function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
-
+  if (pendingMove) {
+    const oldPanel = assignedMap.get(pendingMove.name);
+    const oldTag = oldPanel?.querySelector<HTMLElement>(`.list-scroll.short .list-row.active, .candidate-chip.active`);
+    const newTag = pendingMove.toPanel.querySelector<HTMLElement>(`.list-scroll.short .list-row, .candidate-chip`);
+    if (oldTag && getTagName(oldTag) === pendingMove.name) oldTag.click();
+    const target = Array.from(pendingMove.toPanel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip")).find((tag) => getTagName(tag) === pendingMove?.name);
+    window.setTimeout(() => target?.click(), 0);
+    pendingMove = null;
+  }
+  const nextAssignedMap = getAssignedMap(section);
   getStationPanels(section).forEach((panel) => {
+    const groups = ensureTagGroups(panel);
+    if (!groups) return;
+    groups.assignedBox.innerHTML = "";
+    groups.pendingBox.innerHTML = "";
+    groups.conflictBox.innerHTML = "";
     Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
-      const assignedPanel = name ? assignedMap.get(name) : null;
+      const assignedPanel = name ? nextAssignedMap.get(name) : null;
       tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
-
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
+        mirrorButton(tag, groups.assignedBox, "schedule-tag-selected", name);
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
+        mirrorButton(tag, groups.conflictBox, "schedule-tag-conflict", name);
       } else {
         tag.classList.add("schedule-tag-pending");
+        mirrorButton(tag, groups.pendingBox, "schedule-tag-pending", name);
       }
     });
   });
+}
+
+function conflictPromptHandler(event: Event) {
+  const target = event.target as Element | null;
+  const mirror = target?.closest(".schedule-mirror-tag.schedule-tag-conflict") as HTMLElement | null;
+  if (!mirror) return;
+  const section = getVisibleScheduleSection();
+  const toPanel = mirror.closest(".panel");
+  if (!section || !toPanel) return;
+  const name = mirror.getAttribute("data-schedule-name") || mirror.textContent?.trim() || "";
+  const fromPanel = getAssignedMap(section).get(name);
+  if (!name || !fromPanel) return;
+  const ok = window.confirm(`${name} 已安排在「${getStationTitle(fromPanel)}」。是否更換到「${getStationTitle(toPanel)}」？`);
+  if (!ok) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  pendingMove = { name, toPanel };
+  classifyScheduleTags(section);
+  window.setTimeout(scheduleRuntime, 30);
 }
 
 function scheduleRuntime() {
@@ -209,7 +272,6 @@ function scheduleRuntime() {
     hideScheduleTip();
     return;
   }
-
   window.setTimeout(() => {
     removeScheduleSummaryRows();
     classifyScheduleTags(section);
@@ -220,17 +282,15 @@ function scheduleRuntime() {
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
-
+  window.addEventListener("click", conflictPromptHandler, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
-
   const root = document.getElementById("root");
   if (root) {
     const observer = new MutationObserver(scheduleRuntime);
     observer.observe(root, { childList: true, subtree: true, characterData: true });
   }
-
   scheduleRuntime();
   window.setTimeout(scheduleRuntime, 100);
   window.setTimeout(scheduleRuntime, 500);
