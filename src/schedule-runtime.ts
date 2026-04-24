@@ -72,9 +72,6 @@ function removeScheduleSummaryRows() {
     row.remove();
     removeEmptyWrappers(panel || parent);
   });
-  document.querySelectorAll(removablePanelSelectors).forEach((node) => {
-    if (!hasVisibleContent(node)) node.remove();
-  });
 }
 
 function getVisibleScheduleSection() {
@@ -168,29 +165,36 @@ async function updateScheduleTip(section: Element) {
 }
 
 function forcePanelLayout(panel: Element) {
-  const h3 = panel.querySelector("h3");
+  const h3 = panel.querySelector("h3") as HTMLElement | null;
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
   if (h3 && customButton) {
-    let header = panel.querySelector(".schedule-station-header") as HTMLElement | null;
-    if (!header) {
-      header = document.createElement("div");
-      header.className = "schedule-station-header";
-      panel.prepend(header);
-    }
-    if (h3.parentElement !== header) header.appendChild(h3);
-    if (customButton.parentElement !== header) header.appendChild(customButton);
+    h3.style.display = "inline-flex";
+    h3.style.alignItems = "center";
+    h3.style.marginRight = "20px";
+    customButton.style.display = "inline-flex";
+    customButton.style.marginLeft = "20px";
+    customButton.style.verticalAlign = "middle";
   }
 
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
   if (!wrap) return;
-  let headings = panel.querySelector(".schedule-section-headings") as HTMLElement | null;
-  if (!headings) {
-    headings = document.createElement("div");
-    headings.className = "schedule-section-headings";
+  panel.querySelectorAll(".schedule-section-headings").forEach((node) => node.remove());
+  let assignedTitle = panel.querySelector(".schedule-title-assigned") as HTMLElement | null;
+  let pendingTitle = panel.querySelector(".schedule-title-pending") as HTMLElement | null;
+  if (!assignedTitle) {
+    assignedTitle = document.createElement("div");
+    assignedTitle.className = "schedule-fixed-title schedule-title-assigned";
+    assignedTitle.textContent = "已安排";
   }
-  if (headings.parentElement !== panel) panel.appendChild(headings);
-  if (headings.nextElementSibling !== wrap) wrap.parentElement?.insertBefore(headings, wrap);
-  headings.innerHTML = `<div class="schedule-heading-block schedule-heading-assigned"><span>已安排</span></div><div class="schedule-heading-block schedule-heading-pending"><span>尚未安排</span></div>`;
+  if (!pendingTitle) {
+    pendingTitle = document.createElement("div");
+    pendingTitle.className = "schedule-fixed-title schedule-title-pending";
+    pendingTitle.textContent = "尚未安排";
+  }
+  if (wrap.parentElement) {
+    wrap.parentElement.insertBefore(assignedTitle, wrap);
+    wrap.parentElement.insertBefore(pendingTitle, wrap);
+  }
 }
 
 function classifyScheduleTags(section: Element) {
