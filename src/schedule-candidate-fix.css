@@ -1,16 +1,32 @@
-/* 站點試排候選人小方塊：只顯示姓名、工號、班別；強制隱藏國籍 */
+/* 站點試排候選人小方塊：固定三段排列，只露出姓名、工號、班別；不顯示國籍 */
 .list-scroll.short .list-row {
-  width: 132px !important;
-  min-height: 76px !important;
+  width: 112px !important;
+  min-height: 78px !important;
+  padding: 8px 10px !important;
+  display: grid !important;
+  grid-template-rows: auto auto auto !important;
+  align-content: start !important;
+  gap: 3px !important;
+}
+
+.list-scroll.short .list-row strong {
+  display: block !important;
+  width: 100% !important;
+  font-size: 14px !important;
+  line-height: 1.25 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
 }
 
 .list-scroll.short .list-row span {
   display: block !important;
-  width: 105px !important;
-  max-width: 105px !important;
+  width: 86px !important;
+  max-width: 86px !important;
+  font-size: 11px !important;
+  line-height: 1.25 !important;
   white-space: nowrap !important;
   overflow: hidden !important;
   text-overflow: clip !important;
   word-break: keep-all !important;
-  line-height: 1.25 !important;
 }
