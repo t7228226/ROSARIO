@@ -1,5 +1,5 @@
 import { fetchBootstrapData } from "./lib/api";
-import { DAY_OPTIONS, getAttendanceForTeam, TEAM_OPTIONS } from "./lib/selectors";
+import { DAY_OPTIONS, getApplicableRules, TEAM_OPTIONS } from "./lib/selectors";
 import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 
 let observerStarted = false;
@@ -135,6 +135,18 @@ function hideScheduleTip() {
   });
 }
 
+async function getRequiredTotal(section: Element) {
+  const mode = getSelectedScheduleMode(section);
+  if (!mode) return 0;
+
+  try {
+    const data = await getBootstrapData();
+    return getApplicableRules(mode.team, mode.day, data.stationRules || []).reduce((sum, rule) => sum + rule.minRequired, 0);
+  } catch {
+    return 0;
+  }
+}
+
 async function updateScheduleTip() {
   const section = getVisibleScheduleSection();
   if (!section) {
@@ -148,22 +160,12 @@ async function updateScheduleTip() {
     return;
   }
 
-  let total = 0;
-  const mode = getSelectedScheduleMode(section);
-  if (mode) {
-    try {
-      const data = await getBootstrapData();
-      total = getAttendanceForTeam(data.people, mode.team, mode.day).all.length;
-    } catch {
-      total = 0;
-    }
+  let requiredTotal = await getRequiredTotal(section);
+  if (requiredTotal <= 0) {
+    requiredTotal = section.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active").length;
   }
 
-  if (total <= 0) {
-    total = section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").length;
-  }
-
-  const pending = Math.max(0, total - assigned);
+  const pending = Math.max(0, requiredTotal - assigned);
   const tip = ensureScheduleTip();
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
   tip.classList.add("show");
