@@ -45,6 +45,64 @@ function normalizeScheduleCandidateCards() {
   });
 }
 
+function getSummaryCards() {
+  return [...document.querySelectorAll<HTMLElement>(".summary-card")].map((card) => {
+    const label = card.querySelector<HTMLSpanElement>("span");
+    const value = card.querySelector<HTMLElement>("strong");
+    return { card, label, value, labelText: label?.textContent?.trim() || "", valueNumber: Number(value?.textContent?.trim() || 0) };
+  });
+}
+
+function normalizeScheduleSummaryAndFloatingStatus() {
+  const cards = getSummaryCards();
+  if (!cards.length) return;
+
+  const valueOf = (...labels: string[]) => {
+    const found = cards.find((item) => labels.includes(item.labelText));
+    return Number.isFinite(found?.valueNumber) ? Number(found?.valueNumber) : 0;
+  };
+
+  const supportCount = valueOf("支援人力", "支援人數");
+  const requiredCount = valueOf("需排總人數", "出勤總人數");
+  const assignedCount = valueOf("已排總人數");
+  const pendingCount = Math.max(0, requiredCount - assignedCount);
+
+  cards.forEach((item) => {
+    if (!item.label || !item.value) return;
+    if (item.labelText === "需排總人數" || item.labelText === "出勤總人數") {
+      item.label.textContent = "出勤總人數";
+    }
+    if (item.labelText === "唯一人數" || item.labelText === "尚未安排人數") {
+      item.label.textContent = "尚未安排人數";
+      item.value.textContent = String(pendingCount);
+    }
+    if (item.labelText === "重複安排" || item.labelText === "支援人數") {
+      item.label.textContent = "支援人數";
+      item.value.textContent = String(supportCount);
+    }
+  });
+
+  let floating = document.getElementById("schedule-floating-status");
+  if (!floating) {
+    floating = document.createElement("div");
+    floating.id = "schedule-floating-status";
+    document.body.appendChild(floating);
+  }
+
+  if (assignedCount > 0) {
+    floating.innerHTML = `<div>已排:${assignedCount}</div><div>待排:${pendingCount}</div>`;
+    floating.classList.add("show");
+  } else {
+    floating.classList.remove("show");
+    floating.innerHTML = "";
+  }
+}
+
+function normalizeScheduleUi() {
+  normalizeScheduleCandidateCards();
+  normalizeScheduleSummaryAndFloatingStatus();
+}
+
 window.addEventListener("error", (event) => {
   showFatalError("系統載入失敗", `${event.message}\n${event.filename}:${event.lineno}:${event.colno}`);
 });
@@ -71,9 +129,13 @@ try {
     </React.StrictMode>
   );
 
-  const observer = new MutationObserver(() => normalizeScheduleCandidateCards());
-  observer.observe(root, { childList: true, subtree: true });
-  requestAnimationFrame(() => normalizeScheduleCandidateCards());
+  let raf = 0;
+  const observer = new MutationObserver(() => {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => normalizeScheduleUi());
+  });
+  observer.observe(root, { childList: true, subtree: true, characterData: true });
+  requestAnimationFrame(() => normalizeScheduleUi());
 } catch (error) {
   showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
 }
