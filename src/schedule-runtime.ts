@@ -5,7 +5,6 @@ import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
-let pendingMove: { name: string; toPanel: Element } | null = null;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
@@ -102,10 +101,6 @@ function getTagName(tag: Element) {
   return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
 }
 
-function getStationTitle(panel: Element) {
-  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
-}
-
 function getAssignedMap(section: Element) {
   const map = new Map<string, Element>();
   getStationPanels(section).forEach((panel) => {
@@ -172,97 +167,38 @@ async function updateScheduleTip(section: Element) {
   tip.classList.add("show");
 }
 
-function ensureTagGroups(panel: Element) {
-  const oldWrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
-  if (!oldWrap) return null;
-  let box = panel.querySelector(".schedule-tag-groups") as HTMLElement | null;
-  if (!box) {
-    box = document.createElement("div");
-    box.className = "schedule-tag-groups";
-    box.innerHTML = `<div class="schedule-group schedule-group-assigned"><div class="schedule-group-title">已安排</div><div class="schedule-group-tags"></div></div><div class="schedule-group schedule-group-pending"><div class="schedule-group-title">尚未安排</div><div class="schedule-group-tags"></div></div><div class="schedule-group schedule-group-conflict"><div class="schedule-group-title">其他站已安排</div><div class="schedule-group-tags"></div></div>`;
-    oldWrap.parentElement?.insertBefore(box, oldWrap);
-    oldWrap.style.display = "none";
+function ensureHeadings(panel: Element) {
+  const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
+  if (!wrap) return;
+  if (!panel.querySelector(".schedule-inline-headings")) {
+    const headings = document.createElement("div");
+    headings.className = "schedule-inline-headings";
+    headings.innerHTML = `<span>已安排</span><span>尚未安排</span><span>其他站已安排</span>`;
+    wrap.parentElement?.insertBefore(headings, wrap);
   }
-  return {
-    oldWrap,
-    assignedBox: box.querySelector(".schedule-group-assigned .schedule-group-tags") as HTMLElement,
-    pendingBox: box.querySelector(".schedule-group-pending .schedule-group-tags") as HTMLElement,
-    conflictBox: box.querySelector(".schedule-group-conflict .schedule-group-tags") as HTMLElement,
-  };
-}
-
-function mirrorButton(source: Element, group: HTMLElement, className: string, name: string) {
-  let mirror = group.querySelector<HTMLElement>(`[data-schedule-name="${CSS.escape(name)}"]`);
-  if (!mirror) {
-    mirror = document.createElement("button");
-    mirror.type = "button";
-    mirror.className = "schedule-mirror-tag";
-    mirror.setAttribute("data-schedule-name", name);
-    mirror.addEventListener("click", () => (source as HTMLElement).click());
-    group.appendChild(mirror);
-  }
-  mirror.className = `schedule-mirror-tag ${className}`;
-  mirror.textContent = name;
-  mirror.style.display = "inline-flex";
 }
 
 function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
-  if (pendingMove) {
-    const oldPanel = assignedMap.get(pendingMove.name);
-    const oldTag = oldPanel?.querySelector<HTMLElement>(`.list-scroll.short .list-row.active, .candidate-chip.active`);
-    const newTag = pendingMove.toPanel.querySelector<HTMLElement>(`.list-scroll.short .list-row, .candidate-chip`);
-    if (oldTag && getTagName(oldTag) === pendingMove.name) oldTag.click();
-    const target = Array.from(pendingMove.toPanel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip")).find((tag) => getTagName(tag) === pendingMove?.name);
-    window.setTimeout(() => target?.click(), 0);
-    pendingMove = null;
-  }
-  const nextAssignedMap = getAssignedMap(section);
   getStationPanels(section).forEach((panel) => {
-    const groups = ensureTagGroups(panel);
-    if (!groups) return;
-    groups.assignedBox.innerHTML = "";
-    groups.pendingBox.innerHTML = "";
-    groups.conflictBox.innerHTML = "";
+    ensureHeadings(panel);
     Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
-      const assignedPanel = name ? nextAssignedMap.get(name) : null;
+      const assignedPanel = name ? assignedMap.get(name) : null;
       tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
+      (tag as HTMLElement).style.order = "20";
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
-        mirrorButton(tag, groups.assignedBox, "schedule-tag-selected", name);
+        (tag as HTMLElement).style.order = "0";
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        mirrorButton(tag, groups.conflictBox, "schedule-tag-conflict", name);
+        (tag as HTMLElement).style.order = "40";
       } else {
         tag.classList.add("schedule-tag-pending");
-        mirrorButton(tag, groups.pendingBox, "schedule-tag-pending", name);
+        (tag as HTMLElement).style.order = "20";
       }
     });
   });
-}
-
-function conflictPromptHandler(event: Event) {
-  const target = event.target as Element | null;
-  const mirror = target?.closest(".schedule-mirror-tag.schedule-tag-conflict") as HTMLElement | null;
-  if (!mirror) return;
-  const section = getVisibleScheduleSection();
-  const toPanel = mirror.closest(".panel");
-  if (!section || !toPanel) return;
-  const name = mirror.getAttribute("data-schedule-name") || mirror.textContent?.trim() || "";
-  const fromPanel = getAssignedMap(section).get(name);
-  if (!name || !fromPanel) return;
-  const ok = window.confirm(`${name} 已安排在「${getStationTitle(fromPanel)}」。是否更換到「${getStationTitle(toPanel)}」？`);
-  if (!ok) {
-    event.preventDefault();
-    event.stopPropagation();
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  pendingMove = { name, toPanel };
-  classifyScheduleTags(section);
-  window.setTimeout(scheduleRuntime, 30);
 }
 
 function scheduleRuntime() {
@@ -282,7 +218,6 @@ function scheduleRuntime() {
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
-  window.addEventListener("click", conflictPromptHandler, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
