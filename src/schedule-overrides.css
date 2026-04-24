@@ -10,22 +10,38 @@
 }
 
 /* 強制刪除感：隱藏大框架外的原始小標籤來源，只保留框架內兩區塊 */
-.panel > .list-scroll.short,
-.panel > .candidate-chip,
-.panel > .list-row,
-.panel > div:not(.schedule-two-area-frame):not(.schedule-area):not(.schedule-station-header) > .candidate-chip,
-.panel > div:not(.schedule-two-area-frame):not(.schedule-area):not(.schedule-station-header) > .list-row {
+.panel:has(.schedule-two-area-frame) > .list-scroll.short,
+.panel:has(.schedule-two-area-frame) > .candidate-chip,
+.panel:has(.schedule-two-area-frame) > .list-row,
+.panel:has(.schedule-two-area-frame) > :not(.schedule-two-area-frame) .candidate-chip,
+.panel:has(.schedule-two-area-frame) > :not(.schedule-two-area-frame) .list-row,
+.panel:has(.schedule-two-area-frame) > :not(.schedule-two-area-frame) .list-scroll.short {
   display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
 }
 
 .schedule-two-area-frame .list-scroll.short,
 .schedule-two-area-frame .schedule-area-tags {
   display: flex !important;
+  visibility: visible !important;
+  height: auto !important;
+  min-height: 0 !important;
+  overflow: visible !important;
+  pointer-events: auto !important;
 }
 
 .schedule-two-area-frame .candidate-chip,
 .schedule-two-area-frame .list-row {
   display: inline-flex !important;
+  visibility: visible !important;
+  height: auto !important;
+  pointer-events: auto !important;
 }
 
 .list-scroll.short .list-row,
