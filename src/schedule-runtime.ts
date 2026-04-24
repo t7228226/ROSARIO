@@ -8,6 +8,7 @@ let observerStarted = false;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
+const summaryLabels = new Set(["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"]);
 
 function toNumber(text: string | null | undefined) {
   const match = String(text || "").match(/-?\d+/);
@@ -15,13 +16,11 @@ function toNumber(text: string | null | undefined) {
 }
 
 function setText(node: Element | null | undefined, text: string) {
-  if (node && node.textContent !== text) {
-    node.textContent = text;
-  }
+  if (node && node.textContent !== text) node.textContent = text;
 }
 
-function readStrong(card: Element | undefined) {
-  return toNumber(card?.querySelector("strong")?.textContent);
+function readNumber(card: Element | undefined) {
+  return toNumber(card?.querySelector("strong")?.textContent || card?.textContent);
 }
 
 async function getBootstrapData() {
@@ -35,18 +34,52 @@ async function getBootstrapData() {
   return loadingData;
 }
 
-function getScheduleSummaryStrips() {
-  return Array.from(document.querySelectorAll(".summary-strip")).filter((strip) => {
-    const section = strip.closest(".page-section") || strip.parentElement;
-    const title = section?.querySelector("h2")?.textContent || "";
-    const labels = Array.from(strip.querySelectorAll(":scope > .summary-card span")).map((span) => span.textContent?.trim() || "");
-    const hasScheduleLabels = labels.some((label) => ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"].includes(label));
-    return title.includes("站點試排") || title.includes("智能試排") || hasScheduleLabels;
+function getCardsFromContainer(container: Element) {
+  const directSummaryCards = Array.from(container.querySelectorAll(":scope > .summary-card"));
+  if (directSummaryCards.length >= 4) return directSummaryCards;
+
+  const directInfoItems = Array.from(container.querySelectorAll(":scope > .info-item"));
+  if (directInfoItems.length >= 4) return directInfoItems;
+
+  return Array.from(container.children).filter((child) => {
+    const text = child.textContent || "";
+    return Array.from(summaryLabels).some((label) => text.includes(label));
   });
 }
 
-function getSelectedScheduleMode(strip: Element) {
-  const section = strip.closest(".page-section") || strip.parentElement || document.body;
+function getScheduleSummaryBlocks() {
+  const blocks: Array<{ container: Element; cards: Element[] }> = [];
+  const seen = new Set<Element>();
+
+  document.querySelectorAll(".summary-strip, .compact-info-grid, .detail-grid").forEach((container) => {
+    const cards = getCardsFromContainer(container);
+    const labels = cards.map((card) => card.querySelector("span")?.textContent?.trim() || card.textContent?.trim() || "");
+    const matchCount = labels.filter((label) => Array.from(summaryLabels).some((item) => label.includes(item))).length;
+    if (cards.length >= 4 && matchCount >= 3 && !seen.has(container)) {
+      seen.add(container);
+      blocks.push({ container, cards });
+    }
+  });
+
+  // 保底：直接從「需排總人數」的卡片往上找同層 5 張卡。
+  document.querySelectorAll("span").forEach((span) => {
+    const label = span.textContent?.trim() || "";
+    if (!summaryLabels.has(label)) return;
+    const card = span.closest(".summary-card, .info-item") || span.parentElement;
+    const container = card?.parentElement;
+    if (!container || seen.has(container)) return;
+    const cards = getCardsFromContainer(container);
+    if (cards.length >= 4) {
+      seen.add(container);
+      blocks.push({ container, cards });
+    }
+  });
+
+  return blocks;
+}
+
+function getSelectedScheduleMode(container: Element) {
+  const section = container.closest(".page-section") || container.parentElement || document.body;
   const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value);
   const team = values.find((value) => teamSet.has(value)) as TeamName | undefined;
   const day = values.find((value) => daySet.has(value)) as ShiftMode | undefined;
@@ -54,17 +87,22 @@ function getSelectedScheduleMode(strip: Element) {
   return { team, day };
 }
 
-function getAssignedCount(cards: Element[], strip: Element) {
-  const section = strip.closest(".page-section") || strip.parentElement || document.body;
-  const assignedCard = cards.find((card) => {
-    const label = card.querySelector("span")?.textContent?.trim();
-    return label === "已排總人數" || label === "已排人數";
+function findCardValue(cards: Element[], labels: string[]) {
+  const card = cards.find((item) => {
+    const label = item.querySelector("span")?.textContent?.trim() || item.textContent || "";
+    return labels.some((target) => label.includes(target));
   });
-  if (assignedCard) return readStrong(assignedCard);
+  return readNumber(card);
+}
+
+function getAssignedCount(cards: Element[], container: Element) {
+  const assigned = findCardValue(cards, ["已排總人數", "已排人數"]);
+  if (assigned > 0) return assigned;
 
   const stored = cards[0]?.getAttribute("data-schedule-assigned");
   if (stored !== null && stored !== undefined) return Number(stored) || 0;
 
+  const section = container.closest(".page-section") || container.parentElement || document.body;
   const activePeople = new Set<string>();
   section.querySelectorAll(".list-scroll.short .list-row.active strong").forEach((node) => {
     const name = node.textContent?.trim();
@@ -73,19 +111,18 @@ function getAssignedCount(cards: Element[], strip: Element) {
   return activePeople.size;
 }
 
+function writeCard(card: Element | undefined, label: string, value: number) {
+  if (!card) return;
+  setText(card.querySelector("span") || card.firstElementChild, label);
+  setText(card.querySelector("strong") || card.lastElementChild, String(value));
+}
+
 function writeSummaryCards(cards: Element[], total: number, pending: number, support: number, assigned: number) {
   if (cards.length < 4) return;
   cards[0].setAttribute("data-schedule-assigned", String(assigned));
-
-  setText(cards[0].querySelector("span"), "出勤總人數");
-  setText(cards[0].querySelector("strong"), String(total));
-
-  // 第 2 張卡保留「已排總人數」。使用者要求修改的是原第 3 張「唯一人數」。
-  setText(cards[2].querySelector("span"), "尚未安排人數");
-  setText(cards[2].querySelector("strong"), String(pending));
-
-  setText(cards[3].querySelector("span"), "支援人數");
-  setText(cards[3].querySelector("strong"), String(support));
+  writeCard(cards[0], "出勤總人數", total);
+  writeCard(cards[2], "尚未安排人數", pending);
+  writeCard(cards[3], "支援人數", support);
 }
 
 function ensureFloatingTip() {
@@ -111,20 +148,17 @@ function updateFloatingTip(assigned: number, pending: number) {
 }
 
 function syncLabelsImmediately() {
-  for (const strip of getScheduleSummaryStrips()) {
-    const cards = Array.from(strip.querySelectorAll(":scope > .summary-card"));
-    if (cards.length < 4) continue;
-    const total = readStrong(cards[0]);
-    const assigned = getAssignedCount(cards, strip);
+  for (const block of getScheduleSummaryBlocks()) {
+    const total = readNumber(block.cards[0]);
+    const assigned = getAssignedCount(block.cards, block.container);
     const pending = Math.max(0, total - assigned);
-    const supportFallback = readStrong(cards[3]);
-    writeSummaryCards(cards, total, pending, supportFallback, assigned);
+    const supportFallback = readNumber(block.cards[3]);
+    writeSummaryCards(block.cards, total, pending, supportFallback, assigned);
   }
 }
 
 async function syncScheduleSummary() {
   syncLabelsImmediately();
-
   let data: AppBootstrap | null = null;
   try {
     data = await getBootstrapData();
@@ -135,23 +169,19 @@ async function syncScheduleSummary() {
   let activeAssigned = 0;
   let activePending = 0;
 
-  for (const strip of getScheduleSummaryStrips()) {
-    const cards = Array.from(strip.querySelectorAll(":scope > .summary-card"));
-    if (cards.length < 4) continue;
-
-    const mode = getSelectedScheduleMode(strip);
-    const assigned = getAssignedCount(cards, strip);
-    const currentTotal = readStrong(cards[0]);
+  for (const block of getScheduleSummaryBlocks()) {
+    const mode = getSelectedScheduleMode(block.container);
+    const assigned = getAssignedCount(block.cards, block.container);
+    const fallbackTotal = readNumber(block.cards[0]);
     const attendance = data && mode ? getAttendanceForTeam(data.people, mode.team, mode.day) : null;
-    const total = attendance ? attendance.all.length : currentTotal;
-    const support = attendance ? attendance.support.length : readStrong(cards[3]);
+    const total = attendance ? attendance.all.length : fallbackTotal;
+    const support = attendance ? attendance.support.length : readNumber(block.cards[3]);
     const pending = Math.max(0, total - assigned);
 
-    writeSummaryCards(cards, total, pending, support, assigned);
+    writeSummaryCards(block.cards, total, pending, support, assigned);
 
-    const rect = strip.getBoundingClientRect();
-    const isVisible = rect.width > 0 && rect.height > 0;
-    if (isVisible && assigned > 0) {
+    const rect = block.container.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0 && assigned > 0) {
       activeAssigned = assigned;
       activePending = pending;
     }
@@ -162,9 +192,7 @@ async function syncScheduleSummary() {
 
 function scheduleSync() {
   syncLabelsImmediately();
-  window.requestAnimationFrame(() => {
-    syncScheduleSummary().catch(() => undefined);
-  });
+  window.requestAnimationFrame(() => syncScheduleSummary().catch(() => undefined));
 }
 
 export function installScheduleRuntime() {
@@ -182,6 +210,7 @@ export function installScheduleRuntime() {
   }
 
   scheduleSync();
-  window.setTimeout(scheduleSync, 250);
-  window.setTimeout(scheduleSync, 1000);
+  window.setTimeout(scheduleSync, 100);
+  window.setTimeout(scheduleSync, 500);
+  window.setTimeout(scheduleSync, 1500);
 }
