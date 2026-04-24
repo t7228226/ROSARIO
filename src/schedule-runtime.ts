@@ -175,7 +175,7 @@ function forcePanelLayout(panel: Element) {
     if (!header) {
       header = document.createElement("div");
       header.className = "schedule-station-header";
-      panel.insertBefore(header, h3);
+      panel.prepend(header);
     }
     if (h3.parentElement !== header) header.appendChild(h3);
     if (customButton.parentElement !== header) header.appendChild(customButton);
@@ -187,8 +187,9 @@ function forcePanelLayout(panel: Element) {
   if (!headings) {
     headings = document.createElement("div");
     headings.className = "schedule-section-headings";
-    wrap.parentElement?.insertBefore(headings, wrap);
   }
+  if (headings.parentElement !== panel) panel.appendChild(headings);
+  if (headings.nextElementSibling !== wrap) wrap.parentElement?.insertBefore(headings, wrap);
   headings.innerHTML = `<div class="schedule-heading-block schedule-heading-assigned"><span>已安排</span></div><div class="schedule-heading-block schedule-heading-pending"><span>尚未安排</span></div>`;
 }
 
