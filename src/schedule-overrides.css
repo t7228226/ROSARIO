@@ -34,7 +34,6 @@
   text-overflow: clip;
 }
 
-/* 試排候選按鈕只保留姓名；國籍、角色、工號等清單欄位全部不顯示 */
 .list-scroll.short .list-row span,
 .list-scroll.short .list-row small {
   display: none !important;
@@ -55,6 +54,33 @@
   outline-offset: 2px;
 }
 
+/* === 新增分類顏色 === */
+.schedule-tag-selected {
+  background: #2563eb !important;
+  border: 2px solid #22c55e !important;
+  color: white !important;
+}
+
+.schedule-tag-selected strong {
+  color: white !important;
+}
+
+.schedule-tag-conflict {
+  background: #fee2e2 !important;
+  border: 2px solid #ef4444 !important;
+  color: #7f1d1d !important;
+}
+
+.schedule-tag-conflict strong {
+  color: #7f1d1d !important;
+}
+
+.schedule-tag-pending {
+  background: #f8fafc !important;
+  border: 1px solid #cbd5e1 !important;
+  color: #172033 !important;
+}
+
 .square-schedule-tip {
   position: fixed !important;
   right: 18px !important;
@@ -65,7 +91,7 @@
   min-height: 74px !important;
   padding: 12px 10px !important;
   border-radius: 12px !important;
-  background: #0f172a !important;
+  background: #0ea5e9 !important;
   color: white !important;
   box-shadow: 0 14px 34px rgba(15, 23, 42, 0.28) !important;
   display: grid !important;
