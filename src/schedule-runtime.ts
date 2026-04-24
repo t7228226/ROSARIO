@@ -165,15 +165,14 @@ async function updateScheduleTip(section: Element) {
 }
 
 function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
-  Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short")).forEach((list) => {
-    if (!frame.contains(list)) list.remove();
+  panel.querySelectorAll<HTMLElement>(".list-scroll.short").forEach((list) => {
+    if (!frame.contains(list)) {
+      list.style.display = "none";
+      list.remove();
+    }
   });
-  Array.from(panel.children).forEach((child) => {
-    if (child === frame) return;
-    if (!(child instanceof HTMLElement)) return;
-    if (child.querySelector("h3") || child.querySelector("button") || child.classList.contains("schedule-two-area-frame")) return;
-    const hasTags = child.querySelector(".list-row, .candidate-chip") || child.classList.contains("list-row") || child.classList.contains("candidate-chip");
-    if (hasTags && !frame.contains(child)) child.remove();
+  panel.querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active").forEach((tag) => {
+    if (!tag.closest(".schedule-two-area-frame")) tag.style.display = "none";
   });
 }
 
