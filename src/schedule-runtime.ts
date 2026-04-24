@@ -5,6 +5,7 @@ import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
+let confirmedConflictClick: Element | null = null;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
@@ -101,6 +102,10 @@ function getTagName(tag: Element) {
   return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
 }
 
+function getStationTitle(panel: Element) {
+  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
+}
+
 function getAssignedMap(section: Element) {
   const map = new Map<string, Element>();
   getStationPanels(section).forEach((panel) => {
@@ -170,12 +175,13 @@ async function updateScheduleTip(section: Element) {
 function ensureHeadings(panel: Element) {
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
   if (!wrap) return;
-  if (!panel.querySelector(".schedule-inline-headings")) {
-    const headings = document.createElement("div");
+  let headings = panel.querySelector(".schedule-inline-headings") as HTMLElement | null;
+  if (!headings) {
+    headings = document.createElement("div");
     headings.className = "schedule-inline-headings";
-    headings.innerHTML = `<span>已安排</span><span>尚未安排</span><span>其他站已安排</span>`;
     wrap.parentElement?.insertBefore(headings, wrap);
   }
+  headings.innerHTML = `<span>已安排</span><span>尚未安排</span>`;
 }
 
 function classifyScheduleTags(section: Element) {
@@ -201,6 +207,29 @@ function classifyScheduleTags(section: Element) {
   });
 }
 
+function conflictPromptHandler(event: Event) {
+  const target = event.target as Element | null;
+  const tag = target?.closest(".list-scroll.short .list-row.schedule-tag-conflict, .candidate-chip.schedule-tag-conflict") as HTMLElement | null;
+  if (!tag) return;
+  if (confirmedConflictClick === tag) {
+    confirmedConflictClick = null;
+    return;
+  }
+  const section = getVisibleScheduleSection();
+  const toPanel = tag.closest(".panel");
+  if (!section || !toPanel) return;
+  const name = getTagName(tag);
+  const fromPanel = getAssignedMap(section).get(name);
+  if (!name || !fromPanel) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const ok = window.confirm(`${name} 已安排在「${getStationTitle(fromPanel)}」。是否更換到「${getStationTitle(toPanel)}」？`);
+  if (ok) {
+    confirmedConflictClick = tag;
+    window.setTimeout(() => tag.click(), 0);
+  }
+}
+
 function scheduleRuntime() {
   removeScheduleSummaryRows();
   const section = getVisibleScheduleSection();
@@ -218,6 +247,7 @@ function scheduleRuntime() {
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
+  window.addEventListener("click", conflictPromptHandler, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
