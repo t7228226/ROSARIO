@@ -22,6 +22,29 @@ function showFatalError(title: string, detail: string) {
   `;
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function normalizeScheduleCandidateCards() {
+  document.querySelectorAll<HTMLButtonElement>(".list-scroll.short .list-row").forEach((button) => {
+    const meta = button.querySelector<HTMLSpanElement>("span");
+    if (!meta || meta.dataset.cleaned === "true") return;
+
+    const raw = meta.textContent || "";
+    const parts = raw.split("｜").map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) return;
+
+    meta.dataset.cleaned = "true";
+    meta.innerHTML = `<span class="candidate-code">${escapeHtml(parts[0])}</span><span class="candidate-team">${escapeHtml(parts[1])}</span>`;
+  });
+}
+
 window.addEventListener("error", (event) => {
   showFatalError("系統載入失敗", `${event.message}\n${event.filename}:${event.lineno}:${event.colno}`);
 });
@@ -47,6 +70,10 @@ try {
       <App />
     </React.StrictMode>
   );
+
+  const observer = new MutationObserver(() => normalizeScheduleCandidateCards());
+  observer.observe(root, { childList: true, subtree: true });
+  requestAnimationFrame(() => normalizeScheduleCandidateCards());
 } catch (error) {
   showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
 }
