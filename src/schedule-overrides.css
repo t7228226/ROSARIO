@@ -81,6 +81,16 @@
   color: #172033 !important;
 }
 
+/* === 新增分組顯示 === */
+.schedule-tag-groups{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.schedule-group{display:flex;flex-direction:column;gap:4px}
+.schedule-group-title{font-size:12px;font-weight:700;color:#475569}
+.schedule-group-tags{display:flex;flex-wrap:wrap;gap:6px}
+.schedule-mirror-tag{border-radius:999px;padding:6px 10px;font-size:13px;font-weight:700;border:1px solid #cbd5e1;background:#f8fafc;color:#172033;cursor:pointer}
+.schedule-mirror-tag.schedule-tag-selected{background:#2563eb;border:2px solid #22c55e;color:#fff}
+.schedule-mirror-tag.schedule-tag-conflict{background:#fee2e2;border:2px solid #ef4444;color:#7f1d1d}
+.schedule-mirror-tag.schedule-tag-pending{background:#f8fafc;border:1px solid #cbd5e1;color:#172033}
+
 .square-schedule-tip {
   position: fixed !important;
   right: 18px !important;
