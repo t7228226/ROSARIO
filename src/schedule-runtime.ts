@@ -99,6 +99,10 @@ function getVisibleScheduleSection() {
   }) || null;
 }
 
+function getStationPanels(section: Element) {
+  return Array.from(section.querySelectorAll(".panel")).filter((panel) => panel.querySelector(".list-scroll.short .list-row, .candidate-chip"));
+}
+
 function getSelectedScheduleMode(section: Element) {
   const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value);
   const team = values.find((value) => teamSet.has(value)) as TeamName | undefined;
@@ -107,13 +111,27 @@ function getSelectedScheduleMode(section: Element) {
   return { team, day };
 }
 
-function countAssignedPeople(section: Element) {
-  const names = new Set<string>();
-  section.querySelectorAll(".list-scroll.short .list-row.active strong, .candidate-chip.active strong, .candidate-chip.active").forEach((node) => {
-    const text = node.textContent?.trim();
-    if (text) names.add(text);
+function getTagName(tag: Element) {
+  return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
+}
+
+function getStationTitle(panel: Element) {
+  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
+}
+
+function getAssignedMap(section: Element) {
+  const map = new Map<string, Element>();
+  getStationPanels(section).forEach((panel) => {
+    panel.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active").forEach((tag) => {
+      const name = getTagName(tag);
+      if (name) map.set(name, panel);
+    });
   });
-  return names.size;
+  return map;
+}
+
+function countAssignedPeople(section: Element) {
+  return getAssignedMap(section).size;
 }
 
 function ensureScheduleTip() {
@@ -147,13 +165,7 @@ async function getAttendanceTotal(section: Element) {
   }
 }
 
-async function updateScheduleTip() {
-  const section = getVisibleScheduleSection();
-  if (!section) {
-    hideScheduleTip();
-    return;
-  }
-
+async function updateScheduleTip(section: Element) {
   const assigned = countAssignedPeople(section);
   if (assigned <= 0) {
     hideScheduleTip();
@@ -162,7 +174,12 @@ async function updateScheduleTip() {
 
   let attendanceTotal = await getAttendanceTotal(section);
   if (attendanceTotal <= 0) {
-    attendanceTotal = section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").length;
+    const allNames = new Set<string>();
+    section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").forEach((tag) => {
+      const name = getTagName(tag);
+      if (name) allNames.add(name);
+    });
+    attendanceTotal = allNames.size;
   }
 
   const pending = Math.max(0, attendanceTotal - assigned);
@@ -171,11 +188,71 @@ async function updateScheduleTip() {
   tip.classList.add("show");
 }
 
+function tagClickGuard(event: Event) {
+  const target = event.target as Element | null;
+  const tag = target?.closest(".list-scroll.short .list-row, .candidate-chip");
+  if (!tag || !tag.classList.contains("schedule-tag-conflict")) return;
+
+  const section = getVisibleScheduleSection();
+  if (!section) return;
+  const name = getTagName(tag);
+  const assignedPanel = getAssignedMap(section).get(name);
+  const currentPanel = tag.closest(".panel");
+  if (!name || !assignedPanel || !currentPanel || assignedPanel === currentPanel) return;
+
+  const from = getStationTitle(assignedPanel);
+  const to = getStationTitle(currentPanel);
+  const ok = window.confirm(`${name} 已安排在「${from}」。是否更換到「${to}」？`);
+  if (!ok) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+  }
+}
+
+function classifyScheduleTags(section: Element) {
+  const assignedMap = getAssignedMap(section);
+
+  getStationPanels(section).forEach((panel) => {
+    const assignedWrap = panel.querySelector(".list-scroll.short") || panel;
+    const pendingWrap = panel.querySelector(".list-scroll.short") || panel;
+
+    const tags = Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip"));
+    tags.forEach((tag) => {
+      const name = getTagName(tag);
+      const assignedPanel = name ? assignedMap.get(name) : null;
+      tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
+
+      if (tag.classList.contains("active")) {
+        tag.classList.add("schedule-tag-selected");
+        assignedWrap.prepend(tag);
+        return;
+      }
+
+      if (assignedPanel && assignedPanel !== panel) {
+        tag.classList.add("schedule-tag-conflict");
+        pendingWrap.prepend(tag);
+        return;
+      }
+
+      tag.classList.add("schedule-tag-pending");
+    });
+  });
+}
+
 function scheduleRuntime() {
   removeScheduleSummaryRows();
+  const section = getVisibleScheduleSection();
+  if (!section) {
+    hideScheduleTip();
+    return;
+  }
+
+  classifyScheduleTags(section);
   window.requestAnimationFrame(() => {
     removeScheduleSummaryRows();
-    updateScheduleTip().catch(() => undefined);
+    classifyScheduleTags(section);
+    updateScheduleTip(section).catch(() => undefined);
   });
 }
 
@@ -183,6 +260,7 @@ export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
 
+  window.addEventListener("click", tagClickGuard, true);
   window.addEventListener("click", scheduleRuntime, true);
   window.addEventListener("change", scheduleRuntime, true);
   window.addEventListener("resize", scheduleRuntime);
