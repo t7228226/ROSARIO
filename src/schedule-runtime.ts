@@ -83,7 +83,7 @@ function getVisibleScheduleSection() {
 }
 
 function getStationPanels(section: Element) {
-  return Array.from(section.querySelectorAll(".panel")).filter((panel) => panel.querySelector(".list-scroll.short .list-row, .candidate-chip"));
+  return Array.from(section.querySelectorAll(".panel")).filter((panel) => panel.querySelector(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip"));
 }
 
 function getSelectedScheduleMode(section: Element) {
@@ -164,6 +164,17 @@ async function updateScheduleTip(section: Element) {
   tip.classList.add("show");
 }
 
+function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
+  Array.from(panel.children).forEach((child) => {
+    if (child === frame) return;
+    if (!(child instanceof HTMLElement)) return;
+    if (child.querySelector("h3") || child.querySelector("button") || child.classList.contains("schedule-two-area-frame")) return;
+    const hasShortTags = child.querySelector(".list-row, .candidate-chip") || child.classList.contains("list-row") || child.classList.contains("candidate-chip");
+    const text = (child.textContent || "").trim();
+    if (hasShortTags && text && !child.closest(".schedule-two-area-frame")) child.remove();
+  });
+}
+
 function forcePanelLayout(panel: Element) {
   panel.querySelectorAll(".schedule-section-headings, .schedule-fixed-title").forEach((node) => node.remove());
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
@@ -172,7 +183,6 @@ function forcePanelLayout(panel: Element) {
     customButton.style.marginRight = "18px";
   }
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
-  if (!wrap) return;
   let frame = panel.querySelector(".schedule-two-area-frame") as HTMLElement | null;
   if (!frame) {
     frame = document.createElement("div");
@@ -195,11 +205,12 @@ function forcePanelLayout(panel: Element) {
     pendingArea.innerHTML = `<div class="schedule-area-title">尚未安排</div>`;
     frame.appendChild(pendingArea);
   }
-  if (pendingArea && wrap.parentElement !== pendingArea) pendingArea.appendChild(wrap);
+  if (wrap && pendingArea && wrap.parentElement !== pendingArea) pendingArea.appendChild(wrap);
   if (assignedTags) {
-    Array.from(pendingArea?.querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active") || []).forEach((tag) => assignedTags?.appendChild(tag));
-    Array.from(assignedTags.querySelectorAll<HTMLElement>(".list-row:not(.active), .candidate-chip:not(.active)")).forEach((tag) => wrap.appendChild(tag));
+    Array.from((pendingArea || panel).querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active")).forEach((tag) => assignedTags?.appendChild(tag));
+    Array.from(assignedTags.querySelectorAll<HTMLElement>(".list-row:not(.active), .candidate-chip:not(.active)")).forEach((tag) => wrap?.appendChild(tag));
   }
+  removeOriginalMiniChips(panel, frame);
 }
 
 function classifyScheduleTags(section: Element) {
@@ -214,8 +225,10 @@ function classifyScheduleTags(section: Element) {
         tag.classList.add("schedule-tag-selected");
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
+        (tag as HTMLElement).style.marginLeft = "auto";
       } else {
         tag.classList.add("schedule-tag-pending");
+        (tag as HTMLElement).style.marginLeft = "";
       }
     });
   });
