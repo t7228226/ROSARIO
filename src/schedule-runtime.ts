@@ -183,13 +183,13 @@ function forcePanelLayout(panel: Element) {
 
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
   if (!wrap) return;
-  let headings = panel.querySelector(".schedule-inline-headings") as HTMLElement | null;
+  let headings = panel.querySelector(".schedule-section-headings") as HTMLElement | null;
   if (!headings) {
     headings = document.createElement("div");
-    headings.className = "schedule-inline-headings";
+    headings.className = "schedule-section-headings";
     wrap.parentElement?.insertBefore(headings, wrap);
   }
-  headings.innerHTML = `<span class="schedule-heading-pill schedule-heading-assigned">已安排</span><span class="schedule-heading-pill schedule-heading-pending">尚未安排</span>`;
+  headings.innerHTML = `<div class="schedule-heading-block schedule-heading-assigned"><span>已安排</span></div><div class="schedule-heading-block schedule-heading-pending"><span>尚未安排</span></div>`;
 }
 
 function classifyScheduleTags(section: Element) {
