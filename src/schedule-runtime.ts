@@ -1,10 +1,21 @@
 let observerStarted = false;
 
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"];
+const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [class*='panel'], [class*='card']";
 
 function hasScheduleSummaryText(node: Element) {
   const text = node.textContent || "";
   return summaryLabels.filter((label) => text.includes(label)).length >= 3;
+}
+
+function hasVisibleContent(node: Element) {
+  const text = (node.textContent || "").replace(/\s+/g, "").trim();
+  if (text.length > 0) return true;
+  return Array.from(node.children).some((child) => {
+    const element = child as HTMLElement;
+    const style = window.getComputedStyle(element);
+    return style.display !== "none" && element.getBoundingClientRect().height > 0;
+  });
 }
 
 function findSummaryRowFromLabel(labelNode: Element) {
@@ -17,6 +28,21 @@ function findSummaryRowFromLabel(labelNode: Element) {
   }
 
   return card?.parentElement || card || null;
+}
+
+function removeEmptyWrappers(start: Element | null) {
+  let current = start;
+  while (current && current !== document.body && !current.classList.contains("page-section")) {
+    const parent = current.parentElement;
+    const isKnownPanel = current.matches(removablePanelSelectors);
+    const isEmpty = !hasVisibleContent(current);
+    if (isKnownPanel && isEmpty) {
+      current.remove();
+      current = parent;
+      continue;
+    }
+    break;
+  }
 }
 
 function removeScheduleSummaryRows() {
@@ -34,7 +60,14 @@ function removeScheduleSummaryRows() {
   });
 
   rows.forEach((row) => {
+    const parent = row.parentElement;
+    const panel = row.closest(removablePanelSelectors);
     row.remove();
+    removeEmptyWrappers(panel || parent);
+  });
+
+  document.querySelectorAll(removablePanelSelectors).forEach((node) => {
+    if (!hasVisibleContent(node)) node.remove();
   });
 
   document.querySelectorAll(".floating-schedule-tip").forEach((node) => node.remove());
