@@ -484,18 +484,35 @@ select {
   color: #475569;
 }
 
-.chips {
+.chips,
+.candidate-chip-wrap {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  align-items: center;
 }
 
-.chip {
+.chip,
+.candidate-chip {
   padding: 6px 10px;
   border-radius: 999px;
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 12px;
+  border: 1px solid #bfdbfe;
+  cursor: pointer;
+}
+
+.candidate-chip {
+  background: #f8fafc;
+  color: #172033;
+  border-color: #cbd5e1;
+}
+
+.candidate-chip.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
 }
 
 .empty,
