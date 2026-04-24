@@ -1,7 +1,26 @@
-let observerStarted = false;
+import { fetchBootstrapData } from "./lib/api";
+import { DAY_OPTIONS, getAttendanceForTeam, TEAM_OPTIONS } from "./lib/selectors";
+import type { AppBootstrap, ShiftMode, TeamName } from "./types";
 
+let observerStarted = false;
+let cachedData: AppBootstrap | null = null;
+let loadingData: Promise<AppBootstrap> | null = null;
+
+const teamSet = new Set<string>(TEAM_OPTIONS);
+const daySet = new Set<string>(DAY_OPTIONS);
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"];
 const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [class*='panel'], [class*='card']";
+
+async function getBootstrapData() {
+  if (cachedData) return cachedData;
+  if (!loadingData) {
+    loadingData = fetchBootstrapData().then((data) => {
+      cachedData = data;
+      return data;
+    });
+  }
+  return loadingData;
+}
 
 function hasScheduleSummaryText(node: Element) {
   const text = node.textContent || "";
@@ -69,31 +88,111 @@ function removeScheduleSummaryRows() {
   document.querySelectorAll(removablePanelSelectors).forEach((node) => {
     if (!hasVisibleContent(node)) node.remove();
   });
-
-  document.querySelectorAll(".floating-schedule-tip").forEach((node) => node.remove());
 }
 
-function scheduleRemove() {
+function getVisibleScheduleSection() {
+  const sections = Array.from(document.querySelectorAll(".page-section"));
+  return sections.find((section) => {
+    const title = section.querySelector("h2")?.textContent || "";
+    const rect = section.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && (title.includes("站點試排") || title.includes("智能試排"));
+  }) || null;
+}
+
+function getSelectedScheduleMode(section: Element) {
+  const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value);
+  const team = values.find((value) => teamSet.has(value)) as TeamName | undefined;
+  const day = values.find((value) => daySet.has(value)) as ShiftMode | undefined;
+  if (!team || !day) return null;
+  return { team, day };
+}
+
+function countAssignedPeople(section: Element) {
+  const names = new Set<string>();
+  section.querySelectorAll(".list-scroll.short .list-row.active strong, .candidate-chip.active strong, .candidate-chip.active").forEach((node) => {
+    const text = node.textContent?.trim();
+    if (text) names.add(text);
+  });
+  return names.size;
+}
+
+function ensureScheduleTip() {
+  let tip = document.querySelector<HTMLElement>(".floating-schedule-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.className = "floating-schedule-tip square-schedule-tip";
+    tip.setAttribute("aria-live", "polite");
+    document.body.appendChild(tip);
+  }
+  tip.classList.add("square-schedule-tip");
+  return tip;
+}
+
+function hideScheduleTip() {
+  document.querySelectorAll(".floating-schedule-tip").forEach((node) => {
+    node.classList.remove("show");
+    node.innerHTML = "";
+  });
+}
+
+async function updateScheduleTip() {
+  const section = getVisibleScheduleSection();
+  if (!section) {
+    hideScheduleTip();
+    return;
+  }
+
+  const assigned = countAssignedPeople(section);
+  if (assigned <= 0) {
+    hideScheduleTip();
+    return;
+  }
+
+  let total = 0;
+  const mode = getSelectedScheduleMode(section);
+  if (mode) {
+    try {
+      const data = await getBootstrapData();
+      total = getAttendanceForTeam(data.people, mode.team, mode.day).all.length;
+    } catch {
+      total = 0;
+    }
+  }
+
+  if (total <= 0) {
+    total = section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").length;
+  }
+
+  const pending = Math.max(0, total - assigned);
+  const tip = ensureScheduleTip();
+  tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
+  tip.classList.add("show");
+}
+
+function scheduleRuntime() {
   removeScheduleSummaryRows();
-  window.requestAnimationFrame(removeScheduleSummaryRows);
+  window.requestAnimationFrame(() => {
+    removeScheduleSummaryRows();
+    updateScheduleTip().catch(() => undefined);
+  });
 }
 
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
 
-  window.addEventListener("click", scheduleRemove, true);
-  window.addEventListener("change", scheduleRemove, true);
-  window.addEventListener("resize", scheduleRemove);
+  window.addEventListener("click", scheduleRuntime, true);
+  window.addEventListener("change", scheduleRuntime, true);
+  window.addEventListener("resize", scheduleRuntime);
 
   const root = document.getElementById("root");
   if (root) {
-    const observer = new MutationObserver(scheduleRemove);
+    const observer = new MutationObserver(scheduleRuntime);
     observer.observe(root, { childList: true, subtree: true, characterData: true });
   }
 
-  scheduleRemove();
-  window.setTimeout(scheduleRemove, 100);
-  window.setTimeout(scheduleRemove, 500);
-  window.setTimeout(scheduleRemove, 1500);
+  scheduleRuntime();
+  window.setTimeout(scheduleRuntime, 100);
+  window.setTimeout(scheduleRuntime, 500);
+  window.setTimeout(scheduleRuntime, 1500);
 }
