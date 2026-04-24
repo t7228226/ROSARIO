@@ -39,3 +39,31 @@
   overflow: hidden !important;
   text-overflow: ellipsis !important;
 }
+
+#schedule-floating-status {
+  position: fixed;
+  right: 18px;
+  top: 92px;
+  z-index: 120;
+  display: none;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.92);
+  color: white;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+}
+
+#schedule-floating-status.show {
+  display: block;
+}
+
+@media (max-width: 900px) {
+  #schedule-floating-status {
+    top: auto;
+    right: 14px;
+    bottom: 86px;
+  }
+}
