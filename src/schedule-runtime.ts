@@ -186,11 +186,6 @@ function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
 
   getStationPanels(section).forEach((panel) => {
-    const wrap = panel.querySelector(".list-scroll.short") || panel;
-    const selected: Element[] = [];
-    const conflict: Element[] = [];
-    const pending: Element[] = [];
-
     Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
@@ -198,17 +193,12 @@ function classifyScheduleTags(section: Element) {
 
       if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
-        selected.push(tag);
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        conflict.push(tag);
       } else {
         tag.classList.add("schedule-tag-pending");
-        pending.push(tag);
       }
     });
-
-    [...selected, ...conflict, ...pending].forEach((tag) => wrap.appendChild(tag));
   });
 }
 
