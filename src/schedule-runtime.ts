@@ -185,7 +185,7 @@ function ensureHeadings(panel: Element) {
     headings.className = "schedule-inline-headings";
     wrap.parentElement?.insertBefore(headings, wrap);
   }
-  headings.innerHTML = `<span>已安排</span><span>尚未安排</span>`;
+  headings.innerHTML = `<span class="schedule-heading-pill schedule-heading-assigned">已安排</span><span class="schedule-heading-pill schedule-heading-pending">尚未安排</span>`;
 }
 
 function classifyScheduleTags(section: Element) {
@@ -202,7 +202,7 @@ function classifyScheduleTags(section: Element) {
         (tag as HTMLElement).style.order = "0";
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
-        (tag as HTMLElement).style.order = "40";
+        (tag as HTMLElement).style.order = "99";
       } else {
         tag.classList.add("schedule-tag-pending");
         (tag as HTMLElement).style.order = "20";
@@ -228,10 +228,12 @@ function conflictPromptHandler(event: Event) {
   const oldTag = findTagByName(fromPanel, name, true);
   if (oldTag) oldTag.click();
   window.setTimeout(() => {
-    const newTag = findTagByName(toPanel, name, false);
+    const freshSection = getVisibleScheduleSection();
+    const freshToPanel = freshSection ? getStationPanels(freshSection).find((panel) => getStationTitle(panel) === getStationTitle(toPanel)) || toPanel : toPanel;
+    const newTag = findTagByName(freshToPanel, name, false);
     if (newTag) newTag.click();
-    window.setTimeout(scheduleRuntime, 30);
-  }, 30);
+    window.setTimeout(scheduleRuntime, 80);
+  }, 120);
 }
 
 function scheduleRuntime() {
