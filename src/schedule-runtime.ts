@@ -101,10 +101,6 @@ function getTagName(tag: Element) {
   return tag.querySelector("strong")?.textContent?.trim() || tag.textContent?.trim() || "";
 }
 
-function getStationTitle(panel: Element) {
-  return panel.querySelector("h3")?.textContent?.trim() || "此站點";
-}
-
 function getAssignedMap(section: Element) {
   const map = new Map<string, Element>();
   getStationPanels(section).forEach((panel) => {
@@ -114,11 +110,6 @@ function getAssignedMap(section: Element) {
     });
   });
   return map;
-}
-
-function findTagByName(panel: Element, name: string, activeOnly = false) {
-  const selector = activeOnly ? ".list-scroll.short .list-row.active, .candidate-chip.active" : ".list-scroll.short .list-row, .candidate-chip";
-  return Array.from(panel.querySelectorAll<HTMLElement>(selector)).find((tag) => getTagName(tag) === name) || null;
 }
 
 function countAssignedPeople(section: Element) {
@@ -176,7 +167,20 @@ async function updateScheduleTip(section: Element) {
   tip.classList.add("show");
 }
 
-function ensureHeadings(panel: Element) {
+function forcePanelLayout(panel: Element) {
+  const h3 = panel.querySelector("h3");
+  const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
+  if (h3 && customButton) {
+    let header = panel.querySelector(".schedule-station-header") as HTMLElement | null;
+    if (!header) {
+      header = document.createElement("div");
+      header.className = "schedule-station-header";
+      panel.insertBefore(header, h3);
+    }
+    if (h3.parentElement !== header) header.appendChild(h3);
+    if (customButton.parentElement !== header) header.appendChild(customButton);
+  }
+
   const wrap = panel.querySelector(".list-scroll.short") as HTMLElement | null;
   if (!wrap) return;
   let headings = panel.querySelector(".schedule-inline-headings") as HTMLElement | null;
@@ -191,7 +195,7 @@ function ensureHeadings(panel: Element) {
 function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
   getStationPanels(section).forEach((panel) => {
-    ensureHeadings(panel);
+    forcePanelLayout(panel);
     Array.from(panel.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
@@ -211,31 +215,6 @@ function classifyScheduleTags(section: Element) {
   });
 }
 
-function conflictPromptHandler(event: Event) {
-  const target = event.target as Element | null;
-  const tag = target?.closest(".list-scroll.short .list-row.schedule-tag-conflict, .candidate-chip.schedule-tag-conflict") as HTMLElement | null;
-  if (!tag) return;
-  const section = getVisibleScheduleSection();
-  const toPanel = tag.closest(".panel");
-  if (!section || !toPanel) return;
-  const name = getTagName(tag);
-  const fromPanel = getAssignedMap(section).get(name);
-  if (!name || !fromPanel || fromPanel === toPanel) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const ok = window.confirm(`${name} 已安排在「${getStationTitle(fromPanel)}」。是否更換到「${getStationTitle(toPanel)}」？`);
-  if (!ok) return;
-  const oldTag = findTagByName(fromPanel, name, true);
-  if (oldTag) oldTag.click();
-  window.setTimeout(() => {
-    const freshSection = getVisibleScheduleSection();
-    const freshToPanel = freshSection ? getStationPanels(freshSection).find((panel) => getStationTitle(panel) === getStationTitle(toPanel)) || toPanel : toPanel;
-    const newTag = findTagByName(freshToPanel, name, false);
-    if (newTag) newTag.click();
-    window.setTimeout(scheduleRuntime, 80);
-  }, 120);
-}
-
 function scheduleRuntime() {
   removeScheduleSummaryRows();
   const section = getVisibleScheduleSection();
@@ -253,7 +232,6 @@ function scheduleRuntime() {
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
-  window.addEventListener("click", conflictPromptHandler, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
