@@ -96,8 +96,42 @@ function pauseScheduleRuntimes(ms = 900) {
   window.__scheduleRuntimePausedUntil = Date.now() + ms;
 }
 
+function getManualScheduleAssignedButtons(section: Element | null) {
+  if (!section) return [];
+  const selectors = [
+    ".schedule-two-area-frame .assigned-tags .list-row",
+    ".schedule-two-area-frame .assigned-tags .candidate-chip",
+    ".list-scroll.short .list-row.active",
+    ".candidate-chip.active",
+  ].join(", ");
+  const seen = new Set<HTMLElement>();
+  return Array.from(section.querySelectorAll<HTMLElement>(selectors)).filter((button) => {
+    if (seen.has(button)) return false;
+    if (!button.isConnected) return false;
+    if (button.classList.contains("runtime-training-chip")) return false;
+    const text = normalizeText(button.textContent || "");
+    if (!text || text.includes("自訂人選") || text.includes("已安排") || text.includes("尚未安排")) return false;
+    seen.add(button);
+    return true;
+  });
+}
+
+function clearManualScheduleAssignmentsFromDom(section: Element | null) {
+  const assignedButtons = getManualScheduleAssignedButtons(section);
+  assignedButtons.forEach((button) => {
+    try {
+      button.click();
+    } catch (error) {
+      console.warn("清除站點試排既有安排失敗，已略過單筆。", error);
+    }
+  });
+  return assignedButtons.length;
+}
+
 function installManualScheduleFilterConfirm() {
   let previousValue = "";
+  let isProgrammaticFilterChange = false;
+
   const captureValue = (event: Event) => {
     if (!isManualScheduleSelect(event.target)) return;
     previousValue = event.target.value;
@@ -106,7 +140,18 @@ function installManualScheduleFilterConfirm() {
   const confirmChange = (event: Event) => {
     if (!isManualScheduleSelect(event.target)) return;
     const select = event.target;
+    if (isProgrammaticFilterChange) return;
     if (select.value === previousValue) return;
+
+    const section = select.closest(".page-section");
+    const hasAssignedPeople = getManualScheduleAssignedButtons(section).length > 0;
+    if (!hasAssignedPeople) {
+      cleanupScheduleRuntimeUi();
+      window.setTimeout(cleanupScheduleRuntimeUi, 120);
+      return;
+    }
+
+    const nextValue = select.value;
     const ok = window.confirm("更換班別 / 日別會重置目前站點試排安排，是否繼續？");
     if (!ok) {
       select.value = previousValue;
@@ -114,10 +159,27 @@ function installManualScheduleFilterConfirm() {
       event.stopImmediatePropagation();
       return;
     }
-    pauseScheduleRuntimes();
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    select.value = previousValue;
+
+    pauseScheduleRuntimes(1400);
+    clearManualScheduleAssignmentsFromDom(section);
     cleanupScheduleRuntimeUi();
-    window.setTimeout(cleanupScheduleRuntimeUi, 120);
-    window.setTimeout(cleanupScheduleRuntimeUi, 360);
+    window.setTimeout(cleanupScheduleRuntimeUi, 80);
+    window.setTimeout(cleanupScheduleRuntimeUi, 240);
+
+    window.setTimeout(() => {
+      isProgrammaticFilterChange = true;
+      select.value = nextValue;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      window.setTimeout(() => {
+        isProgrammaticFilterChange = false;
+        previousValue = nextValue;
+        cleanupScheduleRuntimeUi();
+      }, 0);
+    }, 120);
   };
 
   window.addEventListener("pointerdown", captureValue, true);
