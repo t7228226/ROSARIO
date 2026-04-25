@@ -21,6 +21,11 @@ function getPageTitle(section: Element) {
   return normalizeText(section.querySelector("h2")?.textContent || "站點試排");
 }
 
+function isManualScheduleSection(section: Element) {
+  const title = getPageTitle(section);
+  return title.includes("站點試排") && !title.includes("智能試排");
+}
+
 function getCurrentFilters(section: Element) {
   const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value).filter(Boolean);
   return values.slice(0, 3).join("｜");
@@ -39,7 +44,7 @@ function getTagName(tag: Element) {
 }
 
 function isNoiseName(name: string) {
-  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排") || name.includes("自動試排") || name.includes("需求") || /^\d+$/.test(name);
+  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("一鍵安排") || name.includes("智能試排") || name.includes("自動試排") || name.includes("需求") || /^\d+$/.test(name);
 }
 
 function isPersonButton(node: Element) {
@@ -118,6 +123,23 @@ function ensureStyles() {
   const style = document.createElement("style");
   style.id = "schedule-share-runtime-style";
   style.textContent = `
+    .manual-one-click-button {
+      width: 100% !important;
+      min-height: 44px !important;
+      border: 0 !important;
+      border-radius: 12px !important;
+      padding: 11px 14px !important;
+      margin: 10px 0 12px !important;
+      background: #2563eb !important;
+      color: #ffffff !important;
+      font-weight: 900 !important;
+      cursor: pointer !important;
+      touch-action: manipulation !important;
+      -webkit-tap-highlight-color: transparent !important;
+    }
+    .manual-one-click-button:active {
+      transform: translateY(1px);
+    }
     .floating-schedule-tip .schedule-complete-button {
       margin-top: 6px !important;
       border: 0 !important;
@@ -296,6 +318,61 @@ function triggerSmartScheduleTipNow() {
   window.setTimeout(() => ensureCompleteButton(true), 520);
 }
 
+function ensureManualOneClickButton() {
+  const section = getVisibleScheduleSection();
+  if (!section || !isManualScheduleSection(section)) return;
+  if (section.querySelector(".manual-one-click-button")) return;
+  const firstPanel = section.querySelector(".panel");
+  if (!firstPanel) return;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "manual-one-click-button";
+  button.textContent = "一鍵安排";
+  firstPanel.parentElement?.insertBefore(button, firstPanel);
+}
+
+function getAlreadyAssignedNames(section: Element) {
+  const names = new Set<string>();
+  Array.from(section.querySelectorAll(".panel")).forEach((panel) => {
+    getPanelAssignedPeople(panel).forEach((name) => names.add(name));
+  });
+  return names;
+}
+
+function getManualCandidateButtons(panel: Element, usedNames: Set<string>) {
+  return Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip, button, .chip, .pill")).filter((node) => {
+    if (!isPersonButton(node)) return false;
+    if (node.classList.contains("active")) return false;
+    if (node.closest(".assigned-tags")) return false;
+    const name = getTagName(node);
+    return !usedNames.has(name);
+  });
+}
+
+function runManualOneClickPlan() {
+  const section = getVisibleScheduleSection();
+  if (!section || !isManualScheduleSection(section)) return;
+  const usedNames = getAlreadyAssignedNames(section);
+  Array.from(section.querySelectorAll(".panel")).forEach((panel) => {
+    const demand = getPanelDemand(panel);
+    if (demand <= 0) return;
+    const current = getPanelAssignedPeople(panel).length;
+    let need = Math.max(0, demand - current);
+    if (need <= 0) return;
+    const candidates = getManualCandidateButtons(panel, usedNames);
+    for (const candidate of candidates) {
+      if (need <= 0) break;
+      const name = getTagName(candidate);
+      if (!name || usedNames.has(name)) continue;
+      candidate.click();
+      usedNames.add(name);
+      need -= 1;
+    }
+  });
+  window.setTimeout(() => ensureCompleteButton(true), 80);
+  window.setTimeout(() => ensureCompleteButton(true), 240);
+}
+
 function isSmartScheduleOneClickButton(button: HTMLElement) {
   const section = button.closest(".page-section");
   if (!section || !getPageTitle(section).includes("智能試排")) return false;
@@ -385,6 +462,12 @@ function openPreviewModal() {
 function handleClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const button = target?.closest("button") as HTMLElement | null;
+  if (button?.classList.contains("manual-one-click-button")) {
+    event.preventDefault();
+    event.stopPropagation();
+    runManualOneClickPlan();
+    return;
+  }
   if (button && isSmartScheduleOneClickButton(button)) {
     triggerSmartScheduleTipNow();
   }
@@ -397,6 +480,7 @@ function handleClick(event: MouseEvent) {
 
 function scheduleEnsureCompleteButton() {
   window.requestAnimationFrame(() => {
+    ensureManualOneClickButton();
     ensureCompleteButton();
   });
 }
@@ -408,6 +492,10 @@ export function installScheduleShareRuntime() {
   window.addEventListener("click", handleClick, true);
   const observer = new MutationObserver(scheduleEnsureCompleteButton);
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  ensureManualOneClickButton();
   ensureCompleteButton();
-  window.setInterval(ensureCompleteButton, 150);
+  window.setInterval(() => {
+    ensureManualOneClickButton();
+    ensureCompleteButton();
+  }, 150);
 }
