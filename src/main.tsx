@@ -9,6 +9,7 @@ import { installScheduleShareRuntime } from "./schedule-share-runtime";
 declare global {
   interface Window {
     __hideBootStatus?: () => void;
+    __scheduleRuntimePausedUntil?: number;
   }
 }
 
@@ -34,7 +35,9 @@ function isOptionalRuntimeDomError(message: string) {
     message.includes("Failed to execute 'insertBefore'") ||
     message.includes("The node before which the new node is to be inserted is not a child of this node") ||
     message.includes("Failed to execute 'removeChild'") ||
-    message.includes("The node to be removed is not a child of this node")
+    message.includes("The node to be removed is not a child of this node") ||
+    message.includes("Cannot read properties of null") ||
+    message.includes("Cannot read properties of undefined")
   );
 }
 
@@ -85,6 +88,12 @@ function cleanupScheduleRuntimeUi() {
   document.querySelector(".floating-schedule-tip")?.remove();
   document.querySelector(".schedule-preview-backdrop")?.remove();
   document.querySelector(".manual-mode-action-row")?.remove();
+  document.querySelector(".custom-assign-backdrop")?.remove();
+  document.querySelector(".schedule-reassign-backdrop")?.remove();
+}
+
+function pauseScheduleRuntimes(ms = 900) {
+  window.__scheduleRuntimePausedUntil = Date.now() + ms;
 }
 
 function installManualScheduleFilterConfirm() {
@@ -105,12 +114,32 @@ function installManualScheduleFilterConfirm() {
       event.stopImmediatePropagation();
       return;
     }
+    pauseScheduleRuntimes();
     cleanupScheduleRuntimeUi();
+    window.setTimeout(cleanupScheduleRuntimeUi, 120);
+    window.setTimeout(cleanupScheduleRuntimeUi, 360);
   };
 
   window.addEventListener("pointerdown", captureValue, true);
   window.addEventListener("focusin", captureValue, true);
   window.addEventListener("change", confirmChange, true);
+}
+
+function installRuntimePauseGate() {
+  const originalSetTimeout = window.setTimeout.bind(window);
+  window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
+    const guardedHandler = typeof handler === "function"
+      ? (() => {
+          if (Date.now() < (window.__scheduleRuntimePausedUntil || 0)) return;
+          try {
+            (handler as (...innerArgs: unknown[]) => void)(...args);
+          } catch (error) {
+            console.warn("runtime timeout 已略過錯誤", error);
+          }
+        })
+      : handler;
+    return originalSetTimeout(guardedHandler as TimerHandler, timeout);
+  }) as typeof window.setTimeout;
 }
 
 window.addEventListener("error", (event) => {
@@ -130,6 +159,8 @@ window.addEventListener("unhandledrejection", (event) => {
   console.warn("非核心非同步錯誤已略過：", event.reason);
   event.preventDefault();
 });
+
+installRuntimePauseGate();
 
 try {
   const root = document.getElementById("root");
