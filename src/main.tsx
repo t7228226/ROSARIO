@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
+import { installScheduleRuntime } from "./schedule-runtime";
 
 declare global {
   interface Window {
@@ -34,6 +35,14 @@ function isOptionalRuntimeDomError(message: string) {
     message.includes("Failed to execute 'removeChild'") ||
     message.includes("The node to be removed is not a child of this node")
   );
+}
+
+function installOptionalRuntime(name: string, installer: () => void) {
+  try {
+    installer();
+  } catch (error) {
+    console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
+  }
 }
 
 window.addEventListener("error", (event) => {
@@ -73,6 +82,6 @@ try {
   showFatalError("系統載入失敗", formatError(error));
 }
 
-// 暫停所有站點試排 runtime，先確認切換日別白畫面是否由補丁層造成。
-// window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
+window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
+// 暫停不穩定的站點分享 / 一鍵安排 runtime。核心站點試排功能保留。
 // window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
