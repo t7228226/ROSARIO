@@ -12,11 +12,48 @@ function getStationPanels(section: Element) {
   });
 }
 
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, "").trim();
+}
+
+const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數"];
+
+function hasManualScheduleSummaryText(node: Element) {
+  const text = node.textContent || "";
+  return summaryLabels.filter((label) => text.includes(label)).length >= 3;
+}
+
+function hideSummaryBlocks(section: Element) {
+  const blocks = new Set<HTMLElement>();
+  section.querySelectorAll<HTMLElement>(".detail-grid, .compact-info-grid, .summary-strip").forEach((node) => {
+    if (hasManualScheduleSummaryText(node)) blocks.add(node);
+  });
+
+  section.querySelectorAll<HTMLElement>(".info-item, .stat-card, [class*='card']").forEach((node) => {
+    const text = normalizeText(node.textContent || "");
+    if (summaryLabels.some((label) => text.includes(normalizeText(label)))) {
+      const parent = node.parentElement;
+      if (parent && hasManualScheduleSummaryText(parent)) blocks.add(parent);
+    }
+  });
+
+  blocks.forEach((block) => block.classList.add("safe-schedule-summary-hidden"));
+}
+
 function ensureSectionStyle() {
   if (document.getElementById("safe-schedule-section-runtime-style")) return;
   const style = document.createElement("style");
   style.id = "safe-schedule-section-runtime-style";
   style.textContent = `
+    .safe-schedule-summary-hidden {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+    }
     .safe-schedule-partition-list {
       display: flex !important;
       flex-wrap: wrap !important;
@@ -102,7 +139,7 @@ function ensureEmptyNote(list: HTMLElement, hasAssigned: boolean) {
   if (!note) {
     note = document.createElement("div");
     note.className = "safe-schedule-empty-note";
-    note.textContent = "尚未安排";
+    note.textContent = "-";
     list.appendChild(note);
   }
 }
@@ -111,6 +148,7 @@ function updateSections() {
   const section = getVisibleManualScheduleSection();
   if (!section) return;
   ensureSectionStyle();
+  hideSummaryBlocks(section);
 
   getStationPanels(section).forEach((panel) => {
     const list = panel.querySelector<HTMLElement>(".list-scroll.short");
