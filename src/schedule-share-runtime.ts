@@ -53,7 +53,7 @@ function isPersonButton(node: Element) {
   if (isNoiseName(name)) return false;
   if (name.length > 12) return false;
   const tag = node.tagName.toLowerCase();
-  return tag === "button" || node.classList.contains("candidate-chip") || node.classList.contains("runtime-training-chip") || node.classList.contains("chip") || node.classList.contains("pill");
+  return tag === "button" || node.classList.contains("candidate-chip") || node.classList.contains("runtime-training-chip") || node.classList.contains("chip") || node.classList.contains("pill") || node.classList.contains("list-row");
 }
 
 function getAssignedTags(section: Element) {
@@ -66,12 +66,6 @@ function getPanelAssignedPeople(panel: Element) {
   assignedTags.forEach((tag) => {
     const name = getTagName(tag);
     if (!isNoiseName(name)) names.add(name);
-  });
-
-  if (names.size > 0) return Array.from(names);
-
-  Array.from(panel.querySelectorAll("button, .candidate-chip, .chip, .pill")).forEach((node) => {
-    if (isPersonButton(node)) names.add(getTagName(node));
   });
   return Array.from(names);
 }
@@ -123,13 +117,26 @@ function ensureStyles() {
   const style = document.createElement("style");
   style.id = "schedule-share-runtime-style";
   style.textContent = `
+    .manual-mode-action-row {
+      display: grid !important;
+      grid-template-columns: minmax(0, 1fr) minmax(120px, 0.45fr) !important;
+      gap: 10px !important;
+      align-items: stretch !important;
+      width: 100% !important;
+      margin: 0 0 12px !important;
+    }
+    .manual-mode-action-row select {
+      width: 100% !important;
+      max-width: none !important;
+      margin: 0 !important;
+    }
     .manual-one-click-button {
       width: 100% !important;
       min-height: 44px !important;
       border: 0 !important;
       border-radius: 12px !important;
       padding: 11px 14px !important;
-      margin: 10px 0 12px !important;
+      margin: 0 !important;
       background: #2563eb !important;
       color: #ffffff !important;
       font-weight: 900 !important;
@@ -256,6 +263,13 @@ function ensureStyles() {
       font-weight: 900;
     }
     @media (max-width: 900px) {
+      .manual-mode-action-row {
+        grid-template-columns: minmax(0, 1fr) minmax(108px, 0.42fr) !important;
+      }
+      .manual-one-click-button {
+        font-size: 14px !important;
+        padding: 8px 10px !important;
+      }
       .floating-schedule-tip .schedule-complete-button {
         width: 100% !important;
         padding: 7px 4px !important;
@@ -321,26 +335,32 @@ function triggerSmartScheduleTipNow() {
 function ensureManualOneClickButton() {
   const section = getVisibleScheduleSection();
   if (!section || !isManualScheduleSection(section)) return;
-  if (section.querySelector(".manual-one-click-button")) return;
-  const firstPanel = section.querySelector(".panel");
-  if (!firstPanel) return;
+  const selects = Array.from(section.querySelectorAll("select"));
+  const modeSelect = selects[1] || selects[0];
+  if (!modeSelect || modeSelect.closest(".manual-mode-action-row")) return;
+  const row = document.createElement("div");
+  row.className = "manual-mode-action-row";
   const button = document.createElement("button");
   button.type = "button";
   button.className = "manual-one-click-button";
   button.textContent = "一鍵安排";
-  firstPanel.parentElement?.insertBefore(button, firstPanel);
+  const parent = modeSelect.parentElement;
+  parent?.insertBefore(row, modeSelect);
+  row.appendChild(modeSelect);
+  row.appendChild(button);
 }
 
 function getAlreadyAssignedNames(section: Element) {
   const names = new Set<string>();
-  Array.from(section.querySelectorAll(".panel")).forEach((panel) => {
-    getPanelAssignedPeople(panel).forEach((name) => names.add(name));
+  getAssignedTags(section).forEach((tag) => {
+    const name = getTagName(tag);
+    if (!isNoiseName(name)) names.add(name);
   });
   return names;
 }
 
 function getManualCandidateButtons(panel: Element, usedNames: Set<string>) {
-  return Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip, button, .chip, .pill")).filter((node) => {
+  return Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip")).filter((node) => {
     if (!isPersonButton(node)) return false;
     if (node.classList.contains("active")) return false;
     if (node.closest(".assigned-tags")) return false;
