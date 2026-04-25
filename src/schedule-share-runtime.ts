@@ -38,20 +38,41 @@ function getTagName(tag: Element) {
   return normalizeText(tag.querySelector("strong")?.textContent || tag.textContent || "");
 }
 
+function isNoiseName(name: string) {
+  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排");
+}
+
 function getAssignedTags(section: Element) {
-  return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"));
+  return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active"));
+}
+
+function getSmartAssignedNames(section: Element) {
+  const names = new Set<string>();
+  getAssignedTags(section).forEach((tag) => {
+    const name = getTagName(tag);
+    if (!isNoiseName(name)) names.add(name);
+  });
+  if (names.size > 0) return names;
+
+  section.querySelectorAll(".panel").forEach((panel) => {
+    panel.querySelectorAll("strong").forEach((node) => {
+      const name = normalizeText(node.textContent || "");
+      if (!isNoiseName(name) && name.length <= 8) names.add(name);
+    });
+  });
+  return names;
 }
 
 function getPreviewRows(section: Element): PreviewRow[] {
   const panels = Array.from(section.querySelectorAll(".panel")).filter((panel) =>
-    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active")
+    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active")
   );
 
   return panels.map((panel) => {
-    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"))
+    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active"))
       .map((tag) => {
         const name = getTagName(tag);
-        if (!name) return "";
+        if (!name || isNoiseName(name)) return "";
         return tag.classList.contains("runtime-training-chip") || tag.classList.contains("schedule-tag-training") ? `${name}（訓練）` : name;
       })
       .filter(Boolean);
@@ -210,11 +231,12 @@ function ensureStyles() {
   document.head.appendChild(style);
 }
 
-function ensureScheduleTipForSmartSchedule() {
+function ensureScheduleTipForSmartSchedule(force = false) {
   const section = getVisibleScheduleSection();
   if (!section || !getPageTitle(section).includes("智能試排")) return;
-  const assigned = new Set(getAssignedTags(section).map((tag) => getTagName(tag)).filter(Boolean)).size;
-  if (assigned <= 0) return;
+  const assignedNames = getSmartAssignedNames(section);
+  const assigned = assignedNames.size;
+  if (assigned <= 0 && !force) return;
   let tip = document.querySelector<HTMLElement>(".floating-schedule-tip");
   if (!tip) {
     tip = document.createElement("div");
@@ -224,13 +246,15 @@ function ensureScheduleTipForSmartSchedule() {
   }
   tip.classList.add("square-schedule-tip", "show");
   const completeButton = tip.querySelector(".schedule-complete-button");
-  const pending = Math.max(0, section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").length - assigned);
+  const allCandidateNames = new Set(Array.from(section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip, .list-row")).map((tag) => getTagName(tag)).filter((name) => !isNoiseName(name)));
+  const total = Math.max(allCandidateNames.size, assigned);
+  const pending = Math.max(0, total - assigned);
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
   if (completeButton) tip.appendChild(completeButton);
 }
 
-function ensureCompleteButton() {
-  ensureScheduleTipForSmartSchedule();
+function ensureCompleteButton(forceSmartTip = false) {
+  ensureScheduleTipForSmartSchedule(forceSmartTip);
   const tip = document.querySelector<HTMLElement>(".floating-schedule-tip.show");
   if (!tip) return;
   if (tip.querySelector(".schedule-complete-button")) return;
@@ -242,10 +266,11 @@ function ensureCompleteButton() {
 }
 
 function triggerSmartScheduleTipNow() {
-  window.requestAnimationFrame(() => ensureCompleteButton());
-  window.setTimeout(ensureCompleteButton, 40);
-  window.setTimeout(ensureCompleteButton, 120);
-  window.setTimeout(ensureCompleteButton, 260);
+  window.requestAnimationFrame(() => ensureCompleteButton(true));
+  window.setTimeout(() => ensureCompleteButton(true), 40);
+  window.setTimeout(() => ensureCompleteButton(true), 120);
+  window.setTimeout(() => ensureCompleteButton(true), 260);
+  window.setTimeout(() => ensureCompleteButton(true), 520);
 }
 
 function isSmartScheduleOneClickButton(button: HTMLElement) {
