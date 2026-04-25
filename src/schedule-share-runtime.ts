@@ -358,32 +358,26 @@ function createManualPlanModeSelect() {
 }
 
 function ensureManualOneClickButton() {
-  const section = getVisibleScheduleSection();
-  if (!section || !isManualScheduleSection(section)) return;
-
-  const oldRow = section.querySelector(".manual-mode-action-row");
-  const movedOriginalSelect = oldRow?.querySelector("select:not(.manual-plan-mode-select)");
-  if (oldRow && movedOriginalSelect && oldRow.parentElement) {
-    oldRow.parentElement.insertBefore(movedOriginalSelect, oldRow);
-    oldRow.remove();
+  try {
+    const section = getVisibleScheduleSection();
+    if (!section || !isManualScheduleSection(section)) return;
+    if (section.querySelector(".manual-mode-action-row")) return;
+    const selects = Array.from(section.querySelectorAll("select")).filter((select) => !select.classList.contains("manual-plan-mode-select"));
+    const daySelect = selects[1] || selects[0];
+    if (!daySelect || !daySelect.parentElement) return;
+    const row = document.createElement("div");
+    row.className = "manual-mode-action-row";
+    const modeSelect = createManualPlanModeSelect();
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "manual-one-click-button";
+    button.textContent = "一鍵安排";
+    row.appendChild(modeSelect);
+    row.appendChild(button);
+    daySelect.insertAdjacentElement("afterend", row);
+  } catch (error) {
+    console.warn("站點試排一鍵安排補丁插入失敗", error);
   }
-
-  if (section.querySelector(".manual-mode-action-row")) return;
-  const selects = Array.from(section.querySelectorAll("select")).filter((select) => !select.classList.contains("manual-plan-mode-select"));
-  const daySelect = selects[1] || selects[0];
-  if (!daySelect) return;
-  const row = document.createElement("div");
-  row.className = "manual-mode-action-row";
-  const modeSelect = createManualPlanModeSelect();
-  const button = document.createElement("button");
-  button.type = "button";
-  button.className = "manual-one-click-button";
-  button.textContent = "一鍵安排";
-  const insertParent = daySelect.parentElement;
-  if (!insertParent) return;
-  insertParent.insertBefore(row, daySelect.nextSibling);
-  row.appendChild(modeSelect);
-  row.appendChild(button);
 }
 
 function getManualPlanMode(section: Element): ManualPlanMode {
