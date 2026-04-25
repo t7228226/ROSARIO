@@ -241,6 +241,20 @@ function ensureCompleteButton() {
   tip.appendChild(button);
 }
 
+function triggerSmartScheduleTipNow() {
+  window.requestAnimationFrame(() => ensureCompleteButton());
+  window.setTimeout(ensureCompleteButton, 40);
+  window.setTimeout(ensureCompleteButton, 120);
+  window.setTimeout(ensureCompleteButton, 260);
+}
+
+function isSmartScheduleOneClickButton(button: HTMLElement) {
+  const section = button.closest(".page-section");
+  if (!section || !getPageTitle(section).includes("智能試排")) return false;
+  const text = normalizeText(button.textContent || "");
+  return text.includes("一鍵試排") || text.includes("智能試排") || text.includes("自動試排");
+}
+
 function closePreviewModal() {
   document.querySelector(".schedule-preview-backdrop")?.remove();
 }
@@ -321,8 +335,13 @@ function openPreviewModal() {
 }
 
 function handleClick(event: MouseEvent) {
-  const button = (event.target as HTMLElement | null)?.closest(".schedule-complete-button");
-  if (!button) return;
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest("button") as HTMLElement | null;
+  if (button && isSmartScheduleOneClickButton(button)) {
+    triggerSmartScheduleTipNow();
+  }
+  const completeButton = target?.closest(".schedule-complete-button");
+  if (!completeButton) return;
   event.preventDefault();
   event.stopPropagation();
   openPreviewModal();
