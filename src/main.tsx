@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
-// import { installScheduleRuntime } from "./schedule-runtime";
+import { installScheduleRuntime } from "./schedule-runtime";
 import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
@@ -126,5 +126,5 @@ try {
   showFatalError("系統載入失敗", formatError(error));
 }
 
-// window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
+window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
 window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
