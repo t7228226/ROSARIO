@@ -197,10 +197,15 @@ export default function App() {
   return window.confirm("更換班別 / 日別會重置目前站點試排安排，是否繼續？");
   }
 
+  function pauseScheduleRuntime(ms = 900) {
+  (window as Window & { __scheduleRuntimePausedUntil?: number }).__scheduleRuntimePausedUntil = Date.now() + ms;
+  }
+
   function handleManualShiftChange(nextShift: TeamName) {
   if (nextShift === manualShift) return;
   if (!confirmResetManualSchedule()) return;
 
+  pauseScheduleRuntime();
   setManualAssignments({});
   setManualShift(nextShift);
   }
@@ -209,6 +214,7 @@ export default function App() {
   if (nextDay === manualDay) return;
   if (!confirmResetManualSchedule()) return;
 
+  pauseScheduleRuntime();
   setManualAssignments({});
   setManualDay(nextDay);
   }
