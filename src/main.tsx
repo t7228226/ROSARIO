@@ -38,9 +38,11 @@ function installOptionalRuntime(name: string, installer: () => void) {
 }
 
 window.addEventListener("error", (event) => {
+  const message = String(event.message || "");
   const target = String(event.filename || "");
-  if (target.includes("/assets/index-") && String(event.message || "").includes("The object can not be found here")) {
-    console.warn("非核心排班外掛錯誤已略過：", event.message);
+  const isRuntimeScriptError = message === "Script error." || message.includes("The object can not be found here") || target.includes("/assets/index-");
+  if (isRuntimeScriptError) {
+    console.warn("非核心腳本錯誤已略過：", message, target);
     event.preventDefault();
     return;
   }
@@ -50,7 +52,8 @@ window.addEventListener("error", (event) => {
 window.addEventListener("unhandledrejection", (event) => {
   const reason = event.reason;
   const detail = typeof reason === "object" ? JSON.stringify(reason, null, 2) : String(reason);
-  showFatalError("系統載入失敗", detail);
+  console.warn("非核心非同步錯誤已略過：", detail);
+  event.preventDefault();
 });
 
 try {
@@ -72,5 +75,5 @@ try {
   showFatalError("系統載入失敗", formatError(error));
 }
 
-installOptionalRuntime("站點試排外掛", installScheduleRuntime);
-installOptionalRuntime("站點分享外掛", installScheduleShareRuntime);
+window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 0);
+window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 0);
