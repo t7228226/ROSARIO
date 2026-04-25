@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
+import { installScheduleRuntime } from "./schedule-runtime";
+import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
   interface Window {
@@ -25,6 +27,14 @@ function showFatalError(title: string, detail: string) {
 function formatError(error: unknown) {
   if (error instanceof Error) return error.stack || error.message;
   return String(error);
+}
+
+function installOptionalRuntime(name: string, installer: () => void) {
+  try {
+    installer();
+  } catch (error) {
+    console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
+  }
 }
 
 window.addEventListener("error", (event) => {
@@ -62,3 +72,6 @@ try {
 } catch (error) {
   showFatalError("系統載入失敗", formatError(error));
 }
+
+window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
+window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
