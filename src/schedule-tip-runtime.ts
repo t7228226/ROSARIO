@@ -1,4 +1,4 @@
-const scheduleSummaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數"];
+const scheduleSummaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "總出勤", "本籍出勤", "菲籍出勤", "越籍出勤", "本班人力", "本班出勤", "支援人力"];
 
 function normalizeText(value: string) {
   return value.replace(/\s+/g, "").trim();
@@ -13,12 +13,20 @@ function getVisibleScheduleSection() {
 }
 
 function getInfoNumber(section: Element, label: string) {
-  const nodes = Array.from(section.querySelectorAll(".detail-grid *, .floating-summary *"));
-  const labelNode = nodes.find((node) => normalizeText(node.textContent || "") === normalizeText(label));
-  const card = labelNode?.closest(".info-item, .stat-card, [class*='card'], div");
-  const text = card?.textContent || "";
-  const match = text.replace(label, "").match(/\d+/);
-  return match ? Number(match[0]) : 0;
+  const normalizedLabel = normalizeText(label);
+  const candidates = Array.from(section.querySelectorAll<HTMLElement>(".detail-grid > *, .floating-summary *, .info-item, .stat-card, [class*='info'], [class*='card']"));
+
+  for (const node of candidates) {
+    const normalizedText = normalizeText(node.textContent || "");
+    if (!normalizedText.includes(normalizedLabel)) continue;
+    const afterLabel = normalizedText.slice(normalizedText.indexOf(normalizedLabel) + normalizedLabel.length);
+    const directMatch = afterLabel.match(/\d+/);
+    if (directMatch) return Number(directMatch[0]);
+    const anyMatch = normalizedText.match(/\d+/);
+    if (anyMatch) return Number(anyMatch[0]);
+  }
+
+  return 0;
 }
 
 function getAssignedCount(section: Element) {
@@ -33,14 +41,14 @@ function getAssignedCount(section: Element) {
   return names.size;
 }
 
-function getRequiredCount(section: Element) {
-  const fromSummary = getInfoNumber(section, "需排總人數");
-  if (fromSummary > 0) return fromSummary;
+function getAttendanceTotal(section: Element) {
+  return getInfoNumber(section, "總出勤");
+}
 
-  return Array.from(section.querySelectorAll(".panel-header span")).reduce((sum, node) => {
-    const match = (node.textContent || "").match(/需求\s*(\d+)/);
-    return sum + (match ? Number(match[1]) : 0);
-  }, 0);
+function getPendingCount(section: Element, assigned: number) {
+  const attendanceTotal = getAttendanceTotal(section);
+  if (attendanceTotal > 0) return Math.max(0, attendanceTotal - assigned);
+  return 0;
 }
 
 function ensureTip() {
@@ -74,8 +82,7 @@ function updateTip() {
     return;
   }
 
-  const required = getRequiredCount(section);
-  const pending = Math.max(0, required - assigned);
+  const pending = getPendingCount(section, assigned);
   const tip = ensureTip();
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
   tip.classList.add("show", "square-schedule-tip");
