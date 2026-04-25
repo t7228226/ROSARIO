@@ -28,6 +28,17 @@ function isManualScheduleSection(section: Element) {
   return title.includes("站點試排") && !title.includes("智能試排");
 }
 
+function hideSmartScheduleNav() {
+  Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button'], .nav-item")).forEach((item) => {
+    const text = normalizeText(item.textContent || "");
+    if (text === "智能試排") {
+      item.style.display = "none";
+      item.setAttribute("aria-hidden", "true");
+      item.setAttribute("data-runtime-hidden-smart-schedule", "true");
+    }
+  });
+}
+
 function getCurrentFilters(section: Element) {
   const values = Array.from(section.querySelectorAll("select")).map((select) => (select as HTMLSelectElement).value).filter(Boolean);
   return values.slice(0, 3).join("｜");
@@ -540,6 +551,7 @@ function handleClick(event: MouseEvent) {
 
 function scheduleEnsureCompleteButton() {
   window.requestAnimationFrame(() => {
+    hideSmartScheduleNav();
     ensureManualOneClickButton();
     ensureCompleteButton();
   });
@@ -552,9 +564,11 @@ export function installScheduleShareRuntime() {
   window.addEventListener("click", handleClick, true);
   const observer = new MutationObserver(scheduleEnsureCompleteButton);
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  hideSmartScheduleNav();
   ensureManualOneClickButton();
   ensureCompleteButton();
   window.setInterval(() => {
+    hideSmartScheduleNav();
     ensureManualOneClickButton();
     ensureCompleteButton();
   }, 150);
