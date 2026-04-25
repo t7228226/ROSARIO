@@ -7,6 +7,7 @@ import "./schedule-overrides.css";
 import { installScheduleShareRuntime } from "./schedule-share-runtime";
 import { installScheduleTipRuntime } from "./schedule-tip-runtime";
 import { installScheduleColorRuntime } from "./schedule-color-runtime";
+import { installScheduleSectionRuntime } from "./schedule-section-runtime";
 
 declare global {
   interface Window {
@@ -131,4 +132,5 @@ try {
 // window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
 window.setTimeout(() => installOptionalRuntime("站點浮動提示窗", installScheduleTipRuntime), 550);
 window.setTimeout(() => installOptionalRuntime("站點顏色標籤", installScheduleColorRuntime), 650);
+window.setTimeout(() => installOptionalRuntime("站點分區", installScheduleSectionRuntime), 700);
 window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
