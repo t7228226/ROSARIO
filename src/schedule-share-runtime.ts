@@ -84,6 +84,8 @@ function ensureStyles() {
       pointer-events: auto !important;
       cursor: pointer !important;
       box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18) !important;
+      touch-action: manipulation !important;
+      -webkit-tap-highlight-color: transparent !important;
     }
     .floating-schedule-tip .schedule-complete-button:active {
       transform: translateY(1px);
@@ -153,6 +155,7 @@ function ensureStyles() {
       padding: 10px 14px;
       font-weight: 900;
       cursor: pointer;
+      touch-action: manipulation;
     }
     .schedule-preview-cancel,
     .schedule-share-close {
@@ -301,13 +304,19 @@ function handleClick(event: MouseEvent) {
   openPreviewModal();
 }
 
+function scheduleEnsureCompleteButton() {
+  window.requestAnimationFrame(() => {
+    ensureCompleteButton();
+  });
+}
+
 export function installScheduleShareRuntime() {
   if (shareRuntimeStarted || typeof window === "undefined") return;
   shareRuntimeStarted = true;
   ensureStyles();
   window.addEventListener("click", handleClick, true);
-  const observer = new MutationObserver(ensureCompleteButton);
+  const observer = new MutationObserver(scheduleEnsureCompleteButton);
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   ensureCompleteButton();
-  window.setInterval(ensureCompleteButton, 600);
+  window.setInterval(ensureCompleteButton, 150);
 }
