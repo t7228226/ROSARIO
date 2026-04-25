@@ -39,11 +39,11 @@ function getTagName(tag: Element) {
 }
 
 function isNoiseName(name: string) {
-  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排");
+  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排") || name.includes("需求");
 }
 
 function getAssignedTags(section: Element) {
-  return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active"));
+  return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"));
 }
 
 function getSmartAssignedNames(section: Element) {
@@ -52,24 +52,16 @@ function getSmartAssignedNames(section: Element) {
     const name = getTagName(tag);
     if (!isNoiseName(name)) names.add(name);
   });
-  if (names.size > 0) return names;
-
-  section.querySelectorAll(".panel").forEach((panel) => {
-    panel.querySelectorAll("strong").forEach((node) => {
-      const name = normalizeText(node.textContent || "");
-      if (!isNoiseName(name) && name.length <= 8) names.add(name);
-    });
-  });
   return names;
 }
 
 function getPreviewRows(section: Element): PreviewRow[] {
   const panels = Array.from(section.querySelectorAll(".panel")).filter((panel) =>
-    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active")
+    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active")
   );
 
   return panels.map((panel) => {
-    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active, .list-row.active"))
+    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"))
       .map((tag) => {
         const name = getTagName(tag);
         if (!name || isNoiseName(name)) return "";
@@ -246,7 +238,7 @@ function ensureScheduleTipForSmartSchedule(force = false) {
   }
   tip.classList.add("square-schedule-tip", "show");
   const completeButton = tip.querySelector(".schedule-complete-button");
-  const allCandidateNames = new Set(Array.from(section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip, .list-row")).map((tag) => getTagName(tag)).filter((name) => !isNoiseName(name)));
+  const allCandidateNames = new Set(Array.from(section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).map((tag) => getTagName(tag)).filter((name) => !isNoiseName(name)));
   const total = Math.max(allCandidateNames.size, assigned);
   const pending = Math.max(0, total - assigned);
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
