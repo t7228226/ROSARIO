@@ -4,7 +4,6 @@ import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
 import { installScheduleRuntime } from "./schedule-runtime";
-import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
   interface Window {
@@ -84,4 +83,5 @@ try {
 }
 
 window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
-window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
+// 暫停站點分享 / 一鍵安排 runtime。此補丁層目前會在切換日別時干擾 React 重繪，先停用避免白畫面。
+// window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
