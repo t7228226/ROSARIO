@@ -4,6 +4,7 @@ import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
 import { installScheduleRuntime } from "./schedule-runtime";
+import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
   interface Window {
@@ -83,5 +84,4 @@ try {
 }
 
 window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
-// 暫停不穩定的站點分享 / 一鍵安排 runtime。核心站點試排功能保留。
-// window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
+window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
