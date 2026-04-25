@@ -189,6 +189,11 @@ function findStationIdFromPanel(panel: Element, data: AppBootstrap) {
   return stations.find((station) => panelText.includes(normalizeText(station.name)) || panelText.includes(normalizeText(station.id)))?.id || "";
 }
 
+function getStationTitle(panel: Element) {
+  const headings = Array.from(panel.querySelectorAll("h3, h4, .panel-title, strong"));
+  return headings.map((node) => node.textContent?.trim() || "").find((text) => text && !text.includes("已安排") && !text.includes("尚未安排")) || "此站點";
+}
+
 function ensureRuntimeTrainingTags(panel: Element, frame: HTMLElement, stationId?: string) {
   if (!stationId) return;
   const assignedTags = frame.querySelector(".assigned-tags") as HTMLElement | null;
@@ -271,9 +276,11 @@ async function classifyScheduleTags(section: Element) {
           tag.classList.add("schedule-tag-selected");
         } else if (assignedPanel && assignedPanel !== panel) {
           tag.classList.add("schedule-tag-conflict");
+          tag.dataset.assignedStationTitle = getStationTitle(assignedPanel);
           conflictTags.push(tag);
         } else {
           tag.classList.add("schedule-tag-pending");
+          delete tag.dataset.assignedStationTitle;
         }
       });
       const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
@@ -307,7 +314,7 @@ function ensureCustomAssignStyles() {
       user-select: none !important;
       -webkit-user-select: none !important;
     }
-    .custom-assign-backdrop {
+    .custom-assign-backdrop, .schedule-reassign-backdrop {
       position: fixed;
       inset: 0;
       z-index: 300;
@@ -316,7 +323,7 @@ function ensureCustomAssignStyles() {
       padding: 18px;
       background: rgba(15, 23, 42, 0.42);
     }
-    .custom-assign-modal {
+    .custom-assign-modal, .schedule-reassign-modal {
       width: min(420px, 100%);
       max-height: 86vh;
       overflow: auto;
@@ -327,10 +334,16 @@ function ensureCustomAssignStyles() {
       padding: 18px;
       color: #0f172a;
     }
-    .custom-assign-modal h3 {
+    .custom-assign-modal h3, .schedule-reassign-modal h3 {
       margin: 0 0 12px;
       font-size: 20px;
       font-weight: 900;
+    }
+    .schedule-reassign-modal p {
+      margin: 0 0 12px;
+      line-height: 1.65;
+      color: #334155;
+      font-weight: 800;
     }
     .custom-assign-modal label {
       display: block;
@@ -354,14 +367,15 @@ function ensureCustomAssignStyles() {
       background: #f8fafc;
       line-height: 1.7;
     }
-    .custom-assign-actions {
+    .custom-assign-actions, .schedule-reassign-actions {
       display: flex;
       justify-content: flex-end;
       gap: 10px;
       margin-top: 16px;
     }
     .custom-assign-actions button,
-    .custom-assign-search-button {
+    .custom-assign-search-button,
+    .schedule-reassign-actions button {
       border: 0;
       border-radius: 12px;
       padding: 10px 14px;
@@ -369,11 +383,13 @@ function ensureCustomAssignStyles() {
       cursor: pointer;
     }
     .custom-assign-search-button,
-    .custom-assign-confirm {
+    .custom-assign-confirm,
+    .schedule-reassign-confirm {
       background: #2563eb;
       color: #ffffff;
     }
-    .custom-assign-cancel {
+    .custom-assign-cancel,
+    .schedule-reassign-cancel {
       background: #e2e8f0;
       color: #0f172a;
     }
@@ -407,9 +423,9 @@ function ensureCustomAssignStyles() {
       display: none !important;
     }
     @media (max-width: 900px) {
-      .custom-assign-modal { padding: 16px; }
-      .custom-assign-actions { flex-direction: column-reverse; }
-      .custom-assign-actions button, .custom-assign-search-button { width: 100%; }
+      .custom-assign-modal, .schedule-reassign-modal { padding: 16px; }
+      .custom-assign-actions, .schedule-reassign-actions { flex-direction: column-reverse; }
+      .custom-assign-actions button, .custom-assign-search-button, .schedule-reassign-actions button { width: 100%; }
     }
   `;
   document.head.appendChild(style);
@@ -535,6 +551,57 @@ function findAssignedStationFromDom(section: Element, personName: string) {
   return foundStationId;
 }
 
+function openReassignModal(tag: HTMLElement) {
+  const section = tag.closest(".page-section");
+  const targetPanel = tag.closest(".panel");
+  const assignedTitle = tag.dataset.assignedStationTitle || "其他站點";
+  const personName = getTagName(tag);
+  if (!section || !targetPanel || !personName) return;
+  document.querySelector(".schedule-reassign-backdrop")?.remove();
+  const backdrop = document.createElement("div");
+  backdrop.className = "schedule-reassign-backdrop";
+  backdrop.innerHTML = `
+    <div class="schedule-reassign-modal" role="dialog" aria-modal="true" aria-label="更換站點">
+      <h3>更換站點</h3>
+      <p><strong>${personName}</strong> 已安排在「${assignedTitle}」。</p>
+      <p>是否更換到目前站點「${getStationTitle(targetPanel)}」？</p>
+      <div class="schedule-reassign-actions">
+        <button class="schedule-reassign-cancel" type="button">取消</button>
+        <button class="schedule-reassign-confirm" type="button">確認更換</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+  backdrop.querySelector(".schedule-reassign-cancel")?.addEventListener("click", () => backdrop.remove());
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) backdrop.remove();
+  });
+  backdrop.querySelector(".schedule-reassign-confirm")?.addEventListener("click", () => {
+    const oldPanel = Array.from(getStationPanels(section)).find((panel) => {
+      if (panel === targetPanel) return false;
+      return Array.from(panel.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")).some((item) => normalizeText(getTagName(item)) === normalizeText(personName));
+    });
+    oldPanel?.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((item) => {
+      if (normalizeText(getTagName(item)) === normalizeText(personName)) item.click();
+    });
+    backdrop.remove();
+    window.setTimeout(() => {
+      tag.click();
+      scheduleRuntime();
+    }, 80);
+  });
+}
+
+function handleConflictClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  const tag = target?.closest(".schedule-tag-conflict") as HTMLElement | null;
+  if (!tag) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  openReassignModal(tag);
+}
+
 function handleCustomAssignClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const button = target?.closest("button") as HTMLButtonElement | null;
@@ -570,6 +637,7 @@ export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
   ensureCustomAssignStyles();
+  window.addEventListener("click", handleConflictClick, true);
   window.addEventListener("click", handleCustomAssignClick, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
