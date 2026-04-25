@@ -25,6 +25,22 @@ select {
   font: inherit;
 }
 
+button,
+[role="button"],
+.nav-item,
+.list-row,
+.chip,
+.candidate-chip,
+.primary,
+.ghost,
+.danger,
+.back-to-top,
+.mobile-modal-close,
+.mobile-modal-fab-close {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .app-shell {
   height: 100vh;
   display: grid;
@@ -318,6 +334,7 @@ select {
   display: grid;
   gap: 3px;
   cursor: pointer;
+  position: relative;
 }
 
 .list-row strong {
@@ -445,6 +462,8 @@ select {
   padding: 4px 9px;
   font-size: 12px;
   font-weight: 700;
+  pointer-events: none;
+  user-select: none;
 }
 
 .badge-pass {
@@ -612,6 +631,56 @@ select {
   box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
 }
 
+.list-scroll.short {
+  max-height: none;
+  overflow: visible;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.list-scroll.short .list-row {
+  width: 96px;
+  min-height: 76px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  align-content: start;
+  gap: 4px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  color: #172033;
+  text-align: left;
+}
+
+.list-scroll.short .list-row strong {
+  font-size: 14px;
+  line-height: 1.2;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-scroll.short .list-row span {
+  display: block;
+  font-size: 11px;
+  line-height: 1.25;
+  color: #64748b;
+  white-space: normal;
+}
+
+.list-scroll.short .list-row.active {
+  background: #eff6ff;
+  border-color: #2563eb;
+}
+
+.list-scroll.short .list-row.active strong {
+  color: #1d4ed8;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     height: auto;
@@ -663,55 +732,4 @@ select {
     min-width: 104px;
     font-size: 13px;
   }
-}
-
-/* 站點試排候選人：清除直列長條污染，強制改為橫向小方塊排列 */
-.list-scroll.short {
-  max-height: none;
-  overflow: visible;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 8px;
-}
-
-.list-scroll.short .list-row {
-  width: 96px;
-  min-height: 76px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  display: grid;
-  grid-template-rows: auto auto auto;
-  align-content: start;
-  gap: 4px;
-  background: #f8fafc;
-  border: 1px solid #cbd5e1;
-  color: #172033;
-  text-align: left;
-}
-
-.list-scroll.short .list-row strong {
-  font-size: 14px;
-  line-height: 1.2;
-  color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.list-scroll.short .list-row span {
-  display: block;
-  font-size: 11px;
-  line-height: 1.25;
-  color: #64748b;
-  white-space: normal;
-}
-
-.list-scroll.short .list-row.active {
-  background: #eff6ff;
-  border-color: #2563eb;
-}
-
-.list-scroll.short .list-row.active strong {
-  color: #1d4ed8;
 }
