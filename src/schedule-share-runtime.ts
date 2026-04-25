@@ -38,13 +38,17 @@ function getTagName(tag: Element) {
   return normalizeText(tag.querySelector("strong")?.textContent || tag.textContent || "");
 }
 
+function getAssignedTags(section: Element) {
+  return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"));
+}
+
 function getPreviewRows(section: Element): PreviewRow[] {
   const panels = Array.from(section.querySelectorAll(".panel")).filter((panel) =>
-    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")
+    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active")
   );
 
   return panels.map((panel) => {
-    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip"))
+    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"))
       .map((tag) => {
         const name = getTagName(tag);
         if (!name) return "";
@@ -206,7 +210,27 @@ function ensureStyles() {
   document.head.appendChild(style);
 }
 
+function ensureScheduleTipForSmartSchedule() {
+  const section = getVisibleScheduleSection();
+  if (!section || !getPageTitle(section).includes("智能試排")) return;
+  const assigned = new Set(getAssignedTags(section).map((tag) => getTagName(tag)).filter(Boolean)).size;
+  if (assigned <= 0) return;
+  let tip = document.querySelector<HTMLElement>(".floating-schedule-tip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.className = "floating-schedule-tip square-schedule-tip";
+    tip.setAttribute("aria-live", "polite");
+    document.body.appendChild(tip);
+  }
+  tip.classList.add("square-schedule-tip", "show");
+  const completeButton = tip.querySelector(".schedule-complete-button");
+  const pending = Math.max(0, section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip").length - assigned);
+  tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
+  if (completeButton) tip.appendChild(completeButton);
+}
+
 function ensureCompleteButton() {
+  ensureScheduleTipForSmartSchedule();
   const tip = document.querySelector<HTMLElement>(".floating-schedule-tip.show");
   if (!tip) return;
   if (tip.querySelector(".schedule-complete-button")) return;
