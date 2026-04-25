@@ -3,8 +3,6 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
-import { installScheduleRuntime } from "./schedule-runtime";
-import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
   interface Window {
@@ -29,19 +27,11 @@ function formatError(error: unknown) {
   return String(error);
 }
 
-function installOptionalRuntime(name: string, installer: () => void) {
-  try {
-    installer();
-  } catch (error) {
-    console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
-  }
-}
-
 window.addEventListener("error", (event) => {
   const message = String(event.message || "");
   const target = String(event.filename || "");
-  const isRuntimeScriptError = message === "Script error." || message.includes("The object can not be found here") || target.includes("/assets/index-");
-  if (isRuntimeScriptError) {
+  const isBrowserExtensionOrCrossOriginError = message === "Script error." || message.includes("The object can not be found here") || !target;
+  if (isBrowserExtensionOrCrossOriginError) {
     console.warn("非核心腳本錯誤已略過：", message, target);
     event.preventDefault();
     return;
@@ -50,9 +40,7 @@ window.addEventListener("error", (event) => {
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  const reason = event.reason;
-  const detail = typeof reason === "object" ? JSON.stringify(reason, null, 2) : String(reason);
-  console.warn("非核心非同步錯誤已略過：", detail);
+  console.warn("非核心非同步錯誤已略過：", event.reason);
   event.preventDefault();
 });
 
@@ -74,6 +62,3 @@ try {
 } catch (error) {
   showFatalError("系統載入失敗", formatError(error));
 }
-
-window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 0);
-window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 0);
