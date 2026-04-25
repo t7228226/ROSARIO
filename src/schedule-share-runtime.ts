@@ -28,6 +28,20 @@ function isManualScheduleSection(section: Element) {
   return title.includes("站點試排") && !title.includes("智能試排");
 }
 
+function safeRemove(node: Element | null | undefined) {
+  try {
+    node?.remove();
+  } catch (error) {
+    console.warn("runtime 節點移除失敗，已略過", error);
+  }
+}
+
+function resetScheduleRuntimeControls() {
+  safeRemove(document.querySelector(".manual-mode-action-row"));
+  safeRemove(document.querySelector(".floating-schedule-tip"));
+  safeRemove(document.querySelector(".schedule-preview-backdrop"));
+}
+
 function hideSmartScheduleNav() {
   Array.from(document.querySelectorAll<HTMLElement>("button, a, [role='button'], .nav-item")).forEach((item) => {
     const text = normalizeText(item.textContent || "");
@@ -446,7 +460,7 @@ function isSmartScheduleOneClickButton(button: HTMLElement) {
 }
 
 function closePreviewModal() {
-  document.querySelector(".schedule-preview-backdrop")?.remove();
+  safeRemove(document.querySelector(".schedule-preview-backdrop"));
 }
 
 function openShareModal(section: Element, rows: PreviewRow[]) {
@@ -524,6 +538,21 @@ function openPreviewModal() {
   });
 }
 
+function handleFilterChange(event: Event) {
+  const target = event.target as HTMLElement | null;
+  const section = target?.closest(".page-section");
+  if (!section || !isManualScheduleSection(section)) return;
+  resetScheduleRuntimeControls();
+  window.setTimeout(() => {
+    hideSmartScheduleNav();
+    ensureManualOneClickButton();
+  }, 80);
+  window.setTimeout(() => {
+    hideSmartScheduleNav();
+    ensureManualOneClickButton();
+  }, 260);
+}
+
 function handleClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const button = target?.closest("button") as HTMLElement | null;
@@ -556,6 +585,7 @@ export function installScheduleShareRuntime() {
   shareRuntimeStarted = true;
   ensureStyles();
   window.addEventListener("click", handleClick, true);
+  window.addEventListener("change", handleFilterChange, true);
   const observer = new MutationObserver(scheduleEnsureCompleteButton);
   observer.observe(document.body, { childList: true, subtree: true, characterData: true });
   hideSmartScheduleNav();
