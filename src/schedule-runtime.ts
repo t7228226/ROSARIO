@@ -8,6 +8,7 @@ let loadingData: Promise<AppBootstrap> | null = null;
 let runtimeTimer: number | null = null;
 let isLayoutRunning = false;
 let isReassignModalOpen = false;
+let isInternalReassigning = false;
 let lastConflictClickKey = "";
 let lastConflictClickAt = 0;
 
@@ -554,6 +555,22 @@ function findAssignedStationFromDom(section: Element, personName: string) {
   return foundStationId;
 }
 
+function clickMatchingAssignedTag(panel: Element | undefined, personName: string) {
+  const targetName = normalizeText(personName);
+  const item = panel ? Array.from(panel.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip")).find((node) => normalizeText(getTagName(node)) === targetName) : null;
+  item?.click();
+}
+
+function clickMatchingCandidateTag(panel: Element, personName: string) {
+  const targetName = normalizeText(personName);
+  const item = Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .list-scroll.short .candidate-chip, .candidate-chip, .list-row")).find((node) => {
+    if (node.classList.contains("schedule-hidden-duplicate")) return false;
+    if (node.classList.contains("active")) return false;
+    return normalizeText(getTagName(node)) === targetName;
+  });
+  item?.click();
+}
+
 function openReassignModal(tag: HTMLElement) {
   if (isReassignModalOpen) return;
   const section = tag.closest(".page-section");
@@ -586,22 +603,24 @@ function openReassignModal(tag: HTMLElement) {
     if (event.target === backdrop) close();
   }, { once: true });
   backdrop.querySelector(".schedule-reassign-confirm")?.addEventListener("click", () => {
+    if (isInternalReassigning) return;
+    isInternalReassigning = true;
     const oldPanel = Array.from(getStationPanels(section)).find((panel) => {
       if (panel === targetPanel) return false;
       return Array.from(panel.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")).some((item) => normalizeText(getTagName(item)) === normalizeText(personName));
     });
-    oldPanel?.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((item) => {
-      if (normalizeText(getTagName(item)) === normalizeText(personName)) item.click();
-    });
-    close();
+    clickMatchingAssignedTag(oldPanel, personName);
     window.setTimeout(() => {
-      tag.click();
+      clickMatchingCandidateTag(targetPanel, personName);
+      close();
+      isInternalReassigning = false;
       scheduleRuntime();
-    }, 80);
+    }, 120);
   }, { once: true });
 }
 
 function handleConflictClick(event: MouseEvent) {
+  if (isInternalReassigning) return;
   const target = event.target as HTMLElement | null;
   const tag = target?.closest(".schedule-tag-conflict") as HTMLElement | null;
   if (!tag) return;
