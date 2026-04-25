@@ -46,6 +46,52 @@ function installOptionalRuntime(name: string, installer: () => void) {
   }
 }
 
+function normalizeText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function isManualScheduleSelect(target: EventTarget | null): target is HTMLSelectElement {
+  if (!(target instanceof HTMLSelectElement)) return false;
+  const section = target.closest(".page-section");
+  if (!section) return false;
+  const title = normalizeText(section.querySelector("h2")?.textContent || "");
+  if (!title.includes("站點試排") || title.includes("智能試排")) return false;
+  if (target.classList.contains("manual-plan-mode-select")) return false;
+  return true;
+}
+
+function cleanupScheduleRuntimeUi() {
+  document.querySelector(".floating-schedule-tip")?.remove();
+  document.querySelector(".schedule-preview-backdrop")?.remove();
+  document.querySelector(".manual-mode-action-row")?.remove();
+}
+
+function installManualScheduleFilterConfirm() {
+  let previousValue = "";
+  const captureValue = (event: Event) => {
+    if (!isManualScheduleSelect(event.target)) return;
+    previousValue = event.target.value;
+  };
+
+  const confirmChange = (event: Event) => {
+    if (!isManualScheduleSelect(event.target)) return;
+    const select = event.target;
+    if (select.value === previousValue) return;
+    const ok = window.confirm("更換班別 / 日別會重置目前站點試排安排，是否繼續？");
+    if (!ok) {
+      select.value = previousValue;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
+    cleanupScheduleRuntimeUi();
+  };
+
+  window.addEventListener("pointerdown", captureValue, true);
+  window.addEventListener("focusin", captureValue, true);
+  window.addEventListener("change", confirmChange, true);
+}
+
 window.addEventListener("error", (event) => {
   const message = String(event.message || "");
   const target = String(event.filename || "");
@@ -83,5 +129,6 @@ try {
   showFatalError("系統載入失敗", formatError(error));
 }
 
+installManualScheduleFilterConfirm();
 window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
 window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
