@@ -46,6 +46,27 @@ function installOptionalRuntime(name: string, installer: () => void) {
   }
 }
 
+function installShareRuntimeWithoutFilterListener() {
+  const originalAddEventListener = window.addEventListener.bind(window);
+  const patchedAddEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+    if (type === "change") {
+      const listenerName = typeof listener === "function" ? listener.name : "";
+      if (listenerName === "handleFilterChange") {
+        console.warn("已阻止站點分享外掛接管日別切換，避免切換時白畫面。");
+        return;
+      }
+    }
+    return originalAddEventListener(type, listener, options);
+  }) as typeof window.addEventListener;
+
+  window.addEventListener = patchedAddEventListener;
+  try {
+    installScheduleShareRuntime();
+  } finally {
+    window.addEventListener = originalAddEventListener;
+  }
+}
+
 function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -131,4 +152,4 @@ try {
 
 installManualScheduleFilterConfirm();
 window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
-window.setTimeout(() => installOptionalRuntime("站點分享外掛", installScheduleShareRuntime), 800);
+window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
