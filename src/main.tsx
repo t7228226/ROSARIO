@@ -29,6 +29,15 @@ function formatError(error: unknown) {
   return String(error);
 }
 
+function isOptionalRuntimeDomError(message: string) {
+  return (
+    message.includes("Failed to execute 'insertBefore'") ||
+    message.includes("The node before which the new node is to be inserted is not a child of this node") ||
+    message.includes("Failed to execute 'removeChild'") ||
+    message.includes("The node to be removed is not a child of this node")
+  );
+}
+
 function installOptionalRuntime(name: string, installer: () => void) {
   try {
     installer();
@@ -41,7 +50,8 @@ window.addEventListener("error", (event) => {
   const message = String(event.message || "");
   const target = String(event.filename || "");
   const isBrowserExtensionOrCrossOriginError = message === "Script error." || message.includes("The object can not be found here") || !target;
-  if (isBrowserExtensionOrCrossOriginError) {
+  const isOptionalDomError = target.includes("/assets/index-") && isOptionalRuntimeDomError(message);
+  if (isBrowserExtensionOrCrossOriginError || isOptionalDomError) {
     console.warn("非核心腳本錯誤已略過：", message, target);
     event.preventDefault();
     return;
