@@ -5,6 +5,7 @@ import "./styles.css";
 import "./schedule-overrides.css";
 // import { installScheduleRuntime } from "./schedule-runtime";
 import { installScheduleShareRuntime } from "./schedule-share-runtime";
+import { installScheduleTipRuntime } from "./schedule-tip-runtime";
 
 declare global {
   interface Window {
@@ -127,4 +128,5 @@ try {
 }
 
 // window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
+window.setTimeout(() => installOptionalRuntime("站點浮動提示窗", installScheduleTipRuntime), 550);
 window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
