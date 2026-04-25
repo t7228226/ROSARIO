@@ -116,18 +116,6 @@ function getManualScheduleAssignedButtons(section: Element | null) {
   });
 }
 
-function clearManualScheduleAssignmentsFromDom(section: Element | null) {
-  const assignedButtons = getManualScheduleAssignedButtons(section);
-  assignedButtons.forEach((button) => {
-    try {
-      button.click();
-    } catch (error) {
-      console.warn("清除站點試排既有安排失敗，已略過單筆。", error);
-    }
-  });
-  return assignedButtons.length;
-}
-
 function installManualScheduleFilterConfirm() {
   let previousValue = "";
 
@@ -159,10 +147,10 @@ function installManualScheduleFilterConfirm() {
     }
 
     pauseScheduleRuntimes(1400);
-    clearManualScheduleAssignmentsFromDom(section);
     cleanupScheduleRuntimeUi();
     window.setTimeout(cleanupScheduleRuntimeUi, 80);
     window.setTimeout(cleanupScheduleRuntimeUi, 240);
+    window.setTimeout(cleanupScheduleRuntimeUi, 520);
     previousValue = select.value;
   };
 
