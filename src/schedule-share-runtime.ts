@@ -5,6 +5,8 @@ interface PreviewRow {
   people: string[];
 }
 
+type ManualPlanMode = "home" | "support" | "qualified";
+
 function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -332,22 +334,51 @@ function triggerSmartScheduleTipNow() {
   window.setTimeout(() => ensureCompleteButton(true), 520);
 }
 
+function createManualPlanModeSelect() {
+  const select = document.createElement("select");
+  select.className = "manual-plan-mode-select";
+  select.setAttribute("aria-label", "一鍵安排模式");
+  select.innerHTML = `
+    <option value="home">當班優先</option>
+    <option value="support">支援優先</option>
+    <option value="qualified">資格優先</option>
+  `;
+  return select;
+}
+
 function ensureManualOneClickButton() {
   const section = getVisibleScheduleSection();
   if (!section || !isManualScheduleSection(section)) return;
-  const selects = Array.from(section.querySelectorAll("select"));
-  const modeSelect = selects[1] || selects[0];
-  if (!modeSelect || modeSelect.closest(".manual-mode-action-row")) return;
+
+  const oldRow = section.querySelector(".manual-mode-action-row");
+  const movedOriginalSelect = oldRow?.querySelector("select:not(.manual-plan-mode-select)");
+  if (oldRow && movedOriginalSelect && oldRow.parentElement) {
+    oldRow.parentElement.insertBefore(movedOriginalSelect, oldRow);
+    oldRow.remove();
+  }
+
+  if (section.querySelector(".manual-mode-action-row")) return;
+  const selects = Array.from(section.querySelectorAll("select")).filter((select) => !select.classList.contains("manual-plan-mode-select"));
+  const daySelect = selects[1] || selects[0];
+  if (!daySelect) return;
   const row = document.createElement("div");
   row.className = "manual-mode-action-row";
+  const modeSelect = createManualPlanModeSelect();
   const button = document.createElement("button");
   button.type = "button";
   button.className = "manual-one-click-button";
   button.textContent = "一鍵安排";
-  const parent = modeSelect.parentElement;
-  parent?.insertBefore(row, modeSelect);
+  const insertParent = daySelect.parentElement;
+  if (!insertParent) return;
+  insertParent.insertBefore(row, daySelect.nextSibling);
   row.appendChild(modeSelect);
   row.appendChild(button);
+}
+
+function getManualPlanMode(section: Element): ManualPlanMode {
+  const value = (section.querySelector(".manual-plan-mode-select") as HTMLSelectElement | null)?.value;
+  if (value === "support" || value === "qualified") return value;
+  return "home";
 }
 
 function getAlreadyAssignedNames(section: Element) {
@@ -359,19 +390,28 @@ function getAlreadyAssignedNames(section: Element) {
   return names;
 }
 
-function getManualCandidateButtons(panel: Element, usedNames: Set<string>) {
+function getCandidatePriority(node: HTMLElement, mode: ManualPlanMode) {
+  const text = normalizeText(node.textContent || "");
+  if (mode === "support") return text.includes("支援") ? 0 : 1;
+  if (mode === "home") return text.includes("支援") ? 1 : 0;
+  const skillMatch = text.match(/(\d+)\s*(站|項|個)?/);
+  return skillMatch ? Number(skillMatch[1]) : 999;
+}
+
+function getManualCandidateButtons(panel: Element, usedNames: Set<string>, mode: ManualPlanMode) {
   return Array.from(panel.querySelectorAll<HTMLElement>(".list-scroll.short .list-row, .candidate-chip")).filter((node) => {
     if (!isPersonButton(node)) return false;
     if (node.classList.contains("active")) return false;
     if (node.closest(".assigned-tags")) return false;
     const name = getTagName(node);
     return !usedNames.has(name);
-  });
+  }).sort((a, b) => getCandidatePriority(a, mode) - getCandidatePriority(b, mode));
 }
 
 function runManualOneClickPlan() {
   const section = getVisibleScheduleSection();
   if (!section || !isManualScheduleSection(section)) return;
+  const mode = getManualPlanMode(section);
   const usedNames = getAlreadyAssignedNames(section);
   Array.from(section.querySelectorAll(".panel")).forEach((panel) => {
     const demand = getPanelDemand(panel);
@@ -379,7 +419,7 @@ function runManualOneClickPlan() {
     const current = getPanelAssignedPeople(panel).length;
     let need = Math.max(0, demand - current);
     if (need <= 0) return;
-    const candidates = getManualCandidateButtons(panel, usedNames);
+    const candidates = getManualCandidateButtons(panel, usedNames, mode);
     for (const candidate of candidates) {
       if (need <= 0) break;
       const name = getTagName(candidate);
