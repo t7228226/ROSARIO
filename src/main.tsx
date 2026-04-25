@@ -24,7 +24,26 @@ function showFatalError(title: string, detail: string) {
   `;
 }
 
+function formatError(error: unknown) {
+  if (error instanceof Error) return error.stack || error.message;
+  return String(error);
+}
+
+function installOptionalRuntime(name: string, installer: () => void) {
+  try {
+    installer();
+  } catch (error) {
+    console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
+  }
+}
+
 window.addEventListener("error", (event) => {
+  const target = String(event.filename || "");
+  if (target.includes("/assets/index-") && String(event.message || "").includes("The object can not be found here")) {
+    console.warn("非核心排班外掛錯誤已略過：", event.message);
+    event.preventDefault();
+    return;
+  }
   showFatalError("系統載入失敗", `${event.message}\n${event.filename}:${event.lineno}:${event.colno}`);
 });
 
@@ -49,9 +68,9 @@ try {
       <App />
     </React.StrictMode>
   );
-
-  installScheduleRuntime();
-  installScheduleShareRuntime();
 } catch (error) {
-  showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
+  showFatalError("系統載入失敗", formatError(error));
 }
+
+installOptionalRuntime("站點試排外掛", installScheduleRuntime);
+installOptionalRuntime("站點分享外掛", installScheduleShareRuntime);
