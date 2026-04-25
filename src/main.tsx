@@ -130,7 +130,6 @@ function clearManualScheduleAssignmentsFromDom(section: Element | null) {
 
 function installManualScheduleFilterConfirm() {
   let previousValue = "";
-  let isProgrammaticFilterChange = false;
 
   const captureValue = (event: Event) => {
     if (!isManualScheduleSelect(event.target)) return;
@@ -140,7 +139,6 @@ function installManualScheduleFilterConfirm() {
   const confirmChange = (event: Event) => {
     if (!isManualScheduleSelect(event.target)) return;
     const select = event.target;
-    if (isProgrammaticFilterChange) return;
     if (select.value === previousValue) return;
 
     const section = select.closest(".page-section");
@@ -148,10 +146,10 @@ function installManualScheduleFilterConfirm() {
     if (!hasAssignedPeople) {
       cleanupScheduleRuntimeUi();
       window.setTimeout(cleanupScheduleRuntimeUi, 120);
+      previousValue = select.value;
       return;
     }
 
-    const nextValue = select.value;
     const ok = window.confirm("更換班別 / 日別會重置目前站點試排安排，是否繼續？");
     if (!ok) {
       select.value = previousValue;
@@ -160,26 +158,12 @@ function installManualScheduleFilterConfirm() {
       return;
     }
 
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    select.value = previousValue;
-
     pauseScheduleRuntimes(1400);
     clearManualScheduleAssignmentsFromDom(section);
     cleanupScheduleRuntimeUi();
     window.setTimeout(cleanupScheduleRuntimeUi, 80);
     window.setTimeout(cleanupScheduleRuntimeUi, 240);
-
-    window.setTimeout(() => {
-      isProgrammaticFilterChange = true;
-      select.value = nextValue;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-      window.setTimeout(() => {
-        isProgrammaticFilterChange = false;
-        previousValue = nextValue;
-        cleanupScheduleRuntimeUi();
-      }, 0);
-    }, 120);
+    previousValue = select.value;
   };
 
   window.addEventListener("pointerdown", captureValue, true);
