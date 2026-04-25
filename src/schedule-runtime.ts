@@ -1,6 +1,6 @@
-import { fetchBootstrapData } from "./lib/api";
+import { fetchBootstrapData, upsertQualification } from "./lib/api";
 import { DAY_OPTIONS, getAttendanceForTeam, TEAM_OPTIONS } from "./lib/selectors";
-import type { AppBootstrap, ShiftMode, TeamName } from "./types";
+import type { AppBootstrap, Person, ShiftMode, TeamName } from "./types";
 
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
@@ -11,6 +11,7 @@ const daySet = new Set<string>(DAY_OPTIONS);
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"];
 const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [class*='panel'], [class*='card']";
 const removableScheduleTagSelectors = ".candidate-chip, .list-row, .chip, .tag, .pill, button";
+const runtimeTrainingAssignments = new Map<string, Person>();
 
 async function getBootstrapData() {
   if (cachedData) return cachedData;
@@ -88,7 +89,9 @@ function getVisibleScheduleSection() {
 }
 
 function getStationPanels(section: Element) {
-  return Array.from(section.querySelectorAll(".panel")).filter((panel) => panel.querySelector(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip"));
+  return Array.from(section.querySelectorAll(".panel")).filter((panel) =>
+    panel.querySelector(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")
+  );
 }
 
 function getSelectedScheduleMode(section: Element) {
@@ -106,7 +109,7 @@ function getTagName(tag: Element) {
 function getAssignedMap(section: Element) {
   const map = new Map<string, Element>();
   getStationPanels(section).forEach((panel) => {
-    panel.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active, .assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((tag) => {
+    panel.querySelectorAll(".list-scroll.short .list-row.active, .candidate-chip.active, .assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip").forEach((tag) => {
       const name = getTagName(tag);
       if (name) map.set(name, panel);
     });
@@ -157,7 +160,7 @@ async function updateScheduleTip(section: Element) {
   let attendanceTotal = await getAttendanceTotal(section);
   if (attendanceTotal <= 0) {
     const allNames = new Set<string>();
-    section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((tag) => {
+    section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip").forEach((tag) => {
       const name = getTagName(tag);
       if (name) allNames.add(name);
     });
@@ -171,7 +174,7 @@ async function updateScheduleTip(section: Element) {
 
 function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
   const assignedNames = new Set<string>();
-  frame.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((tag) => {
+  frame.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip, .assigned-tags .runtime-training-chip").forEach((tag) => {
     const name = getTagName(tag);
     if (name) assignedNames.add(name);
   });
@@ -187,7 +190,7 @@ function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
 
 function removeLooseScheduleTags(panel: Element, frame: HTMLElement) {
   const frameNames = new Set<string>();
-  frame.querySelectorAll<HTMLElement>(".list-row, .candidate-chip").forEach((tag) => {
+  frame.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip").forEach((tag) => {
     const name = normalizeText(getTagName(tag));
     if (name) frameNames.add(name);
   });
@@ -216,7 +219,30 @@ function removeLooseScheduleTags(panel: Element, frame: HTMLElement) {
   });
 }
 
-function forcePanelLayout(panel: Element) {
+function findStationIdFromPanel(panel: Element, data: AppBootstrap) {
+  const panelText = normalizeText(panel.textContent || "");
+  const stations = [...data.stations].sort((a, b) => b.name.length - a.name.length);
+  return stations.find((station) => panelText.includes(normalizeText(station.name)) || panelText.includes(normalizeText(station.id)))?.id || "";
+}
+
+function ensureRuntimeTrainingTags(panel: Element, frame: HTMLElement, stationId?: string) {
+  if (!stationId) return;
+  const assignedTags = frame.querySelector(".assigned-tags") as HTMLElement | null;
+  if (!assignedTags) return;
+  runtimeTrainingAssignments.forEach((person, key) => {
+    if (!key.startsWith(`${stationId}::`)) return;
+    const exists = Array.from(assignedTags.querySelectorAll<HTMLElement>(".runtime-training-chip, .list-row, .candidate-chip")).some((tag) => normalizeText(getTagName(tag)) === normalizeText(person.name));
+    if (exists) return;
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "runtime-training-chip schedule-tag-training";
+    chip.dataset.employeeId = person.id;
+    chip.innerHTML = `<strong>${person.name}</strong><small>訓練</small>`;
+    assignedTags.appendChild(chip);
+  });
+}
+
+async function forcePanelLayout(panel: Element) {
   panel.querySelectorAll(".schedule-section-headings, .schedule-fixed-title").forEach((node) => node.remove());
   const customButton = Array.from(panel.querySelectorAll("button")).find((button) => button.textContent?.includes("自訂人選")) as HTMLElement | undefined;
   if (customButton) {
@@ -252,21 +278,29 @@ function forcePanelLayout(panel: Element) {
     Array.from((pendingArea || panel).querySelectorAll<HTMLElement>(".list-row.active, .candidate-chip.active")).forEach((tag) => assignedTags?.appendChild(tag));
     Array.from(assignedTags.querySelectorAll<HTMLElement>(".list-row:not(.active), .candidate-chip:not(.active)")).forEach((tag) => wrap?.appendChild(tag));
   }
+  try {
+    const data = await getBootstrapData();
+    ensureRuntimeTrainingTags(panel, frame, findStationIdFromPanel(panel, data));
+  } catch {
+    // Layout must still work when data cannot be loaded.
+  }
   removeOriginalMiniChips(panel, frame);
   removeLooseScheduleTags(panel, frame);
 }
 
-function classifyScheduleTags(section: Element) {
+async function classifyScheduleTags(section: Element) {
   const assignedMap = getAssignedMap(section);
-  getStationPanels(section).forEach((panel) => {
-    forcePanelLayout(panel);
+  await Promise.all(getStationPanels(section).map(async (panel) => {
+    await forcePanelLayout(panel);
     const conflictTags: HTMLElement[] = [];
-    Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip")).forEach((tag) => {
+    Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip")).forEach((tag) => {
       const name = getTagName(tag);
       const assignedPanel = name ? assignedMap.get(name) : null;
-      tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending");
+      tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending", "schedule-tag-training");
       tag.style.marginLeft = "";
-      if (tag.classList.contains("active")) {
+      if (tag.classList.contains("runtime-training-chip")) {
+        tag.classList.add("schedule-tag-training");
+      } else if (tag.classList.contains("active")) {
         tag.classList.add("schedule-tag-selected");
       } else if (assignedPanel && assignedPanel !== panel) {
         tag.classList.add("schedule-tag-conflict");
@@ -277,7 +311,256 @@ function classifyScheduleTags(section: Element) {
     });
     const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
     if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
+  }));
+}
+
+function ensureCustomAssignStyles() {
+  if (document.getElementById("runtime-custom-assign-style")) return;
+  const style = document.createElement("style");
+  style.id = "runtime-custom-assign-style";
+  style.textContent = `
+    .custom-assign-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 300;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(15, 23, 42, 0.42);
+    }
+    .custom-assign-modal {
+      width: min(420px, 100%);
+      max-height: 86vh;
+      overflow: auto;
+      box-sizing: border-box;
+      border-radius: 18px;
+      background: #ffffff;
+      box-shadow: 0 22px 54px rgba(15, 23, 42, 0.32);
+      padding: 18px;
+      color: #0f172a;
+    }
+    .custom-assign-modal h3 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      font-weight: 900;
+    }
+    .custom-assign-modal label {
+      display: block;
+      margin: 10px 0 6px;
+      font-weight: 800;
+      font-size: 14px;
+    }
+    .custom-assign-modal input {
+      width: 100%;
+      box-sizing: border-box;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 16px;
+    }
+    .custom-assign-result {
+      margin-top: 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 12px;
+      background: #f8fafc;
+      line-height: 1.7;
+    }
+    .custom-assign-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .custom-assign-actions button,
+    .custom-assign-search-button {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    .custom-assign-search-button,
+    .custom-assign-confirm {
+      background: #2563eb;
+      color: #ffffff;
+    }
+    .custom-assign-cancel {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+    .custom-assign-message {
+      margin-top: 10px;
+      color: #b45309;
+      font-weight: 800;
+      min-height: 22px;
+    }
+    .runtime-training-chip,
+    .schedule-area-tags .runtime-training-chip {
+      min-width: 74px !important;
+      min-height: 38px !important;
+      padding: 8px 12px !important;
+      border-radius: 999px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 6px !important;
+      background: #facc15 !important;
+      border: 2px solid #eab308 !important;
+      color: #713f12 !important;
+      text-align: center;
+      box-shadow: none !important;
+    }
+    .runtime-training-chip strong {
+      color: #713f12 !important;
+      white-space: nowrap;
+    }
+    .runtime-training-chip small {
+      display: none !important;
+    }
+    @media (max-width: 900px) {
+      .custom-assign-modal { padding: 16px; }
+      .custom-assign-actions { flex-direction: column-reverse; }
+      .custom-assign-actions button, .custom-assign-search-button { width: 100%; }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function setModalMessage(modal: HTMLElement, message: string) {
+  const messageNode = modal.querySelector<HTMLElement>(".custom-assign-message");
+  if (messageNode) messageNode.textContent = message;
+}
+
+async function openCustomAssignModal(panel: Element) {
+  ensureCustomAssignStyles();
+  document.querySelector(".custom-assign-backdrop")?.remove();
+  const section = panel.closest(".page-section");
+  const mode = section ? getSelectedScheduleMode(section) : null;
+  const data = await getBootstrapData();
+  const stationId = findStationIdFromPanel(panel, data);
+  const station = data.stations.find((item) => item.id === stationId);
+  if (!section || !mode || !station) return;
+
+  const attendance = getAttendanceForTeam(data.people, mode.team, mode.day).all;
+  let selectedPerson: Person | null = null;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "custom-assign-backdrop";
+  backdrop.innerHTML = `
+    <div class="custom-assign-modal" role="dialog" aria-modal="true" aria-label="自訂人選">
+      <h3>自訂人選</h3>
+      <label>搜尋姓名或工號</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="custom-assign-input" placeholder="請輸入姓名或工號" autocomplete="off" />
+        <button class="custom-assign-search-button" type="button">搜尋</button>
+      </div>
+      <div class="custom-assign-result">尚未選擇人員</div>
+      <div class="custom-assign-message"></div>
+      <div class="custom-assign-actions">
+        <button class="custom-assign-cancel" type="button">取消</button>
+        <button class="custom-assign-confirm" type="button">確認設置為訓練人員</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+
+  const modal = backdrop.querySelector<HTMLElement>(".custom-assign-modal");
+  const input = backdrop.querySelector<HTMLInputElement>(".custom-assign-input");
+  const result = backdrop.querySelector<HTMLElement>(".custom-assign-result");
+  if (!modal || !input || !result) return;
+
+  const renderResult = () => {
+    const keyword = input.value.trim();
+    if (!keyword) {
+      selectedPerson = null;
+      result.textContent = "請先輸入姓名或工號。";
+      return;
+    }
+    const exact = attendance.find((person) => person.id === keyword || person.name === keyword);
+    const partial = attendance.find((person) => person.id.includes(keyword) || person.name.includes(keyword));
+    selectedPerson = exact || partial || null;
+    if (!selectedPerson) {
+      result.textContent = "找不到可用人員，請確認該人員存在於本次出勤池。";
+      return;
+    }
+    const assignedStationId = findAssignedStationFromDom(section, selectedPerson.name);
+    if (assignedStationId && assignedStationId !== stationId) {
+      const assignedStation = data.stations.find((item) => item.id === assignedStationId);
+      result.innerHTML = `<strong>工號：</strong>${selectedPerson.id}<br/><strong>姓名：</strong>${selectedPerson.name}<br/><strong>狀態：</strong>已安排在 ${assignedStation?.name || assignedStationId}，不可重複佔站。`;
+      return;
+    }
+    result.innerHTML = `<strong>工號：</strong>${selectedPerson.id}<br/><strong>姓名：</strong>${selectedPerson.name}<br/><strong>確認：</strong>是否確認設置為訓練人員？`;
+  };
+
+  backdrop.querySelector(".custom-assign-search-button")?.addEventListener("click", renderResult);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") renderResult();
   });
+  backdrop.querySelector(".custom-assign-cancel")?.addEventListener("click", () => backdrop.remove());
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) backdrop.remove();
+  });
+  backdrop.querySelector(".custom-assign-confirm")?.addEventListener("click", async () => {
+    renderResult();
+    if (!selectedPerson) {
+      setModalMessage(modal, "請先搜尋並確認人員。 ");
+      return;
+    }
+    const assignedStationId = findAssignedStationFromDom(section, selectedPerson.name);
+    if (assignedStationId && assignedStationId !== stationId) {
+      setModalMessage(modal, "此人員已安排在其他站點，不可重複佔站。 ");
+      return;
+    }
+    try {
+      await upsertQualification({ employeeId: selectedPerson.id, employeeName: selectedPerson.name, stationId, status: "訓練中" });
+      runtimeTrainingAssignments.set(`${stationId}::${selectedPerson.id}`, selectedPerson);
+      cachedData = {
+        ...data,
+        qualifications: [
+          ...data.qualifications.filter((item) => !(item.employeeId === selectedPerson?.id && item.stationId === stationId)),
+          { employeeId: selectedPerson.id, employeeName: selectedPerson.name, stationId, status: "訓練中" },
+        ],
+      };
+      backdrop.remove();
+      await forcePanelLayout(panel);
+      const activeSection = getVisibleScheduleSection();
+      if (activeSection) await updateScheduleTip(activeSection);
+    } catch {
+      setModalMessage(modal, "訓練人員設定失敗，請確認 GAS upsertQualification 是否正常。 ");
+    }
+  });
+  window.setTimeout(() => input.focus(), 0);
+}
+
+function findAssignedStationFromDom(section: Element, personName: string) {
+  const targetName = normalizeText(personName);
+  let foundStationId = "";
+  getStationPanels(section).some((panel) => {
+    const hasPerson = Array.from(panel.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")).some((tag) => normalizeText(getTagName(tag)) === targetName);
+    if (!hasPerson) return false;
+    const data = cachedData;
+    if (!data) return false;
+    foundStationId = findStationIdFromPanel(panel, data);
+    return true;
+  });
+  return foundStationId;
+}
+
+function handleCustomAssignClick(event: MouseEvent) {
+  const target = event.target as HTMLElement | null;
+  const button = target?.closest("button") as HTMLButtonElement | null;
+  if (!button || !button.textContent?.includes("自訂人選")) return;
+  const section = button.closest(".page-section");
+  if (!section) return;
+  const title = section.querySelector("h2")?.textContent || "";
+  if (!title.includes("站點試排") && !title.includes("智能試排")) return;
+  const panel = button.closest(".panel");
+  if (!panel) return;
+  event.preventDefault();
+  event.stopPropagation();
+  event.stopImmediatePropagation();
+  openCustomAssignModal(panel).catch(() => undefined);
 }
 
 function scheduleRuntime() {
@@ -289,14 +572,17 @@ function scheduleRuntime() {
   }
   window.setTimeout(() => {
     removeScheduleSummaryRows();
-    classifyScheduleTags(section);
-    updateScheduleTip(section).catch(() => undefined);
+    classifyScheduleTags(section)
+      .then(() => updateScheduleTip(section))
+      .catch(() => undefined);
   }, 0);
 }
 
 export function installScheduleRuntime() {
   if (observerStarted || typeof window === "undefined") return;
   observerStarted = true;
+  ensureCustomAssignStyles();
+  window.addEventListener("click", handleCustomAssignClick, true);
   window.addEventListener("click", scheduleRuntime, false);
   window.addEventListener("change", scheduleRuntime, false);
   window.addEventListener("resize", scheduleRuntime);
