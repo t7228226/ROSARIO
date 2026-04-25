@@ -39,11 +39,36 @@ function getTagName(tag: Element) {
 }
 
 function isNoiseName(name: string) {
-  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排") || name.includes("需求");
+  return !name || name.includes("自訂人選") || name.includes("已安排") || name.includes("尚未安排") || name.includes("安排完成") || name.includes("一鍵試排") || name.includes("智能試排") || name.includes("自動試排") || name.includes("需求") || /^\d+$/.test(name);
+}
+
+function isPersonButton(node: Element) {
+  if (!(node instanceof HTMLElement)) return false;
+  const name = getTagName(node);
+  if (isNoiseName(name)) return false;
+  if (name.length > 12) return false;
+  const tag = node.tagName.toLowerCase();
+  return tag === "button" || node.classList.contains("candidate-chip") || node.classList.contains("runtime-training-chip") || node.classList.contains("chip") || node.classList.contains("pill");
 }
 
 function getAssignedTags(section: Element) {
   return Array.from(section.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"));
+}
+
+function getPanelAssignedPeople(panel: Element) {
+  const names = new Set<string>();
+  const assignedTags = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"));
+  assignedTags.forEach((tag) => {
+    const name = getTagName(tag);
+    if (!isNoiseName(name)) names.add(name);
+  });
+
+  if (names.size > 0) return Array.from(names);
+
+  Array.from(panel.querySelectorAll("button, .candidate-chip, .chip, .pill")).forEach((node) => {
+    if (isPersonButton(node)) names.add(getTagName(node));
+  });
+  return Array.from(names);
 }
 
 function getSmartAssignedNames(section: Element) {
@@ -52,25 +77,30 @@ function getSmartAssignedNames(section: Element) {
     const name = getTagName(tag);
     if (!isNoiseName(name)) names.add(name);
   });
+  if (names.size > 0) return names;
+
+  section.querySelectorAll(".panel").forEach((panel) => {
+    getPanelAssignedPeople(panel).forEach((name) => names.add(name));
+  });
   return names;
 }
 
-function getPreviewRows(section: Element): PreviewRow[] {
-  const panels = Array.from(section.querySelectorAll(".panel")).filter((panel) =>
-    panel.querySelector(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active")
-  );
+function getPanelDemand(panel: Element) {
+  const text = normalizeText(panel.textContent || "");
+  const match = text.match(/需求\s*(\d+)/);
+  return match ? Number(match[1]) : 0;
+}
 
-  return panels.map((panel) => {
-    const people = Array.from(panel.querySelectorAll(".assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .list-scroll.short .list-row.active, .candidate-chip.active"))
-      .map((tag) => {
-        const name = getTagName(tag);
-        if (!name || isNoiseName(name)) return "";
-        return tag.classList.contains("runtime-training-chip") || tag.classList.contains("schedule-tag-training") ? `${name}（訓練）` : name;
-      })
-      .filter(Boolean);
+function getSmartTotalDemand(section: Element) {
+  return Array.from(section.querySelectorAll(".panel")).reduce((sum, panel) => sum + getPanelDemand(panel), 0);
+}
+
+function getPreviewRows(section: Element): PreviewRow[] {
+  return Array.from(section.querySelectorAll(".panel")).map((panel) => {
+    const people = getPanelAssignedPeople(panel);
     return {
       station: getStationTitle(panel),
-      people: Array.from(new Set(people)),
+      people,
     };
   }).filter((row) => row.people.length > 0);
 }
@@ -238,8 +268,9 @@ function ensureScheduleTipForSmartSchedule(force = false) {
   }
   tip.classList.add("square-schedule-tip", "show");
   const completeButton = tip.querySelector(".schedule-complete-button");
+  const totalDemand = getSmartTotalDemand(section);
   const allCandidateNames = new Set(Array.from(section.querySelectorAll(".list-scroll.short .list-row, .candidate-chip")).map((tag) => getTagName(tag)).filter((name) => !isNoiseName(name)));
-  const total = Math.max(allCandidateNames.size, assigned);
+  const total = Math.max(totalDemand, allCandidateNames.size, assigned);
   const pending = Math.max(0, total - assigned);
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
   if (completeButton) tip.appendChild(completeButton);
