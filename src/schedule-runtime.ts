@@ -95,7 +95,7 @@ function getVisibleScheduleSection() {
 
 function getStationPanels(section: Element) {
   return Array.from(section.querySelectorAll(".panel")).filter((panel) =>
-    panel.querySelector(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip")
+    panel.querySelector(".list-scroll.short .list-row, .candidate-chip, .assigned-tags .list-row, .assigned-tags .candidate-chip, .runtime-training-chip, .schedule-two-area-frame")
   );
 }
 
@@ -179,11 +179,40 @@ async function updateScheduleTip(section: Element) {
   tip.classList.add("show");
 }
 
+function isScheduleChip(node: HTMLElement) {
+  const text = normalizeText(getTagName(node));
+  if (!text || text.includes("自訂人選") || text.includes("已安排") || text.includes("尚未安排")) return false;
+  return node.matches(".candidate-chip, .list-row, .chip, .tag, .pill, button") || node.className.includes("chip") || node.className.includes("tag") || node.className.includes("pill");
+}
+
+function hideNode(node: HTMLElement) {
+  node.classList.add("schedule-hidden-duplicate");
+  node.setAttribute("aria-hidden", "true");
+}
+
 function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
-  panel.querySelectorAll<HTMLElement>(".list-scroll.short, .candidate-chip, .list-row").forEach((node) => {
+  const visibleNames = new Set<string>();
+  frame.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip").forEach((node) => {
+    const name = normalizeText(getTagName(node));
+    if (name) visibleNames.add(name);
+  });
+
+  panel.querySelectorAll<HTMLElement>(".list-scroll.short, .candidate-chip, .list-row, .chip, .tag, .pill, button, [class*='chip'], [class*='tag'], [class*='pill']").forEach((node) => {
     if (frame.contains(node)) return;
     if (node.matches("button") && node.textContent?.includes("自訂人選")) return;
-    node.classList.add("schedule-hidden-duplicate");
+    const name = normalizeText(getTagName(node));
+    if (node.classList.contains("list-scroll") || visibleNames.has(name) || isScheduleChip(node)) {
+      hideNode(node);
+    }
+  });
+
+  Array.from(panel.children).forEach((child) => {
+    if (!(child instanceof HTMLElement)) return;
+    if (child === frame || frame.contains(child)) return;
+    if (child.querySelector("button")?.textContent?.includes("自訂人選")) return;
+    const text = normalizeText(child.textContent || "");
+    if (!text) return;
+    if (Array.from(visibleNames).some((name) => name && text === name)) hideNode(child);
   });
 }
 
@@ -289,6 +318,7 @@ async function classifyScheduleTags(section: Element) {
       });
       const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
       if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
+      removeOriginalMiniChips(panel, panel.querySelector(".schedule-two-area-frame") as HTMLElement);
     }
   } finally {
     isLayoutRunning = false;
@@ -305,10 +335,18 @@ function ensureCustomAssignStyles() {
       visibility: hidden !important;
       height: 0 !important;
       min-height: 0 !important;
+      max-height: 0 !important;
+      width: 0 !important;
+      min-width: 0 !important;
+      max-width: 0 !important;
       margin: 0 !important;
       padding: 0 !important;
+      border: 0 !important;
       overflow: hidden !important;
+      opacity: 0 !important;
       pointer-events: none !important;
+      position: absolute !important;
+      left: -9999px !important;
     }
     .schedule-two-area-frame .list-row,
     .schedule-two-area-frame .candidate-chip,
