@@ -5,12 +5,13 @@ import type { AppBootstrap, Person, ShiftMode, TeamName } from "./types";
 let observerStarted = false;
 let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
+let runtimeTimer: number | null = null;
+let isLayoutRunning = false;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數", "出勤總人數", "尚未安排人數", "支援人數"];
 const removablePanelSelectors = ".panel, .stat-card, .summary-panel, .card, [class*='panel'], [class*='card']";
-const removableScheduleTagSelectors = ".candidate-chip, .list-row, .chip, .tag, .pill, button";
 const runtimeTrainingAssignments = new Map<string, Person>();
 
 async function getBootstrapData() {
@@ -168,54 +169,17 @@ async function updateScheduleTip(section: Element) {
   }
   const pending = Math.max(0, attendanceTotal - assigned);
   const tip = ensureScheduleTip();
+  const completeButton = tip.querySelector(".schedule-complete-button");
   tip.innerHTML = `<div>已排:${assigned}</div><div>待排:${pending}</div>`;
+  if (completeButton) tip.appendChild(completeButton);
   tip.classList.add("show");
 }
 
 function removeOriginalMiniChips(panel: Element, frame: HTMLElement) {
-  const assignedNames = new Set<string>();
-  frame.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip, .assigned-tags .runtime-training-chip").forEach((tag) => {
-    const name = getTagName(tag);
-    if (name) assignedNames.add(name);
-  });
   panel.querySelectorAll<HTMLElement>(".list-scroll.short, .candidate-chip, .list-row").forEach((node) => {
     if (frame.contains(node)) return;
-    const name = getTagName(node);
-    if (node.classList.contains("list-scroll") || node.classList.contains("short") || assignedNames.has(name)) {
-      node.style.display = "none";
-      node.remove();
-    }
-  });
-}
-
-function removeLooseScheduleTags(panel: Element, frame: HTMLElement) {
-  const frameNames = new Set<string>();
-  frame.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip").forEach((tag) => {
-    const name = normalizeText(getTagName(tag));
-    if (name) frameNames.add(name);
-  });
-
-  panel.querySelectorAll<HTMLElement>(removableScheduleTagSelectors).forEach((node) => {
-    if (frame.contains(node)) return;
-    const text = normalizeText(getTagName(node));
-    if (!text || text.includes("自訂人選")) return;
-    if (!frameNames.has(text)) return;
-
-    const removable = node.closest<HTMLElement>(removableScheduleTagSelectors) || node;
-    removable.style.display = "none";
-    removable.remove();
-  });
-
-  Array.from(panel.children).forEach((child) => {
-    if (child === frame || frame.contains(child)) return;
-    if (child.querySelector("button")?.textContent?.includes("自訂人選")) return;
-    const text = normalizeText(child.textContent || "");
-    if (!text) return;
-    const containsOnlyScheduleNames = Array.from(frameNames).some((name) => text.includes(name)) && !text.includes("已安排") && !text.includes("尚未安排");
-    if (containsOnlyScheduleNames) {
-      (child as HTMLElement).style.display = "none";
-      child.remove();
-    }
+    if (node.matches("button") && node.textContent?.includes("自訂人選")) return;
+    node.classList.add("schedule-hidden-duplicate");
   });
 }
 
@@ -285,33 +249,39 @@ async function forcePanelLayout(panel: Element) {
     // Layout must still work when data cannot be loaded.
   }
   removeOriginalMiniChips(panel, frame);
-  removeLooseScheduleTags(panel, frame);
 }
 
 async function classifyScheduleTags(section: Element) {
-  const assignedMap = getAssignedMap(section);
-  await Promise.all(getStationPanels(section).map(async (panel) => {
-    await forcePanelLayout(panel);
-    const conflictTags: HTMLElement[] = [];
-    Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip")).forEach((tag) => {
-      const name = getTagName(tag);
-      const assignedPanel = name ? assignedMap.get(name) : null;
-      tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending", "schedule-tag-training");
-      tag.style.marginLeft = "";
-      if (tag.classList.contains("runtime-training-chip")) {
-        tag.classList.add("schedule-tag-training");
-      } else if (tag.classList.contains("active")) {
-        tag.classList.add("schedule-tag-selected");
-      } else if (assignedPanel && assignedPanel !== panel) {
-        tag.classList.add("schedule-tag-conflict");
-        conflictTags.push(tag);
-      } else {
-        tag.classList.add("schedule-tag-pending");
-      }
-    });
-    const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
-    if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
-  }));
+  if (isLayoutRunning) return;
+  isLayoutRunning = true;
+  try {
+    const assignedMap = getAssignedMap(section);
+    for (const panel of getStationPanels(section)) {
+      await forcePanelLayout(panel);
+      const conflictTags: HTMLElement[] = [];
+      Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .runtime-training-chip")).forEach((tag) => {
+        if (tag.classList.contains("schedule-hidden-duplicate")) return;
+        const name = getTagName(tag);
+        const assignedPanel = name ? assignedMap.get(name) : null;
+        tag.classList.remove("schedule-tag-selected", "schedule-tag-conflict", "schedule-tag-pending", "schedule-tag-training");
+        tag.style.marginLeft = "";
+        if (tag.classList.contains("runtime-training-chip")) {
+          tag.classList.add("schedule-tag-training");
+        } else if (tag.classList.contains("active")) {
+          tag.classList.add("schedule-tag-selected");
+        } else if (assignedPanel && assignedPanel !== panel) {
+          tag.classList.add("schedule-tag-conflict");
+          conflictTags.push(tag);
+        } else {
+          tag.classList.add("schedule-tag-pending");
+        }
+      });
+      const wrap = panel.querySelector(".schedule-two-area-frame .list-scroll.short") as HTMLElement | null;
+      if (wrap) conflictTags.forEach((tag) => wrap.appendChild(tag));
+    }
+  } finally {
+    isLayoutRunning = false;
+  }
 }
 
 function ensureCustomAssignStyles() {
@@ -319,6 +289,24 @@ function ensureCustomAssignStyles() {
   const style = document.createElement("style");
   style.id = "runtime-custom-assign-style";
   style.textContent = `
+    .schedule-hidden-duplicate {
+      display: none !important;
+      visibility: hidden !important;
+      height: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: hidden !important;
+      pointer-events: none !important;
+    }
+    .schedule-two-area-frame .list-row,
+    .schedule-two-area-frame .candidate-chip,
+    .schedule-two-area-frame .runtime-training-chip {
+      pointer-events: auto !important;
+      touch-action: manipulation !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+    }
     .custom-assign-backdrop {
       position: fixed;
       inset: 0;
@@ -564,18 +552,18 @@ function handleCustomAssignClick(event: MouseEvent) {
 }
 
 function scheduleRuntime() {
-  removeScheduleSummaryRows();
-  const section = getVisibleScheduleSection();
-  if (!section) {
-    hideScheduleTip();
-    return;
-  }
-  window.setTimeout(() => {
+  if (runtimeTimer) window.clearTimeout(runtimeTimer);
+  runtimeTimer = window.setTimeout(() => {
     removeScheduleSummaryRows();
+    const section = getVisibleScheduleSection();
+    if (!section) {
+      hideScheduleTip();
+      return;
+    }
     classifyScheduleTags(section)
       .then(() => updateScheduleTip(section))
       .catch(() => undefined);
-  }, 0);
+  }, 160);
 }
 
 export function installScheduleRuntime() {
@@ -592,7 +580,6 @@ export function installScheduleRuntime() {
     observer.observe(root, { childList: true, subtree: true, characterData: true });
   }
   scheduleRuntime();
-  window.setTimeout(scheduleRuntime, 100);
-  window.setTimeout(scheduleRuntime, 500);
-  window.setTimeout(scheduleRuntime, 1500);
+  window.setTimeout(scheduleRuntime, 300);
+  window.setTimeout(scheduleRuntime, 900);
 }
