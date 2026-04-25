@@ -40,6 +40,32 @@ function hideSummaryBlocks(section: Element) {
   blocks.forEach((block) => block.classList.add("safe-schedule-summary-hidden"));
 }
 
+function getButtonText(node: HTMLElement) {
+  return normalizeText(node.querySelector("strong")?.textContent || node.textContent || "");
+}
+
+function getMainButtonNames(list: HTMLElement) {
+  const names = new Set<string>();
+  list.querySelectorAll<HTMLElement>(".list-row, .candidate-chip").forEach((button) => {
+    const name = getButtonText(button);
+    if (name) names.add(name);
+  });
+  return names;
+}
+
+function hideDuplicateMiniLabels(panel: Element, list: HTMLElement) {
+  const mainNames = getMainButtonNames(list);
+  if (mainNames.size === 0) return;
+
+  panel.querySelectorAll<HTMLElement>(".candidate-chip, .chip, .tag, .pill, button").forEach((node) => {
+    if (list.contains(node)) return;
+    const text = getButtonText(node);
+    if (!text || !mainNames.has(text)) return;
+    if (text.includes("自訂人選") || text.includes("需求")) return;
+    node.classList.add("safe-schedule-mini-hidden");
+  });
+}
+
 function ensureSectionStyle() {
   if (document.getElementById("safe-schedule-section-runtime-style")) return;
   const style = document.createElement("style");
@@ -53,6 +79,19 @@ function ensureSectionStyle() {
       margin: 0 !important;
       padding: 0 !important;
       overflow: hidden !important;
+    }
+    .safe-schedule-mini-hidden {
+      display: none !important;
+      visibility: hidden !important;
+      width: 0 !important;
+      height: 0 !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      border: 0 !important;
+      overflow: hidden !important;
+      pointer-events: none !important;
     }
     .safe-schedule-partition-list {
       display: flex !important;
@@ -161,6 +200,7 @@ function updateSections() {
     ensureTitle(list, "assigned", "已安排");
     ensureEmptyNote(list, hasAssigned);
     ensureTitle(list, "pending", "尚未安排");
+    hideDuplicateMiniLabels(panel, list);
   });
 }
 
