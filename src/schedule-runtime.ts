@@ -7,6 +7,9 @@ let cachedData: AppBootstrap | null = null;
 let loadingData: Promise<AppBootstrap> | null = null;
 let runtimeTimer: number | null = null;
 let isLayoutRunning = false;
+let isReassignModalOpen = false;
+let lastConflictClickKey = "";
+let lastConflictClickAt = 0;
 
 const teamSet = new Set<string>(TEAM_OPTIONS);
 const daySet = new Set<string>(DAY_OPTIONS);
@@ -552,11 +555,13 @@ function findAssignedStationFromDom(section: Element, personName: string) {
 }
 
 function openReassignModal(tag: HTMLElement) {
+  if (isReassignModalOpen) return;
   const section = tag.closest(".page-section");
   const targetPanel = tag.closest(".panel");
   const assignedTitle = tag.dataset.assignedStationTitle || "其他站點";
   const personName = getTagName(tag);
   if (!section || !targetPanel || !personName) return;
+  isReassignModalOpen = true;
   document.querySelector(".schedule-reassign-backdrop")?.remove();
   const backdrop = document.createElement("div");
   backdrop.className = "schedule-reassign-backdrop";
@@ -572,10 +577,14 @@ function openReassignModal(tag: HTMLElement) {
     </div>
   `;
   document.body.appendChild(backdrop);
-  backdrop.querySelector(".schedule-reassign-cancel")?.addEventListener("click", () => backdrop.remove());
+  const close = () => {
+    backdrop.remove();
+    isReassignModalOpen = false;
+  };
+  backdrop.querySelector(".schedule-reassign-cancel")?.addEventListener("click", close, { once: true });
   backdrop.addEventListener("click", (event) => {
-    if (event.target === backdrop) backdrop.remove();
-  });
+    if (event.target === backdrop) close();
+  }, { once: true });
   backdrop.querySelector(".schedule-reassign-confirm")?.addEventListener("click", () => {
     const oldPanel = Array.from(getStationPanels(section)).find((panel) => {
       if (panel === targetPanel) return false;
@@ -584,18 +593,30 @@ function openReassignModal(tag: HTMLElement) {
     oldPanel?.querySelectorAll<HTMLElement>(".assigned-tags .list-row, .assigned-tags .candidate-chip").forEach((item) => {
       if (normalizeText(getTagName(item)) === normalizeText(personName)) item.click();
     });
-    backdrop.remove();
+    close();
     window.setTimeout(() => {
       tag.click();
       scheduleRuntime();
     }, 80);
-  });
+  }, { once: true });
 }
 
 function handleConflictClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null;
   const tag = target?.closest(".schedule-tag-conflict") as HTMLElement | null;
   if (!tag) return;
+  const personName = getTagName(tag);
+  const assignedTitle = tag.dataset.assignedStationTitle || "";
+  const clickKey = `${personName}::${assignedTitle}`;
+  const now = Date.now();
+  if (isReassignModalOpen || (clickKey === lastConflictClickKey && now - lastConflictClickAt < 600)) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    return;
+  }
+  lastConflictClickKey = clickKey;
+  lastConflictClickAt = now;
   event.preventDefault();
   event.stopPropagation();
   event.stopImmediatePropagation();
