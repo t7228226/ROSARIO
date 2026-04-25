@@ -4,6 +4,7 @@ import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
 import { installScheduleRuntime } from "./schedule-runtime";
+import { installScheduleShareRuntime } from "./schedule-share-runtime";
 
 declare global {
   interface Window {
@@ -50,6 +51,7 @@ try {
   );
 
   installScheduleRuntime();
+  installScheduleShareRuntime();
 } catch (error) {
   showFatalError("系統載入失敗", error instanceof Error ? error.stack || error.message : String(error));
 }
