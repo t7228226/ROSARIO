@@ -645,12 +645,38 @@ export default function App() {
     }).slice(0, 30);
   }, [manualAttendance.all, manualCustomDialog, manualCustomKeyword]);
 
-  function addManualCustomPerson(personId: string) {
+  async function addManualCustomPerson(personId: string) {
     if (!manualCustomDialog) return;
-    assignManualPerson(manualCustomDialog.stationId, personId, false);
+    const stationId = manualCustomDialog.stationId;
     const person = data.people.find((item) => item.id === personId);
-    const station = data.stations.find((item) => item.id === manualCustomDialog.stationId);
-    setFlashMessage(`${person?.name || personId} 已加入 ${station?.name || manualCustomDialog.stationId}。`);
+    const station = data.stations.find((item) => item.id === stationId);
+    if (!person || !station) {
+      setFlashMessage("找不到指定人員或站點，無法加入自訂人選。");
+      return;
+    }
+
+    const qualification = data.qualifications.find((item) => item.employeeId === person.id && item.stationId === stationId);
+    const isQualified = qualification?.status === "合格";
+
+    if (!isQualified) {
+      const qualificationText = qualification?.status ? `目前狀態為「${qualification.status}」` : "目前沒有此站點資格";
+      const addTraining = confirmAction(`${person.name} ${qualificationText}，是否加入「${station.name}」訓練？\n\n確認後會同步寫入考核資料為「訓練中」。`);
+      if (!addTraining) {
+        setFlashMessage("已取消自訂人選加入。");
+        return;
+      }
+
+      const ok = await persistQualification(person, stationId, "訓練中");
+      if (!ok) return;
+
+      setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
+      setReviewEmployeeId(person.id);
+      setReviewStationId(stationId);
+      setReviewStatus("訓練中");
+    }
+
+    assignManualPerson(stationId, person.id, false);
+    setFlashMessage(`${person.name} 已加入 ${station.name}${isQualified ? "" : "，並同步建立訓練中考核資料"}。`);
     setManualCustomDialog(null);
     setManualCustomKeyword("");
   }
