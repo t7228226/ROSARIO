@@ -134,4 +134,4 @@ try {
 window.setTimeout(() => installOptionalRuntime("站點浮動提示窗", installScheduleTipRuntime), 550);
 window.setTimeout(() => installOptionalRuntime("站點顏色標籤", installScheduleColorRuntime), 650);
 // window.setTimeout(() => installOptionalRuntime("手機觸控優化", installScheduleTouchRuntime), 700);
-window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
+// window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
