@@ -952,6 +952,8 @@ export default function App() {
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
                 .manual-floating-tip-react button { margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
+                .manual-modal-backdrop-top { z-index: 900 !important; background: rgba(15, 23, 42, .58); }
+                .manual-modal-backdrop-top .manual-modal { box-shadow: 0 30px 80px rgba(15, 23, 42, .42); }
                 .manual-modal { width: min(460px, 100%); max-height: 86vh; overflow: auto; border-radius: 20px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 23, 42, .3); color: #0f172a; overscroll-behavior: contain; }
                 .manual-modal h3 { position: sticky; top: -18px; z-index: 3; margin: -18px -18px 12px; padding: 18px 18px 12px; font-size: 22px; font-weight: 950; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .85); }
                 .manual-modal p { line-height: 1.7; color: #334155; font-weight: 800; }
@@ -1113,7 +1115,7 @@ export default function App() {
                 const person = data.people.find((item) => item.id === manualTrainingDialog.personId);
                 const station = data.stations.find((item) => item.id === manualTrainingDialog.stationId);
                 return (
-                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true">
                     <div className="manual-modal">
                       <h3>加入訓練人員？</h3>
                       <p><strong>{person?.name || manualTrainingDialog.personId}</strong> 目前在「{station?.name || manualTrainingDialog.stationId}」{manualTrainingDialog.currentStatus === "無站點資格" ? "沒有站點資格" : `狀態為「${manualTrainingDialog.currentStatus}」`}。</p>
