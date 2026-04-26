@@ -160,6 +160,7 @@ export default function App() {
   const personDetailRef = useRef<HTMLDivElement | null>(null);
   const stationDetailRef = useRef<HTMLDivElement | null>(null);
   const reviewDetailRef = useRef<HTMLDivElement | null>(null);
+  const manualTouchRef = useRef<{ key: string; x: number; y: number; moved: boolean; at: number } | null>(null);
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
@@ -600,6 +601,49 @@ export default function App() {
     });
   }
 
+  function getManualTouchKey(stationId: string, employeeId: string) {
+    return `${stationId}::${employeeId}`;
+  }
+
+  function handleManualPersonPointerDown(event: React.PointerEvent<HTMLButtonElement>, stationId: string, employeeId: string) {
+    if (event.pointerType !== "touch") return;
+    manualTouchRef.current = {
+      key: getManualTouchKey(stationId, employeeId),
+      x: event.clientX,
+      y: event.clientY,
+      moved: false,
+      at: 0,
+    };
+  }
+
+  function handleManualPersonPointerMove(event: React.PointerEvent<HTMLButtonElement>) {
+    const current = manualTouchRef.current;
+    if (!current || event.pointerType !== "touch") return;
+    const distance = Math.hypot(event.clientX - current.x, event.clientY - current.y);
+    if (distance > 10) {
+      manualTouchRef.current = { ...current, moved: true };
+    }
+  }
+
+  function handleManualPersonPointerUp(event: React.PointerEvent<HTMLButtonElement>, stationId: string, employeeId: string) {
+    if (event.pointerType !== "touch") return;
+    const key = getManualTouchKey(stationId, employeeId);
+    const current = manualTouchRef.current;
+    if (!current || current.key !== key || current.moved) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    manualTouchRef.current = { ...current, at: Date.now() };
+    toggleManualAssignment(stationId, employeeId);
+  }
+
+  function handleManualPersonClick(stationId: string, employeeId: string) {
+    const key = getManualTouchKey(stationId, employeeId);
+    const current = manualTouchRef.current;
+    if (current && current.key === key && Date.now() - current.at < 700) return;
+    toggleManualAssignment(stationId, employeeId);
+  }
+
   async function handleCustomAssign(target: "manual" | "smart", stationId: string) {
     const raw = window.prompt("請輸入工號或姓名");
     if (!raw) return;
@@ -856,7 +900,10 @@ export default function App() {
                                 key={person.id}
                                 type="button"
                                 className="list-row active"
-                                onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                onPointerDown={(event) => handleManualPersonPointerDown(event, rule.stationId, person.id)}
+                                onPointerMove={handleManualPersonPointerMove}
+                                onPointerUp={(event) => handleManualPersonPointerUp(event, rule.stationId, person.id)}
+                                onClick={() => handleManualPersonClick(rule.stationId, person.id)}
                               >
                                 <strong>{person.name}</strong>
                                 <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span>
@@ -873,7 +920,10 @@ export default function App() {
                                 key={person.id}
                                 type="button"
                                 className="list-row"
-                                onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                onPointerDown={(event) => handleManualPersonPointerDown(event, rule.stationId, person.id)}
+                                onPointerMove={handleManualPersonPointerMove}
+                                onPointerUp={(event) => handleManualPersonPointerUp(event, rule.stationId, person.id)}
+                                onClick={() => handleManualPersonClick(rule.stationId, person.id)}
                               >
                                 <strong>{person.name}</strong>
                                 <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span>
