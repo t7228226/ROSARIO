@@ -6,14 +6,34 @@ function getVisibleManualScheduleSection() {
   }) || null;
 }
 
-function getStationPanels(section: Element) {
-  return Array.from(section.querySelectorAll(".panel")).filter((panel) => {
-    return Boolean(panel.querySelector(".list-scroll.short .list-row, .candidate-chip"));
-  });
-}
-
 function normalizeText(value: string) {
   return value.replace(/\s+/g, "").trim();
+}
+
+function getButtonText(node: HTMLElement) {
+  return normalizeText(node.querySelector("strong")?.textContent || node.textContent || "");
+}
+
+function isCandidateButton(node: HTMLElement) {
+  const text = getButtonText(node);
+  if (!text) return false;
+  if (text.includes("自訂人選") || text.includes("需求") || text.includes("已安排") || text.includes("尚未安排")) return false;
+  return node.matches(".list-row, .candidate-chip, button") || node.className.includes("chip") || node.className.includes("tag") || node.className.includes("pill");
+}
+
+function getCandidateButtons(root: Element) {
+  return Array.from(root.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, button, .chip, .tag, .pill")).filter(isCandidateButton);
+}
+
+function isStationPanel(panel: Element) {
+  const text = panel.textContent || "";
+  if (!text.includes("自訂人選")) return false;
+  if (!text.includes("需求")) return false;
+  return getCandidateButtons(panel).length > 0;
+}
+
+function getStationPanels(section: Element) {
+  return Array.from(section.querySelectorAll(".panel")).filter(isStationPanel);
 }
 
 const summaryLabels = ["需排總人數", "已排總人數", "唯一人數", "重複安排", "缺口總數"];
@@ -48,18 +68,44 @@ function hideSummaryBlocks(section: Element) {
   });
 }
 
-function getButtonText(node: HTMLElement) {
-  return normalizeText(node.querySelector("strong")?.textContent || node.textContent || "");
+function findCandidateContainer(panel: Element) {
+  const preferred = panel.querySelector<HTMLElement>(".list-scroll.short");
+  if (preferred && getCandidateButtons(preferred).length > 0) return preferred;
+
+  const buttons = getCandidateButtons(panel);
+  if (buttons.length === 0) return null;
+
+  const candidates = Array.from(panel.querySelectorAll<HTMLElement>("div, section, article"));
+  let best: HTMLElement | null = null;
+  let bestScore = 0;
+
+  candidates.forEach((node) => {
+    if (node.querySelector("h2, h3, h4")) return;
+    if ((node.textContent || "").includes("自訂人選")) return;
+    const count = getCandidateButtons(node).length;
+    if (count > bestScore) {
+      best = node;
+      bestScore = count;
+    }
+  });
+
+  return best || buttons[0].parentElement;
+}
+
+function getMainButtonNames(list: HTMLElement) {
+  const names = new Set<string>();
+  getCandidateButtons(list).forEach((button) => {
+    const name = getButtonText(button);
+    if (name) names.add(name);
+  });
+  return names;
 }
 
 function hideDuplicateMiniLabels(panel: Element, list: HTMLElement) {
-  const allButtons = Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .chip, .tag, .pill, button")).filter((node) => {
-    if (node.textContent?.includes("自訂人選")) return false;
-    if (node.textContent?.includes("需求")) return false;
-    const text = getButtonText(node);
-    return Boolean(text);
-  });
+  const mainNames = getMainButtonNames(list);
+  if (mainNames.size === 0) return;
 
+  const allButtons = getCandidateButtons(panel);
   const byName = new Map<string, HTMLElement[]>();
   allButtons.forEach((button) => {
     const text = getButtonText(button);
@@ -67,9 +113,11 @@ function hideDuplicateMiniLabels(panel: Element, list: HTMLElement) {
     byName.set(text, [...(byName.get(text) || []), button]);
   });
 
-  byName.forEach((buttons) => {
-    if (buttons.length <= 1) return;
+  byName.forEach((buttons, name) => {
+    if (!mainNames.has(name) || buttons.length <= 1) return;
     const visibleButtons = buttons.filter((button) => !button.classList.contains("safe-schedule-mini-hidden"));
+    if (visibleButtons.length <= 1) return;
+
     const keep = visibleButtons.reduce((best, current) => {
       const bestRect = best.getBoundingClientRect();
       const currentRect = current.getBoundingClientRect();
@@ -80,7 +128,6 @@ function hideDuplicateMiniLabels(panel: Element, list: HTMLElement) {
 
     buttons.forEach((button) => {
       if (button === keep) return;
-      if (list.contains(button) && button.classList.contains("active")) return;
       button.classList.add("safe-schedule-mini-hidden");
     });
   });
@@ -141,7 +188,11 @@ function ensureSectionStyle() {
       margin-top: 18px !important;
     }
     .safe-schedule-partition-list .list-row,
-    .safe-schedule-partition-list .candidate-chip {
+    .safe-schedule-partition-list .candidate-chip,
+    .safe-schedule-partition-list button,
+    .safe-schedule-partition-list .chip,
+    .safe-schedule-partition-list .tag,
+    .safe-schedule-partition-list .pill {
       flex: 0 0 auto !important;
       width: auto !important;
       min-width: 92px !important;
@@ -150,11 +201,13 @@ function ensureSectionStyle() {
     }
     .safe-schedule-partition-list .list-row.active,
     .safe-schedule-partition-list .candidate-chip.active,
+    .safe-schedule-partition-list button.active,
     .safe-schedule-partition-list .schedule-tag-selected {
       order: 10 !important;
     }
     .safe-schedule-partition-list .list-row:not(.active),
-    .safe-schedule-partition-list .candidate-chip:not(.active) {
+    .safe-schedule-partition-list .candidate-chip:not(.active),
+    .safe-schedule-partition-list button:not(.active) {
       order: 30 !important;
     }
     .safe-schedule-partition-list .schedule-tag-conflict {
@@ -212,11 +265,11 @@ function updateSections() {
   hideSummaryBlocks(section);
 
   getStationPanels(section).forEach((panel) => {
-    const list = panel.querySelector<HTMLElement>(".list-scroll.short");
+    const list = findCandidateContainer(panel);
     if (!list) return;
     list.classList.add("safe-schedule-partition-list");
 
-    const candidateButtons = Array.from(list.querySelectorAll<HTMLElement>(".list-row, .candidate-chip"));
+    const candidateButtons = getCandidateButtons(list);
     const hasAssigned = candidateButtons.some((button) => button.classList.contains("active") || button.classList.contains("schedule-tag-selected"));
 
     ensureTitle(list, "assigned", "已安排");
@@ -224,6 +277,10 @@ function updateSections() {
     ensureTitle(list, "pending", "尚未安排");
     hideDuplicateMiniLabels(panel, list);
   });
+}
+
+function runDelayedInitialPasses() {
+  [0, 120, 300, 700, 1200, 2000].forEach((delay) => window.setTimeout(updateSections, delay));
 }
 
 export function installScheduleSectionRuntime() {
@@ -234,13 +291,15 @@ export function installScheduleSectionRuntime() {
     timer = window.setTimeout(() => {
       timer = null;
       updateSections();
-    }, 100);
+    }, 120);
   };
 
+  document.addEventListener("click", scheduleUpdate, true);
   document.addEventListener("change", scheduleUpdate, true);
   window.addEventListener("resize", scheduleUpdate);
+  window.addEventListener("popstate", runDelayedInitialPasses);
 
   const observer = new MutationObserver(scheduleUpdate);
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
-  scheduleUpdate();
+  runDelayedInitialPasses();
 }
