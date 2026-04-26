@@ -190,6 +190,7 @@ export default function App() {
   const [manualResetDialog, setManualResetDialog] = useState<null | { type: "shift" | "day" | "mode"; value: TeamName | ShiftMode | SmartScheduleMode }>(null);
   const [manualConflictDialog, setManualConflictDialog] = useState<null | { stationId: string; employeeId: string; assignedStationId: string }>(null);
   const [manualCustomDialog, setManualCustomDialog] = useState<null | { stationId: string }>(null);
+  const [manualTrainingDialog, setManualTrainingDialog] = useState<null | { stationId: string; personId: string; currentStatus: string }>(null);
   const [manualCustomKeyword, setManualCustomKeyword] = useState("");
 
   const hasManualAssignments = useMemo(
@@ -659,24 +660,42 @@ export default function App() {
     const isQualified = qualification?.status === "合格";
 
     if (!isQualified) {
-      const qualificationText = qualification?.status ? `目前狀態為「${qualification.status}」` : "目前沒有此站點資格";
-      const addTraining = confirmAction(`${person.name} ${qualificationText}，是否加入「${station.name}」訓練？\n\n確認後會同步寫入考核資料為「訓練中」。`);
-      if (!addTraining) {
-        setFlashMessage("已取消自訂人選加入。");
-        return;
-      }
-
-      const ok = await persistQualification(person, stationId, "訓練中");
-      if (!ok) return;
-
-      setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
-      setReviewEmployeeId(person.id);
-      setReviewStationId(stationId);
-      setReviewStatus("訓練中");
+      setManualTrainingDialog({
+        stationId,
+        personId: person.id,
+        currentStatus: qualification?.status || "無站點資格",
+      });
+      return;
     }
 
     assignManualPerson(stationId, person.id, false);
-    setFlashMessage(`${person.name} 已加入 ${station.name}${isQualified ? "" : "，並同步建立訓練中考核資料"}。`);
+    setFlashMessage(`${person.name} 已加入 ${station.name}。`);
+    setManualCustomDialog(null);
+    setManualCustomKeyword("");
+  }
+
+  async function confirmManualTrainingPerson() {
+    if (!manualTrainingDialog) return;
+    const { stationId, personId } = manualTrainingDialog;
+    const person = data.people.find((item) => item.id === personId);
+    const station = data.stations.find((item) => item.id === stationId);
+    if (!person || !station) {
+      setManualTrainingDialog(null);
+      setFlashMessage("找不到指定人員或站點，無法加入訓練。");
+      return;
+    }
+
+    const ok = await persistQualification(person, stationId, "訓練中");
+    if (!ok) return;
+
+    setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
+    setReviewEmployeeId(person.id);
+    setReviewStationId(stationId);
+    setReviewStatus("訓練中");
+
+    assignManualPerson(stationId, person.id, false);
+    setFlashMessage(`${person.name} 已加入 ${station.name}，並同步建立訓練中考核資料。`);
+    setManualTrainingDialog(null);
     setManualCustomDialog(null);
     setManualCustomKeyword("");
   }
@@ -933,21 +952,26 @@ export default function App() {
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
                 .manual-floating-tip-react button { margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
-                .manual-modal { width: min(460px, 100%); max-height: 86vh; overflow: auto; border-radius: 20px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 23, 42, .3); color: #0f172a; }
-                .manual-modal h3 { margin: 0 0 12px; font-size: 22px; font-weight: 950; }
+                .manual-modal { width: min(460px, 100%); max-height: 86vh; overflow: auto; border-radius: 20px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 23, 42, .3); color: #0f172a; overscroll-behavior: contain; }
+                .manual-modal h3 { position: sticky; top: -18px; z-index: 3; margin: -18px -18px 12px; padding: 18px 18px 12px; font-size: 22px; font-weight: 950; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .85); }
                 .manual-modal p { line-height: 1.7; color: #334155; font-weight: 800; }
                 .manual-modal input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 14px; padding: 13px 14px; font-size: 18px; }
-                .manual-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+                .manual-modal-actions { position: sticky; bottom: -18px; z-index: 4; display: flex; justify-content: flex-end; gap: 10px; margin: 16px -18px -18px; padding: 14px 18px 18px; background: rgba(255,255,255,.96); border-top: 1px solid rgba(226, 232, 240, .95); box-shadow: 0 -12px 28px rgba(15, 23, 42, .08); backdrop-filter: blur(10px); }
                 .manual-modal-actions button, .manual-custom-result button { border: 0; border-radius: 14px; padding: 11px 15px; font-weight: 950; cursor: pointer; }
                 .manual-modal-actions .primary, .manual-custom-result button { background: #2563eb; color: #fff; }
                 .manual-modal-actions .ghost { background: #e2e8f0; color: #0f172a; }
                 .manual-custom-results { display: grid; gap: 8px; margin-top: 12px; }
                 .manual-custom-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px; background: #f8fafc; }
+                .mobile-modal-header { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .95); }
+                .mobile-modal-close { position: sticky; top: 8px; z-index: 6; }
+                .mobile-modal-fab-close { position: sticky; bottom: 14px; z-index: 6; }
                 @media (max-width: 900px) {
                   .manual-floating-tip-react { right: 10px; bottom: 12px; font-size: 18px; }
                   .manual-schedule-station .manual-schedule-group h4 { font-size: 20px; }
-                  .manual-modal-actions { flex-direction: column-reverse; }
-                  .manual-modal-actions button { width: 100%; min-height: 48px; }
+                  .manual-modal { width: calc(100vw - 24px); max-height: 84dvh; padding: 16px; }
+                  .manual-modal h3 { top: -16px; margin: -16px -16px 12px; padding: 16px 16px 12px; }
+                  .manual-modal-actions { bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
+                  .manual-modal-actions button { width: 100%; min-height: 52px; font-size: 17px; }
                 }
               `}</style>
 
@@ -1079,6 +1103,24 @@ export default function App() {
                       <div className="manual-modal-actions">
                         <button type="button" className="ghost" onClick={() => setManualConflictDialog(null)}>取消</button>
                         <button type="button" className="primary" onClick={confirmManualConflictReplace}>確認更換</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : null}
+
+              {manualTrainingDialog ? (() => {
+                const person = data.people.find((item) => item.id === manualTrainingDialog.personId);
+                const station = data.stations.find((item) => item.id === manualTrainingDialog.stationId);
+                return (
+                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                    <div className="manual-modal">
+                      <h3>加入訓練人員？</h3>
+                      <p><strong>{person?.name || manualTrainingDialog.personId}</strong> 目前在「{station?.name || manualTrainingDialog.stationId}」{manualTrainingDialog.currentStatus === "無站點資格" ? "沒有站點資格" : `狀態為「${manualTrainingDialog.currentStatus}」`}。</p>
+                      <p>是否加入訓練並同步連動到考核資料，將此站點狀態設為「訓練中」？</p>
+                      <div className="manual-modal-actions">
+                        <button type="button" className="ghost" onClick={() => setManualTrainingDialog(null)}>取消</button>
+                        <button type="button" className="primary" onClick={confirmManualTrainingPerson}>加入訓練</button>
                       </div>
                     </div>
                   </div>
