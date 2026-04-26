@@ -185,38 +185,47 @@ export default function App() {
 
   const [manualShift, setManualShift] = useState<TeamName>("婷芬班");
   const [manualDay, setManualDay] = useState<ShiftMode>("當班");
+  const [manualMode, setManualMode] = useState<SmartScheduleMode>("當班優先");
   const [manualAssignments, setManualAssignments] = useState<Record<string, string[]>>({});
+  const [manualResetDialog, setManualResetDialog] = useState<null | { type: "shift" | "day" | "mode"; value: TeamName | ShiftMode | SmartScheduleMode }>(null);
+  const [manualConflictDialog, setManualConflictDialog] = useState<null | { stationId: string; employeeId: string; assignedStationId: string }>(null);
+  const [manualCustomDialog, setManualCustomDialog] = useState<null | { stationId: string }>(null);
+  const [manualCustomKeyword, setManualCustomKeyword] = useState("");
 
   const hasManualAssignments = useMemo(
     () => Object.values(manualAssignments).some((list) => list.length > 0),
     [manualAssignments]
   );
 
-  function confirmResetManualSchedule() {
-    if (!hasManualAssignments) return true;
-    return window.confirm("更換班別 / 日別會重置目前站點試排安排，是否繼續？");
+  function applyManualSwitch(type: "shift" | "day" | "mode", value: TeamName | ShiftMode | SmartScheduleMode) {
+    setManualAssignments({});
+    if (type === "shift") setManualShift(value as TeamName);
+    if (type === "day") setManualDay(value as ShiftMode);
+    if (type === "mode") setManualMode(value as SmartScheduleMode);
+    setManualResetDialog(null);
   }
 
-  function pauseScheduleRuntime(ms = 900) {
-    (window as Window & { __scheduleRuntimePausedUntil?: number }).__scheduleRuntimePausedUntil = Date.now() + ms;
+  function requestManualSwitch(type: "shift" | "day" | "mode", value: TeamName | ShiftMode | SmartScheduleMode) {
+    if (type === "shift" && value === manualShift) return;
+    if (type === "day" && value === manualDay) return;
+    if (type === "mode" && value === manualMode) return;
+    if (hasManualAssignments) {
+      setManualResetDialog({ type, value });
+      return;
+    }
+    applyManualSwitch(type, value);
   }
 
   function handleManualShiftChange(nextShift: TeamName) {
-    if (nextShift === manualShift) return;
-    if (!confirmResetManualSchedule()) return;
-
-    pauseScheduleRuntime();
-    setManualAssignments({});
-    setManualShift(nextShift);
+    requestManualSwitch("shift", nextShift);
   }
 
   function handleManualDayChange(nextDay: ShiftMode) {
-    if (nextDay === manualDay) return;
-    if (!confirmResetManualSchedule()) return;
+    requestManualSwitch("day", nextDay);
+  }
 
-    pauseScheduleRuntime();
-    setManualAssignments({});
-    setManualDay(nextDay);
+  function handleManualModeChange(nextMode: SmartScheduleMode) {
+    requestManualSwitch("mode", nextMode);
   }
 
   const [rulesTeam, setRulesTeam] = useState<TeamName>("婷芬班");
@@ -584,20 +593,99 @@ export default function App() {
     setFlashMessage("站點規則已確認更新。");
   }
 
-  function toggleManualAssignment(stationId: string, employeeId: string) {
+  function assignManualPerson(stationId: string, employeeId: string, replaceExisting = false) {
     setManualAssignments((current) => {
       const currentIds = current[stationId] || [];
       if (currentIds.includes(employeeId)) {
         return { ...current, [stationId]: currentIds.filter((id) => id !== employeeId) };
       }
       const assignedStationId = findAssignedStation(current, employeeId);
-      if (assignedStationId && assignedStationId !== stationId) {
-        const assignedStation = data.stations.find((item) => item.id === assignedStationId);
-        setFlashMessage(`${data.people.find((item) => item.id === employeeId)?.name || employeeId} 已安排在 ${assignedStation?.name || assignedStationId}，不可重複佔站。`);
+      if (assignedStationId && assignedStationId !== stationId && !replaceExisting) {
+        setManualConflictDialog({ stationId, employeeId, assignedStationId });
         return current;
       }
-      return { ...current, [stationId]: [...currentIds, employeeId] };
+      const next: Record<string, string[]> = { ...current };
+      if (assignedStationId && assignedStationId !== stationId) {
+        next[assignedStationId] = (next[assignedStationId] || []).filter((id) => id !== employeeId);
+      }
+      next[stationId] = [...currentIds.filter((id) => id !== employeeId), employeeId];
+      return next;
     });
+  }
+
+  function toggleManualAssignment(stationId: string, employeeId: string) {
+    assignManualPerson(stationId, employeeId, false);
+  }
+
+  function confirmManualConflictReplace() {
+    if (!manualConflictDialog) return;
+    assignManualPerson(manualConflictDialog.stationId, manualConflictDialog.employeeId, true);
+    const person = data.people.find((item) => item.id === manualConflictDialog.employeeId);
+    const station = data.stations.find((item) => item.id === manualConflictDialog.stationId);
+    setFlashMessage(`${person?.name || manualConflictDialog.employeeId} 已更換到 ${station?.name || manualConflictDialog.stationId}。`);
+    setManualConflictDialog(null);
+  }
+
+  function runManualPlan() {
+    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], data.people, data.qualifications, manualMode);
+    const next: Record<string, string[]> = {};
+    rows.forEach((row) => {
+      next[row.stationId] = row.assigned.map((person) => person.id);
+    });
+    setManualAssignments(next);
+    setFlashMessage(`一鍵安排已完成：${manualMode}`);
+  }
+
+  const manualCustomCandidates = useMemo(() => {
+    if (!manualCustomDialog) return [] as Person[];
+    const keyword = manualCustomKeyword.trim().toLowerCase();
+    if (!keyword) return manualAttendance.all.slice(0, 30);
+    return manualAttendance.all.filter((person) => {
+      return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
+    }).slice(0, 30);
+  }, [manualAttendance.all, manualCustomDialog, manualCustomKeyword]);
+
+  function addManualCustomPerson(personId: string) {
+    if (!manualCustomDialog) return;
+    assignManualPerson(manualCustomDialog.stationId, personId, false);
+    const person = data.people.find((item) => item.id === personId);
+    const station = data.stations.find((item) => item.id === manualCustomDialog.stationId);
+    setFlashMessage(`${person?.name || personId} 已加入 ${station?.name || manualCustomDialog.stationId}。`);
+    setManualCustomDialog(null);
+    setManualCustomKeyword("");
+  }
+
+  async function completeManualSchedule() {
+    const lines: string[] = [];
+    lines.push(`站點試排安排`);
+    lines.push(`班別：${manualShift}`);
+    lines.push(`日別：${manualDay}`);
+    lines.push(`模式：${manualMode}`);
+    lines.push(`已排：${manualSummary.assigned}`);
+    lines.push(`待排：${Math.max(0, manualAttendance.totalCount - manualSummary.assigned)}`);
+    lines.push("");
+    manualRules.forEach((rule) => {
+      const station = data.stations.find((item) => item.id === rule.stationId);
+      const names = (manualAssignments[rule.stationId] || []).map((id) => data.people.find((person) => person.id === id)?.name || id);
+      lines.push(`${station?.name || rule.stationId}：${names.join("、") || "-"}`);
+    });
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "站點試排安排", text });
+        setFlashMessage("安排內容已開啟分享。 ");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      setFlashMessage("安排內容已複製，可貼到 LINE 或訊息分享。 ");
+    } catch {
+      try {
+        await navigator.clipboard.writeText(text);
+        setFlashMessage("安排內容已複製，可貼到 LINE 或訊息分享。 ");
+      } catch {
+        setFlashMessage("無法分享或複製安排內容，請改用截圖。 ");
+      }
+    }
   }
 
   async function handleCustomAssign(target: "manual" | "smart", stationId: string) {
@@ -807,7 +895,36 @@ export default function App() {
 
           {currentRole && page === "gap-analysis" && hasAccess("組長") ? <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></Layout> : null}
           {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
-            <Layout title="站點試排" subtitle="移除隨機按鈕，保留自訂人選、出勤人數、幹部樣式與浮動資訊。">
+            <Layout title="站點試排" subtitle="正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。">
+              <style>{`
+                .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
+                .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
+                .manual-schedule-list { display: flex; flex-wrap: wrap; gap: 10px; max-height: none; overflow: visible; }
+                .manual-schedule-list .list-row { width: auto; min-width: 88px; min-height: 48px; justify-content: center; touch-action: manipulation; }
+                .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+                .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
+                .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+                .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
+                .manual-floating-tip-react button { margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
+                .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
+                .manual-modal { width: min(460px, 100%); max-height: 86vh; overflow: auto; border-radius: 20px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 23, 42, .3); color: #0f172a; }
+                .manual-modal h3 { margin: 0 0 12px; font-size: 22px; font-weight: 950; }
+                .manual-modal p { line-height: 1.7; color: #334155; font-weight: 800; }
+                .manual-modal input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 14px; padding: 13px 14px; font-size: 18px; }
+                .manual-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+                .manual-modal-actions button, .manual-custom-result button { border: 0; border-radius: 14px; padding: 11px 15px; font-weight: 950; cursor: pointer; }
+                .manual-modal-actions .primary, .manual-custom-result button { background: #2563eb; color: #fff; }
+                .manual-modal-actions .ghost { background: #e2e8f0; color: #0f172a; }
+                .manual-custom-results { display: grid; gap: 8px; margin-top: 12px; }
+                .manual-custom-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px; background: #f8fafc; }
+                @media (max-width: 900px) {
+                  .manual-floating-tip-react { right: 10px; bottom: 12px; font-size: 18px; }
+                  .manual-schedule-station .manual-schedule-group h4 { font-size: 20px; }
+                  .manual-modal-actions { flex-direction: column-reverse; }
+                  .manual-modal-actions button { width: 100%; min-height: 48px; }
+                }
+              `}</style>
+
               <div className="panel">
                 <div className="toolbar">
                   <select value={manualShift} onChange={(e) => handleManualShiftChange(e.target.value as TeamName)}>
@@ -816,6 +933,10 @@ export default function App() {
                   <select value={manualDay} onChange={(e) => handleManualDayChange(e.target.value as ShiftMode)}>
                     {dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
+                  <select value={manualMode} onChange={(e) => handleManualModeChange(e.target.value as SmartScheduleMode)}>
+                    {SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                  <button className="primary" type="button" onClick={runManualPlan}>一鍵安排</button>
                 </div>
                 <div className="detail-grid">
                   <Info label="本籍出勤" value={String(manualAttendance.localCount)} />
@@ -855,7 +976,7 @@ export default function App() {
                         </div>
 
                         <div className="toolbar">
-                          <button type="button" className="ghost" onClick={() => handleCustomAssign("manual", rule.stationId)}>自訂人選</button>
+                          <button type="button" className="ghost" onClick={() => { setManualCustomDialog({ stationId: rule.stationId }); setManualCustomKeyword(""); }}>自訂人選</button>
                         </div>
 
                         <div className="manual-schedule-group">
@@ -869,7 +990,6 @@ export default function App() {
                                 onClick={() => toggleManualAssignment(rule.stationId, person.id)}
                               >
                                 <strong>{person.name}</strong>
-                                <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span>
                               </button>
                             )) : <span className="muted">-</span>}
                           </div>
@@ -878,17 +998,20 @@ export default function App() {
                         <div className="manual-schedule-group">
                           <h4>尚未安排</h4>
                           <div className="list-scroll short manual-schedule-list">
-                            {pendingPeople.map((person) => (
-                              <button
-                                key={person.id}
-                                type="button"
-                                className="list-row"
-                                onClick={() => toggleManualAssignment(rule.stationId, person.id)}
-                              >
-                                <strong>{person.name}</strong>
-                                <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span>
-                              </button>
-                            ))}
+                            {pendingPeople.map((person) => {
+                              const assignedStationId = findAssignedStation(manualAssignments, person.id);
+                              const isConflict = Boolean(assignedStationId && assignedStationId !== rule.stationId);
+                              return (
+                                <button
+                                  key={person.id}
+                                  type="button"
+                                  className={`list-row ${isConflict ? "conflict" : ""}`}
+                                  onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                >
+                                  <strong>{person.name}</strong>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       </div>
@@ -896,6 +1019,65 @@ export default function App() {
                   })}
                 </div>
               ) : <Empty text="找不到此班別的正式站點規則，無法進行站點試排。" />}
+
+              {manualSummary.assigned > 0 ? (
+                <div className="manual-floating-tip-react">
+                  <div>已排:{manualSummary.assigned}</div>
+                  <div>待排:{Math.max(0, manualAttendance.totalCount - manualSummary.assigned)}</div>
+                  <button type="button" onClick={completeManualSchedule}>安排完成</button>
+                </div>
+              ) : null}
+
+              {manualResetDialog ? (
+                <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                  <div className="manual-modal">
+                    <h3>重置目前站點試排？</h3>
+                    <p>更換班別 / 日別 / 模式會清空目前已安排人員，是否繼續？</p>
+                    <div className="manual-modal-actions">
+                      <button type="button" className="ghost" onClick={() => setManualResetDialog(null)}>取消</button>
+                      <button type="button" className="primary" onClick={() => applyManualSwitch(manualResetDialog.type, manualResetDialog.value)}>確認重置</button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {manualConflictDialog ? (() => {
+                const person = data.people.find((item) => item.id === manualConflictDialog.employeeId);
+                const oldStation = data.stations.find((item) => item.id === manualConflictDialog.assignedStationId);
+                const nextStation = data.stations.find((item) => item.id === manualConflictDialog.stationId);
+                return (
+                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                    <div className="manual-modal">
+                      <h3>更換站點？</h3>
+                      <p>{person?.name || manualConflictDialog.employeeId} 已安排在「{oldStation?.name || manualConflictDialog.assignedStationId}」，是否更換到「{nextStation?.name || manualConflictDialog.stationId}」？</p>
+                      <div className="manual-modal-actions">
+                        <button type="button" className="ghost" onClick={() => setManualConflictDialog(null)}>取消</button>
+                        <button type="button" className="primary" onClick={confirmManualConflictReplace}>確認更換</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : null}
+
+              {manualCustomDialog ? (
+                <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                  <div className="manual-modal">
+                    <h3>自訂人選</h3>
+                    <input value={manualCustomKeyword} onChange={(e) => setManualCustomKeyword(e.target.value)} placeholder="搜尋姓名或工號" autoFocus />
+                    <div className="manual-custom-results">
+                      {manualCustomCandidates.length ? manualCustomCandidates.map((person) => (
+                        <div className="manual-custom-result" key={person.id}>
+                          <div><strong>{person.name}</strong><br /><span className="muted">{person.id}｜{String(getTeamOfPerson(person))}｜{person.nationality}</span></div>
+                          <button type="button" onClick={() => addManualCustomPerson(person.id)}>加入</button>
+                        </div>
+                      )) : <p className="muted">找不到符合的人員。</p>}
+                    </div>
+                    <div className="manual-modal-actions">
+                      <button type="button" className="ghost" onClick={() => { setManualCustomDialog(null); setManualCustomKeyword(""); }}>關閉</button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </Layout>
           ) : null}
           {currentRole && page === "station-rules" && hasAccess("主任") ? <Layout title="站點規則設定" subtitle="此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></Layout> : null}
