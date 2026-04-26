@@ -37,32 +37,52 @@ function hideSummaryBlocks(section: Element) {
     }
   });
 
-  blocks.forEach((block) => block.classList.add("safe-schedule-summary-hidden"));
+  blocks.forEach((block) => {
+    block.classList.add("safe-schedule-summary-hidden");
+    const parent = block.parentElement;
+    if (!parent || parent.classList.contains("page-section")) return;
+    const parentText = normalizeText(parent.textContent || "");
+    if (summaryLabels.some((label) => parentText.includes(normalizeText(label))) && parent.querySelectorAll("select, button.primary, h2, h3").length === 0) {
+      parent.classList.add("safe-schedule-empty-panel-hidden");
+    }
+  });
 }
 
 function getButtonText(node: HTMLElement) {
   return normalizeText(node.querySelector("strong")?.textContent || node.textContent || "");
 }
 
-function getMainButtonNames(list: HTMLElement) {
-  const names = new Set<string>();
-  list.querySelectorAll<HTMLElement>(".list-row, .candidate-chip").forEach((button) => {
-    const name = getButtonText(button);
-    if (name) names.add(name);
-  });
-  return names;
-}
-
 function hideDuplicateMiniLabels(panel: Element, list: HTMLElement) {
-  const mainNames = getMainButtonNames(list);
-  if (mainNames.size === 0) return;
-
-  panel.querySelectorAll<HTMLElement>(".candidate-chip, .chip, .tag, .pill, button").forEach((node) => {
-    if (list.contains(node)) return;
+  const allButtons = Array.from(panel.querySelectorAll<HTMLElement>(".list-row, .candidate-chip, .chip, .tag, .pill, button")).filter((node) => {
+    if (node.textContent?.includes("自訂人選")) return false;
+    if (node.textContent?.includes("需求")) return false;
     const text = getButtonText(node);
-    if (!text || !mainNames.has(text)) return;
-    if (text.includes("自訂人選") || text.includes("需求")) return;
-    node.classList.add("safe-schedule-mini-hidden");
+    return Boolean(text);
+  });
+
+  const byName = new Map<string, HTMLElement[]>();
+  allButtons.forEach((button) => {
+    const text = getButtonText(button);
+    if (!text) return;
+    byName.set(text, [...(byName.get(text) || []), button]);
+  });
+
+  byName.forEach((buttons) => {
+    if (buttons.length <= 1) return;
+    const visibleButtons = buttons.filter((button) => !button.classList.contains("safe-schedule-mini-hidden"));
+    const keep = visibleButtons.reduce((best, current) => {
+      const bestRect = best.getBoundingClientRect();
+      const currentRect = current.getBoundingClientRect();
+      const bestScore = bestRect.width * bestRect.height;
+      const currentScore = currentRect.width * currentRect.height;
+      return currentScore >= bestScore ? current : best;
+    }, visibleButtons[0]);
+
+    buttons.forEach((button) => {
+      if (button === keep) return;
+      if (list.contains(button) && button.classList.contains("active")) return;
+      button.classList.add("safe-schedule-mini-hidden");
+    });
   });
 }
 
@@ -71,13 +91,15 @@ function ensureSectionStyle() {
   const style = document.createElement("style");
   style.id = "safe-schedule-section-runtime-style";
   style.textContent = `
-    .safe-schedule-summary-hidden {
+    .safe-schedule-summary-hidden,
+    .safe-schedule-empty-panel-hidden {
       display: none !important;
       visibility: hidden !important;
       height: 0 !important;
       min-height: 0 !important;
       margin: 0 !important;
       padding: 0 !important;
+      border: 0 !important;
       overflow: hidden !important;
     }
     .safe-schedule-mini-hidden {
@@ -215,7 +237,6 @@ export function installScheduleSectionRuntime() {
     }, 100);
   };
 
-  document.addEventListener("click", scheduleUpdate, true);
   document.addEventListener("change", scheduleUpdate, true);
   window.addEventListener("resize", scheduleUpdate);
 
