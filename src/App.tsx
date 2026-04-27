@@ -68,12 +68,19 @@ const permissionEligibleJobs = new Set(["領班", "組長", "主任", "站長"])
 const officerRoleOrder = ["主任", "組長", "領班", "站長"] as const;
 type OfficerRole = (typeof officerRoleOrder)[number];
 type SchedulePreviewStyle = "card" | "table" | "share" | "section";
+type ManualExtraWork = { id: string; workName: string; personIds: string[] };
+
 
 const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: string }> = [
   { key: "card", label: "卡片版" },
   { key: "table", label: "表格版" },
-  { key: "share", label: "分享圖卡" },
-  { key: "section", label: "分區色塊" },
+  { key: "share", label: "可愛圖卡" },
+  { key: "section", label: "海報版" },
+];
+
+const initialManualExtraWorks: ManualExtraWork[] = [
+  { id: "manual-extra-work-1", workName: "", personIds: [] },
+  { id: "manual-extra-work-2", workName: "", personIds: [] },
 ];
 
 function cleanScheduleStationName(raw?: string) {
@@ -83,6 +90,42 @@ function cleanScheduleStationName(raw?: string) {
     .replace(/^站點[\s_\-－—、.．:：]*\d{1,4}[\s_\-－—、.．:：]+/, "")
     .trim();
   return cleaned || value || "未命名站點";
+}
+
+function getScheduleStationEnglishName(station?: AppBootstrap["stations"][number] | null) {
+  if (!station) return "";
+  const raw = station as unknown as Record<string, unknown>;
+  const direct = String(
+    raw.englishCode ??
+      raw.stationEnglishCode ??
+      raw.stationCodeEn ??
+      raw.codeEn ??
+      raw["英文代號"] ??
+      raw["站點英文代號"] ??
+      raw["英文代碼"] ??
+      raw["站點英文代碼"] ??
+      raw.englishName ??
+      raw.stationEnglishName ??
+      raw.nameEn ??
+      raw.enName ??
+      raw["英文名稱"] ??
+      raw["站點英文"] ??
+      raw["英文站點名稱"] ??
+      ""
+  ).trim();
+  if (direct) return direct;
+
+  const noteText = [station.description, station.note].map((item) => String(item || "")).join(" ");
+  const bracketMatch = noteText.match(/[（(]([A-Za-z][A-Za-z0-9 ,/&+\-]{2,})[）)]/);
+  if (bracketMatch) return bracketMatch[1].trim();
+  const labelMatch = noteText.match(/(?:英文|English|EN)\s*[:：]\s*([A-Za-z][A-Za-z0-9 ,/&+\-]{2,})/i);
+  return labelMatch ? labelMatch[1].trim() : "";
+}
+
+function getScheduleStationDisplayName(station?: AppBootstrap["stations"][number] | null) {
+  const zhName = cleanScheduleStationName(station?.name);
+  const enName = getScheduleStationEnglishName(station);
+  return enName ? `${zhName}（${enName}）` : zhName;
 }
 
 function normalizeOfficerRole(raw?: string): OfficerRole | null {
@@ -225,17 +268,19 @@ export default function App() {
   const [manualTrainingDialog, setManualTrainingDialog] = useState<null | { stationId: string; personId: string; currentStatus: string }>(null);
   const [manualCustomKeyword, setManualCustomKeyword] = useState("");
   const [manualOfficerStations, setManualOfficerStations] = useState<Record<string, string>>({});
+  const [manualExtraWorks, setManualExtraWorks] = useState<ManualExtraWork[]>(() => initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
   const [manualPreviewOpen, setManualPreviewOpen] = useState(false);
   const [manualPreviewStyle, setManualPreviewStyle] = useState<SchedulePreviewStyle>("card");
 
   const hasManualAssignments = useMemo(
-    () => Object.values(manualAssignments).some((list) => list.length > 0),
-    [manualAssignments]
+    () => Object.values(manualAssignments).some((list) => list.length > 0) || manualExtraWorks.some((item) => item.workName.trim() || item.personIds.length > 0),
+    [manualAssignments, manualExtraWorks]
   );
 
   function applyManualSwitch(type: "shift" | "day" | "mode", value: TeamName | ShiftMode | SmartScheduleMode) {
     setManualAssignments({});
     setManualOfficerStations({});
+    setManualExtraWorks(initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
     setManualPreviewOpen(false);
     if (type === "shift") setManualShift(value as TeamName);
     if (type === "day") setManualDay(value as ShiftMode);
@@ -385,6 +430,7 @@ export default function App() {
 
   useEffect(() => {
     setManualAssignments({});
+    setManualExtraWorks(initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
   }, [manualShift, manualDay]);
 
   useEffect(() => {
@@ -496,35 +542,59 @@ export default function App() {
   const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, "當班", data.stationRules || []), [rulesTeam, data.stationRules]);
 
   const manualSummary = useMemo(() => getAssignmentSummary(manualAssignments, manualRules), [manualAssignments, manualRules]);
-  const manualEffectiveAssigned = manualSummary.assigned + manualCountedOfficerCount;
+  const manualExtraAssignedCount = useMemo(() => new Set(manualExtraWorks.flatMap((item) => item.personIds)).size, [manualExtraWorks]);
+  const manualEffectiveAssigned = manualSummary.assigned + manualCountedOfficerCount + manualExtraAssignedCount;
   const manualCountableTotal = Math.max(0, manualAttendance.totalCount - manualDirectorCount);
   const manualPendingCount = Math.max(0, manualCountableTotal - manualEffectiveAssigned);
   const manualSchedulePreview = useMemo(() => {
     const peopleById = new Map(data.people.map((person) => [person.id, person]));
     const uniqueNames = (names: string[]) => Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+    const activeTeamPeople = data.people.filter((person) => {
+      const employment = String(person.employmentStatus || "").trim();
+      const isInactive = employment.includes("離職") || employment.includes("停用") || employment.toUpperCase() === "N";
+      return !isInactive && getTeamOfPerson(person) === manualShift;
+    });
+    const officerNamesByRole = (role: OfficerRole) => uniqueNames(
+      activeTeamPeople
+        .filter((person) => normalizeOfficerRole(person.role) === role)
+        .map((person) => person.name)
+    );
     return {
       team: manualShift,
       officers: {
-        主任: uniqueNames(manualOfficerGroups.主任.map((person) => person.name)),
-        組長: uniqueNames(manualOfficerGroups.組長.map((person) => person.name)),
-        領班: uniqueNames(manualOfficerGroups.領班.map((person) => person.name)),
+        主任: officerNamesByRole("主任"),
+        組長: officerNamesByRole("組長"),
+        領班: officerNamesByRole("領班"),
       },
-      rows: manualRules.map((rule) => {
-        const station = data.stations.find((item) => item.id === rule.stationId);
-        const assignedNames = (manualAssignments[rule.stationId] || [])
-          .map((id) => peopleById.get(id)?.name || "")
-          .filter(Boolean);
-        const stationOfficerNames = manualOfficerGroups.站長
-          .filter((person) => manualOfficerStations[person.id] === rule.stationId)
-          .map((person) => person.name);
-        return {
-          stationId: rule.stationId,
-          stationName: cleanScheduleStationName(station?.name),
-          people: uniqueNames([...assignedNames, ...stationOfficerNames]),
-        };
-      }),
+      rows: [
+        ...manualRules.map((rule) => {
+          const station = data.stations.find((item) => item.id === rule.stationId);
+          const assignedNames = (manualAssignments[rule.stationId] || [])
+            .map((id) => peopleById.get(id)?.name || "")
+            .filter(Boolean);
+          const selectedOfficerNames = manualOfficerPeople
+            .filter((person) => manualOfficerStations[person.id] === rule.stationId)
+            .map((person) => person.name);
+          return {
+            stationId: rule.stationId,
+            stationName: getScheduleStationDisplayName(station),
+            people: uniqueNames([...assignedNames, ...selectedOfficerNames]),
+          };
+        }),
+        ...manualExtraWorks
+          .map((item, index) => {
+            const stationName = item.workName.trim() || `自訂工作 ${index + 1}`;
+            const people = item.personIds.map((id) => peopleById.get(id)?.name || "").filter(Boolean);
+            return {
+              stationId: item.id,
+              stationName,
+              people: uniqueNames(people),
+            };
+          })
+          .filter((row) => row.stationName || row.people.length > 0),
+      ],
     };
-  }, [data.people, data.stations, manualAssignments, manualOfficerGroups, manualOfficerStations, manualRules, manualShift]);
+  }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
 
   function hasAccess(minRole?: UserRole) {
@@ -797,6 +867,27 @@ export default function App() {
     setManualCustomKeyword("");
   }
 
+  function updateManualExtraWork(id: string, patch: Partial<ManualExtraWork>) {
+    setManualExtraWorks((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  function addManualExtraPerson(extraId: string, personId: string) {
+    if (!personId) return;
+    setManualExtraWorks((current) => current.map((item) => {
+      if (item.id !== extraId) return item;
+      if (item.personIds.includes(personId)) return item;
+      return { ...item, personIds: [...item.personIds, personId] };
+    }));
+  }
+
+  function removeManualExtraPerson(extraId: string, personId: string) {
+    setManualExtraWorks((current) => current.map((item) => item.id === extraId ? { ...item, personIds: item.personIds.filter((id) => id !== personId) } : item));
+  }
+
+  function isPersonUsedInManualExtra(personId: string, currentExtraId?: string) {
+    return manualExtraWorks.some((item) => item.id !== currentExtraId && item.personIds.includes(personId));
+  }
+
   function buildManualSchedulePreviewText() {
     const lines: string[] = [];
     lines.push(manualSchedulePreview.team);
@@ -841,9 +932,121 @@ export default function App() {
     }
   }
 
+  function wrapCanvasText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+    const chars = Array.from(text || "-");
+    const lines: string[] = [];
+    let current = "";
+    chars.forEach((char) => {
+      const next = current + char;
+      if (ctx.measureText(next).width > maxWidth && current) {
+        lines.push(current);
+        current = char;
+      } else {
+        current = next;
+      }
+    });
+    if (current) lines.push(current);
+    return lines.length ? lines : ["-"];
+  }
+
+  function downloadManualSchedulePreviewImage() {
+    if (typeof document === "undefined") return;
+    const scale = 2;
+    const width = 900;
+    const padding = 54;
+    const rowGap = manualPreviewStyle === "table" ? 14 : 18;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setFlashMessage("此瀏覽器不支援產生班表圖片。");
+      return;
+    }
+
+    ctx.font = "30px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    const rowHeights = manualSchedulePreview.rows.map((row) => {
+      const lines = wrapCanvasText(ctx, row.people.join("、") || "-", width - padding * 2 - 36);
+      return Math.max(88, 56 + lines.length * 36);
+    });
+    const height = Math.max(860, 260 + rowHeights.reduce((sum, item) => sum + item + rowGap, 0));
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.scale(scale, scale);
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    if (manualPreviewStyle === "share") {
+      gradient.addColorStop(0, "#fff7ed");
+      gradient.addColorStop(0.5, "#fef3f2");
+      gradient.addColorStop(1, "#eefdf5");
+    } else if (manualPreviewStyle === "section") {
+      gradient.addColorStop(0, "#172033");
+      gradient.addColorStop(1, "#334155");
+    } else {
+      gradient.addColorStop(0, "#f8fafc");
+      gradient.addColorStop(1, "#edf2f7");
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, width, height);
+
+    const isPoster = manualPreviewStyle === "section";
+    const textMain = isPoster ? "#ffffff" : "#0f172a";
+    const textSub = isPoster ? "#dbeafe" : "#475569";
+
+    ctx.fillStyle = textMain;
+    ctx.font = "800 46px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText(`${manualSchedulePreview.team} 班表`, padding, 84);
+
+    ctx.font = "700 26px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillStyle = textSub;
+    ctx.fillText(`主任　${manualSchedulePreview.officers.主任.join("、") || "-"}`, padding, 130);
+    ctx.fillText(`組長　${manualSchedulePreview.officers.組長.join("、") || "-"}`, padding, 170);
+    ctx.fillText(`領班　${manualSchedulePreview.officers.領班.join("、") || "-"}`, padding, 210);
+
+    let y = 250;
+    manualSchedulePreview.rows.forEach((row, index) => {
+      const rowHeight = rowHeights[index];
+      const x = padding;
+      const w = width - padding * 2;
+      const r = 28;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, rowHeight, r);
+      ctx.fillStyle = manualPreviewStyle === "share"
+        ? ["#ffffff", "#fff8e7", "#f0fdf4", "#fdf2f8"][index % 4]
+        : isPoster
+          ? "rgba(255,255,255,.12)"
+          : "#ffffff";
+      ctx.fill();
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = isPoster ? "rgba(255,255,255,.22)" : "#e2e8f0";
+      ctx.stroke();
+
+      ctx.fillStyle = isPoster ? "#ffffff" : "#172033";
+      ctx.font = "800 30px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      ctx.fillText(row.stationName, x + 28, y + 40);
+
+      ctx.fillStyle = isPoster ? "#e2e8f0" : "#334155";
+      ctx.font = "700 28px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      const lines = wrapCanvasText(ctx, row.people.join("、") || "-", w - 56);
+      lines.forEach((line, lineIndex) => {
+        ctx.fillText(line, x + 28, y + 82 + lineIndex * 36);
+      });
+      y += rowHeight + rowGap;
+    });
+
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    link.download = `${manualSchedulePreview.team}-站點班表-${date}.png`;
+    link.href = canvas.toDataURL("image/png");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setFlashMessage("班表圖片已產生，請依瀏覽器提示下載或分享。手機瀏覽器通常無法靜默自動存入相簿。");
+  }
+
   function confirmManualSchedulePreview() {
+    downloadManualSchedulePreviewImage();
     setManualPreviewOpen(false);
-    setFlashMessage("班表已確認完成。 ");
   }
 
   async function handleCustomAssign(target: "manual" | "smart", stationId: string) {
@@ -1071,6 +1274,14 @@ export default function App() {
                 .manual-officer-station { display: inline-flex; align-items: center; gap: 8px; padding: 6px; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
                 .manual-officer-station select { width: auto; min-width: 126px; min-height: 42px; border-radius: 14px; padding: 6px 10px; font-size: 16px; }
                 .manual-officer-note { margin: 10px 0 0; color: #64748b; font-weight: 800; line-height: 1.6; }
+                .manual-extra-work-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+                .manual-extra-work-card { border: 1px dashed #93c5fd; border-radius: 20px; background: linear-gradient(135deg, #f8fbff, #eff6ff); padding: 14px; }
+                .manual-extra-work-card h3 { margin: 0 0 10px; color: #0f172a; font-size: 20px; font-weight: 950; }
+                .manual-extra-work-card label { display: grid; gap: 6px; color: #475569; font-weight: 900; margin-bottom: 10px; }
+                .manual-extra-work-card input, .manual-extra-work-card select { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 14px; min-height: 44px; padding: 9px 12px; font-size: 16px; background: #fff; }
+                .manual-extra-selected { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+                .manual-extra-selected button { border: 0; border-radius: 999px; padding: 8px 12px; background: #dbeafe; color: #1d4ed8; font-weight: 950; cursor: pointer; }
+                .manual-extra-note { color: #64748b; font-weight: 800; line-height: 1.6; margin: 10px 0 0; }
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
                 .manual-floating-tip-react button { display: block; width: 100%; margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
@@ -1108,13 +1319,21 @@ export default function App() {
                 .schedule-table-preview td { padding: 12px; background: #fff; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; font-weight: 850; }
                 .schedule-table-preview td:first-child { border-left: 1px solid #e2e8f0; border-radius: 14px 0 0 14px; color: #0f172a; white-space: nowrap; }
                 .schedule-table-preview td:last-child { border-right: 1px solid #e2e8f0; border-radius: 0 14px 14px 0; color: #334155; }
-                .schedule-share-card { background: linear-gradient(180deg, #ffffff 0%, #f4efe8 100%); border-color: #eadfce; padding: 20px; }
-                .schedule-share-card .schedule-card-row { border: 0; background: rgba(255,255,255,.78); box-shadow: 0 8px 22px rgba(15, 23, 42, .06); }
-                .schedule-section-block { margin-top: 12px; border-radius: 20px; background: #fff; border: 1px solid #e2e8f0; padding: 12px; }
-                .schedule-section-block h5 { display: inline-flex; margin: 0 0 10px; padding: 8px 14px; border-radius: 999px; background: #e7f0ec; color: #334155; font-size: 15px; font-weight: 950; }
-                .schedule-section-item { display: grid; grid-template-columns: minmax(86px, .35fr) 1fr; gap: 12px; padding: 10px 4px; border-top: 1px solid #edf2f7; }
-                .schedule-section-item strong { color: #0f172a; font-weight: 950; }
-                .schedule-section-item span { color: #334155; font-weight: 850; line-height: 1.55; }
+                .schedule-share-card { position: relative; overflow: hidden; background: linear-gradient(160deg, #fff7ed 0%, #fef3f2 46%, #eefdf5 100%); border-color: #fed7aa; padding: 20px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.72); }
+                .schedule-share-card::before { content: "✦"; position: absolute; top: 12px; right: 20px; color: #f59e0b; font-size: 28px; opacity: .75; }
+                .schedule-share-card::after { content: "♡"; position: absolute; bottom: 16px; right: 28px; color: #fb7185; font-size: 34px; opacity: .5; }
+                .schedule-share-card .schedule-officers { background: rgba(255,255,255,.78); border-color: rgba(251, 146, 60, .25); }
+                .schedule-share-card .schedule-card-list { gap: 12px; }
+                .schedule-share-card .schedule-card-row { border: 0; background: rgba(255,255,255,.82); box-shadow: 0 10px 24px rgba(180, 83, 9, .10); transform: rotate(-.25deg); }
+                .schedule-share-card .schedule-card-row:nth-child(even) { transform: rotate(.25deg); background: rgba(255, 251, 235, .9); }
+                .schedule-poster-card { background: linear-gradient(160deg, #172033 0%, #263b54 100%); border-color: rgba(255,255,255,.18); color: #fff; padding: 20px; }
+                .schedule-poster-card h4 { color: #fff; letter-spacing: .04em; }
+                .schedule-poster-card .schedule-officers { background: rgba(255,255,255,.10); border-color: rgba(255,255,255,.18); }
+                .schedule-poster-card .schedule-officers div { color: #e2e8f0; }
+                .schedule-poster-list { display: grid; gap: 10px; margin-top: 14px; }
+                .schedule-poster-row { display: grid; grid-template-columns: minmax(90px, .36fr) 1fr; gap: 12px; align-items: start; padding: 13px 14px; border-radius: 18px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.16); }
+                .schedule-poster-row strong { color: #fff; font-size: 17px; font-weight: 950; }
+                .schedule-poster-row span { color: #dbeafe; font-size: 16px; font-weight: 850; line-height: 1.6; }
                 .mobile-modal-header { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .95); }
                 .mobile-modal-close { position: sticky; top: 8px; z-index: 6; }
                 .mobile-modal-fab-close { position: sticky; bottom: 14px; z-index: 6; }
@@ -1126,6 +1345,7 @@ export default function App() {
                   .manual-officer-chip { min-height: 46px; font-size: 17px; }
                   .manual-officer-station { width: 100%; justify-content: space-between; box-sizing: border-box; }
                   .manual-officer-station select { flex: 1; min-width: 0; }
+                  .manual-extra-work-grid { grid-template-columns: 1fr; }
                   .manual-modal { width: calc(100vw - 24px); max-height: 84dvh; padding: 16px; }
                   .manual-modal h3 { top: -16px; margin: -16px -16px 12px; padding: 16px 16px 12px; }
                   .manual-modal-actions { bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
@@ -1134,7 +1354,7 @@ export default function App() {
                   .manual-preview-title-row h3 { font-size: 22px; }
                   .schedule-paper { padding: 12px; border-radius: 20px; }
                   .schedule-paper h4 { font-size: 24px; }
-                  .schedule-section-item { grid-template-columns: 1fr; gap: 4px; }
+                  .schedule-poster-row { grid-template-columns: 1fr; gap: 4px; }
                   .schedule-table-preview { min-width: 520px; }
                   .schedule-table-wrap { overflow-x: auto; }
                 }
@@ -1197,6 +1417,53 @@ export default function App() {
                   })}
                 </div>
                 <p className="manual-officer-note">幹部站位會先保留出勤人力；主任僅顯示姓名，不列入待排人力計算。</p>
+              </div>
+
+              <div className="panel manual-extra-work-panel">
+                <h3>自訂工作</h3>
+                <p className="manual-extra-note">提供 2 個臨時空白欄位，適合安排不屬於固定站點的額外工作；只會進入本次班表與圖片，不會寫入主檔站點。</p>
+                <div className="manual-extra-work-grid">
+                  {manualExtraWorks.map((extra, index) => {
+                    const selectedPeople = extra.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
+                    const usedAssignedIds = new Set([
+                      ...Object.values(manualAssignments).flat(),
+                      ...manualOfficerPeople.map((person) => person.id),
+                    ]);
+                    const availablePeople = manualAttendance.all
+                      .filter((person) => !usedAssignedIds.has(person.id) || extra.personIds.includes(person.id))
+                      .filter((person) => !isPersonUsedInManualExtra(person.id, extra.id) || extra.personIds.includes(person.id))
+                      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }));
+                    return (
+                      <div className="manual-extra-work-card" key={extra.id}>
+                        <h3>自訂欄位 {index + 1}</h3>
+                        <label>
+                          自訂工作
+                          <input
+                            value={extra.workName}
+                            placeholder="例如：搬料、清潔、支援外務"
+                            onChange={(event) => updateManualExtraWork(extra.id, { workName: event.target.value })}
+                          />
+                        </label>
+                        <label>
+                          自訂人員
+                          <select value="" onChange={(event) => addManualExtraPerson(extra.id, event.target.value)}>
+                            <option value="">選擇人員加入</option>
+                            {availablePeople.map((person) => (
+                              <option key={person.id} value={person.id}>{person.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <div className="manual-extra-selected">
+                          {selectedPeople.length ? selectedPeople.map((person) => (
+                            <button key={person.id} type="button" onClick={() => removeManualExtraPerson(extra.id, person.id)} title="點擊移除">
+                              {person.name} ×
+                            </button>
+                          )) : <span className="muted">尚未加入人員</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
               {manualRules.length ? (
@@ -1277,7 +1544,7 @@ export default function App() {
                     <div className="manual-preview-title-row">
                       <div>
                         <h3>班表預覽</h3>
-                        <p>可切換樣式；班表只顯示班別、幹部、站點名稱與人名。</p>
+                        <p>可切換樣式；班表只顯示班別、幹部、站點名稱與人名，站點英文名會以括號標示。</p>
                       </div>
                       <button type="button" className="manual-preview-close" aria-label="關閉班表預覽" onClick={() => setManualPreviewOpen(false)}>×</button>
                     </div>
@@ -1347,28 +1614,21 @@ export default function App() {
                     ) : null}
 
                     {manualPreviewStyle === "section" ? (
-                      <div className="schedule-paper">
-                        <h4>{manualSchedulePreview.team}</h4>
+                      <div className="schedule-paper schedule-poster-card">
+                        <h4>{manualSchedulePreview.team} 班表</h4>
                         <div className="schedule-officers">
                           <div>主任　{manualSchedulePreview.officers.主任.join("、") || "-"}</div>
                           <div>組長　{manualSchedulePreview.officers.組長.join("、") || "-"}</div>
                           <div>領班　{manualSchedulePreview.officers.領班.join("、") || "-"}</div>
                         </div>
-                        {[
-                          { title: "前段站點", rows: manualSchedulePreview.rows.slice(0, Math.ceil(manualSchedulePreview.rows.length / 3)) },
-                          { title: "中段站點", rows: manualSchedulePreview.rows.slice(Math.ceil(manualSchedulePreview.rows.length / 3), Math.ceil(manualSchedulePreview.rows.length * 2 / 3)) },
-                          { title: "後段站點", rows: manualSchedulePreview.rows.slice(Math.ceil(manualSchedulePreview.rows.length * 2 / 3)) },
-                        ].filter((group) => group.rows.length > 0).map((group) => (
-                          <div className="schedule-section-block" key={group.title}>
-                            <h5>{group.title}</h5>
-                            {group.rows.map((row) => (
-                              <div className="schedule-section-item" key={row.stationId}>
-                                <strong>{row.stationName}</strong>
-                                <span>{row.people.join("、") || "-"}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ))}
+                        <div className="schedule-poster-list">
+                          {manualSchedulePreview.rows.map((row) => (
+                            <div className="schedule-poster-row" key={row.stationId}>
+                              <strong>{row.stationName}</strong>
+                              <span>{row.people.join("、") || "-"}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     ) : null}
 
@@ -1376,7 +1636,7 @@ export default function App() {
                       <button type="button" className="ghost" onClick={() => setManualPreviewOpen(false)}>返回修改</button>
                       <button type="button" className="ghost" onClick={copyManualSchedulePreview}>複製文字</button>
                       <button type="button" className="primary" onClick={shareManualSchedulePreview}>系統分享</button>
-                      <button type="button" className="primary" onClick={confirmManualSchedulePreview}>確認完成</button>
+                      <button type="button" className="primary" onClick={confirmManualSchedulePreview}>確認完成並下載圖片</button>
                     </div>
                   </div>
                 </div>
