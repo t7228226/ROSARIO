@@ -495,13 +495,13 @@ export default function App() {
     }
   }
 
-  async function persistQualification(employee: Person, stationId: string, status: QualificationStatus) {
+  async function persistQualification(employee: Person, stationId: string, status: QualificationStatus, confirmBeforeSave = true) {
     const station = data.stations.find((item) => item.id === stationId);
     if (!station) {
       setFlashMessage("找不到指定站點。");
       return false;
     }
-    if (!confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${status || "空白"}」？`)) {
+    if (confirmBeforeSave && !confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${status || "空白"}」？`)) {
       setFlashMessage("已取消修改。");
       return false;
     }
@@ -685,7 +685,8 @@ export default function App() {
       return;
     }
 
-    const ok = await persistQualification(person, stationId, "訓練中");
+    setManualTrainingDialog(null);
+    const ok = await persistQualification(person, stationId, "訓練中", false);
     if (!ok) return;
 
     setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
@@ -695,7 +696,6 @@ export default function App() {
 
     assignManualPerson(stationId, person.id, false);
     setFlashMessage(`${person.name} 已加入 ${station.name}，並同步建立訓練中考核資料。`);
-    setManualTrainingDialog(null);
     setManualCustomDialog(null);
     setManualCustomKeyword("");
   }
@@ -809,11 +809,11 @@ export default function App() {
 
   const allowedNav = currentRole ? navItems.filter((item) => hasAccess(item.minRole)) : navItems.filter((item) => item.key === "home");
 
-  if (loading) return <div className="app-shell loading">資料載入中...</div>;
+  if (loading) return <div className="app-shell loading" translate="no">資料載入中...</div>;
 
   return (
     <>
-      <div className="app-shell">
+      <div className="app-shell" translate="no">
         <aside className="sidebar">
           <div className="brand-card">
             <div className="brand-kicker">通用型檢測系統</div>
@@ -868,6 +868,7 @@ export default function App() {
                 <div className="panel" ref={personDetailRef}>
                   {selectedEmployee ? <PersonDetailView person={selectedEmployee} qualifications={selectedEmployeeQualifications} /> : <Empty text="此班別目前沒有可顯示人員。" />}
                 </div>
+              </div>
               </div>
             </Layout>
           ) : null}
@@ -941,6 +942,7 @@ export default function App() {
           {currentRole && page === "gap-analysis" && hasAccess("組長") ? <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></Layout> : null}
           {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
             <Layout title="站點試排" subtitle="正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。">
+              <div translate="no">
               <style>{`
                 .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
@@ -950,7 +952,7 @@ export default function App() {
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
-                .manual-floating-tip-react button { margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
+                .manual-floating-tip-react button { display: block; width: 100%; margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
                 .manual-modal-backdrop-top { z-index: 900 !important; background: rgba(15, 23, 42, .58); }
                 .manual-modal-backdrop-top .manual-modal { box-shadow: 0 30px 80px rgba(15, 23, 42, .42); }
@@ -1077,11 +1079,12 @@ export default function App() {
                   <div>已排:{manualSummary.assigned}</div>
                   <div>待排:{Math.max(0, manualAttendance.totalCount - manualSummary.assigned)}</div>
                   <button type="button" onClick={completeManualSchedule}>安排完成</button>
+                  <button type="button" onClick={() => scrollToTop()}>回到頂部</button>
                 </div>
               ) : null}
 
               {manualResetDialog ? (
-                <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
                   <div className="manual-modal">
                     <h3>重置目前站點試排？</h3>
                     <p>更換班別 / 日別 / 模式會清空目前已安排人員，是否繼續？</p>
@@ -1098,7 +1101,7 @@ export default function App() {
                 const oldStation = data.stations.find((item) => item.id === manualConflictDialog.assignedStationId);
                 const nextStation = data.stations.find((item) => item.id === manualConflictDialog.stationId);
                 return (
-                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
                     <div className="manual-modal">
                       <h3>更換站點？</h3>
                       <p>{person?.name || manualConflictDialog.employeeId} 已安排在「{oldStation?.name || manualConflictDialog.assignedStationId}」，是否更換到「{nextStation?.name || manualConflictDialog.stationId}」？</p>
@@ -1115,7 +1118,7 @@ export default function App() {
                 const person = data.people.find((item) => item.id === manualTrainingDialog.personId);
                 const station = data.stations.find((item) => item.id === manualTrainingDialog.stationId);
                 return (
-                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true">
+                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true" translate="no">
                     <div className="manual-modal">
                       <h3>加入訓練人員？</h3>
                       <p><strong>{person?.name || manualTrainingDialog.personId}</strong> 目前在「{station?.name || manualTrainingDialog.stationId}」{manualTrainingDialog.currentStatus === "無站點資格" ? "沒有站點資格" : `狀態為「${manualTrainingDialog.currentStatus}」`}。</p>
@@ -1130,7 +1133,7 @@ export default function App() {
               })() : null}
 
               {manualCustomDialog ? (
-                <div className="manual-modal-backdrop" role="dialog" aria-modal="true">
+                <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
                   <div className="manual-modal">
                     <h3>自訂人選</h3>
                     <input value={manualCustomKeyword} onChange={(e) => setManualCustomKeyword(e.target.value)} placeholder="搜尋姓名或工號" autoFocus />
@@ -1148,6 +1151,7 @@ export default function App() {
                   </div>
                 </div>
               ) : null}
+              </div>
             </Layout>
           ) : null}
           {currentRole && page === "station-rules" && hasAccess("主任") ? <Layout title="站點規則設定" subtitle="此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></Layout> : null}
