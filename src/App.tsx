@@ -269,6 +269,8 @@ export default function App() {
   const [manualCustomKeyword, setManualCustomKeyword] = useState("");
   const [manualOfficerStations, setManualOfficerStations] = useState<Record<string, string>>({});
   const [manualExtraWorks, setManualExtraWorks] = useState<ManualExtraWork[]>(() => initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
+  const [manualExtraDialog, setManualExtraDialog] = useState<null | { extraId: string }>(null);
+  const [manualExtraKeyword, setManualExtraKeyword] = useState("");
   const [manualPreviewOpen, setManualPreviewOpen] = useState(false);
   const [manualPreviewStyle, setManualPreviewStyle] = useState<SchedulePreviewStyle>("card");
 
@@ -281,6 +283,8 @@ export default function App() {
     setManualAssignments({});
     setManualOfficerStations({});
     setManualExtraWorks(initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
+    setManualExtraDialog(null);
+    setManualExtraKeyword("");
     setManualPreviewOpen(false);
     if (type === "shift") setManualShift(value as TeamName);
     if (type === "day") setManualDay(value as ShiftMode);
@@ -431,6 +435,8 @@ export default function App() {
   useEffect(() => {
     setManualAssignments({});
     setManualExtraWorks(initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
+    setManualExtraDialog(null);
+    setManualExtraKeyword("");
   }, [manualShift, manualDay]);
 
   useEffect(() => {
@@ -911,6 +917,44 @@ export default function App() {
   function isPersonUsedInManualExtra(personId: string, currentExtraId?: string) {
     return manualExtraWorks.some((item) => item.id !== currentExtraId && item.personIds.includes(personId));
   }
+
+  function openManualExtraDialog(extraId: string) {
+    setManualExtraDialog({ extraId });
+    setManualExtraKeyword("");
+  }
+
+  function closeManualExtraDialog() {
+    setManualExtraDialog(null);
+    setManualExtraKeyword("");
+  }
+
+  function clearManualExtraWork(extraId: string) {
+    updateManualExtraWork(extraId, { workName: "", personIds: [] });
+    setManualExtraKeyword("");
+  }
+
+  const manualExtraDialogItem = useMemo(() => {
+    if (!manualExtraDialog) return null;
+    return manualExtraWorks.find((item) => item.id === manualExtraDialog.extraId) || null;
+  }, [manualExtraDialog, manualExtraWorks]);
+
+  const manualExtraCandidates = useMemo(() => {
+    if (!manualExtraDialogItem) return [] as Person[];
+    const keyword = manualExtraKeyword.trim().toLowerCase();
+    const usedAssignedIds = new Set([
+      ...Object.values(manualAssignments).flat(),
+      ...manualOfficerPeople.map((person) => person.id),
+    ]);
+    return manualAttendance.all
+      .filter((person) => !usedAssignedIds.has(person.id) || manualExtraDialogItem.personIds.includes(person.id))
+      .filter((person) => !isPersonUsedInManualExtra(person.id, manualExtraDialogItem.id) || manualExtraDialogItem.personIds.includes(person.id))
+      .filter((person) => {
+        if (!keyword) return true;
+        return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }))
+      .slice(0, 50);
+  }, [manualAttendance.all, manualAssignments, manualOfficerPeople, manualExtraDialogItem, manualExtraKeyword, manualExtraWorks]);
 
   function buildManualSchedulePreviewText() {
     const lines: string[] = [];
@@ -1469,19 +1513,35 @@ export default function App() {
                 .manual-officer-row { display: grid; grid-template-columns: 88px 1fr; gap: 12px; align-items: start; }
                 .manual-officer-title { font-size: 22px; font-weight: 950; color: #0f172a; padding-top: 9px; }
                 .manual-officer-list { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+                .manual-officer-list.station-leader-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-items: stretch; width: 100%; }
                 .manual-officer-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 76px; padding: 8px 16px; border-radius: 999px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; font-size: 18px; font-weight: 900; white-space: nowrap; }
                 .manual-officer-chip.station-leader { background: #dcfce7; border-color: #22c55e; color: #166534; box-shadow: 0 2px 10px rgba(34, 197, 94, .16); }
                 .manual-officer-station { display: inline-flex; align-items: center; gap: 8px; padding: 6px; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
+                .manual-officer-station.leader-card { display: flex; flex-direction: column; align-items: stretch; gap: 6px; min-width: 0; padding: 8px; border-radius: 18px; background: linear-gradient(180deg, #f8fffb 0%, #eefdf3 100%); border-color: #bbf7d0; }
                 .manual-officer-station select { width: auto; min-width: 126px; min-height: 42px; border-radius: 14px; padding: 6px 10px; font-size: 16px; }
+                .manual-officer-station.leader-card select { width: 100%; min-width: 0; min-height: 40px; font-size: 15px; font-weight: 850; background: #ffffff; border-color: #bbf7d0; }
+                .manual-officer-station.leader-card .manual-officer-chip { width: 100%; min-width: 0; box-sizing: border-box; min-height: 38px; padding: 6px 8px; font-size: 17px; }
                 .manual-officer-note { margin: 10px 0 0; color: #64748b; font-weight: 800; line-height: 1.6; }
-                .manual-extra-work-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
-                .manual-extra-work-card { border: 1px dashed #93c5fd; border-radius: 20px; background: linear-gradient(135deg, #f8fbff, #eff6ff); padding: 14px; }
-                .manual-extra-work-card h3 { margin: 0 0 10px; color: #0f172a; font-size: 20px; font-weight: 950; }
-                .manual-extra-work-card label { display: grid; gap: 6px; color: #475569; font-weight: 900; margin-bottom: 10px; }
-                .manual-extra-work-card input, .manual-extra-work-card select { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 14px; min-height: 44px; padding: 9px 12px; font-size: 16px; background: #fff; }
-                .manual-extra-selected { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-                .manual-extra-selected button { border: 0; border-radius: 999px; padding: 8px 12px; background: #dbeafe; color: #1d4ed8; font-weight: 950; cursor: pointer; }
+                .manual-extra-work-panel { border: 1px dashed #93c5fd; background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%); }
+                .manual-extra-work-panel.compact { padding: 14px; }
+                .manual-extra-compact-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+                .manual-extra-compact-header h3 { margin: 0 0 4px; font-size: 22px; color: #0f172a; }
+                .manual-extra-compact-header p { margin: 0; color: #64748b; font-size: 14px; font-weight: 850; line-height: 1.5; }
+                .manual-extra-pill-row { display: flex; flex-wrap: wrap; gap: 10px; }
+                .manual-extra-pill { display: inline-grid; grid-template-columns: auto 1fr; grid-template-areas: "label title" "count people"; align-items: center; column-gap: 8px; row-gap: 2px; width: min(100%, 330px); min-height: 58px; border: 1px solid #bfdbfe; border-radius: 999px; padding: 8px 14px; background: #ffffff; color: #0f172a; box-shadow: 0 8px 22px rgba(37, 99, 235, .08); cursor: pointer; text-align: left; }
+                .manual-extra-pill:hover { border-color: #60a5fa; transform: translateY(-1px); }
+                .manual-extra-pill .slot-label { grid-area: label; display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 34px; border-radius: 999px; background: #dbeafe; color: #1d4ed8; font-size: 13px; font-weight: 950; }
+                .manual-extra-pill strong { grid-area: title; display: block; font-size: 16px; font-weight: 950; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .manual-extra-pill em { grid-area: people; display: block; color: #64748b; font-size: 13px; font-style: normal; font-weight: 850; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                .manual-extra-pill .slot-count { grid-area: count; color: #2563eb; font-size: 12px; font-weight: 950; text-align: center; }
+                .manual-extra-pill.is-filled { background: linear-gradient(135deg, #eff6ff 0%, #ffffff 100%); border-color: #60a5fa; }
+                .manual-extra-pill.is-empty strong { color: #64748b; }
                 .manual-extra-note { color: #64748b; font-weight: 800; line-height: 1.6; margin: 10px 0 0; }
+                .manual-extra-dialog-field { display: grid; gap: 7px; margin: 12px 0; color: #475569; font-weight: 950; }
+                .manual-extra-dialog-field input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 16px; min-height: 48px; padding: 10px 13px; font-size: 17px; background: #fff; }
+                .manual-extra-selected { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 12px; }
+                .manual-extra-selected button { border: 0; border-radius: 999px; padding: 8px 12px; background: #dbeafe; color: #1d4ed8; font-weight: 950; cursor: pointer; }
+                .manual-extra-selected button:hover { background: #bfdbfe; }
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
                 .manual-floating-tip-react button { display: block; width: 100%; margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
@@ -1495,6 +1555,7 @@ export default function App() {
                 .manual-modal-actions button, .manual-custom-result button { border: 0; border-radius: 14px; padding: 11px 15px; font-weight: 950; cursor: pointer; }
                 .manual-modal-actions .primary, .manual-custom-result button { background: #2563eb; color: #fff; }
                 .manual-modal-actions .ghost { background: #e2e8f0; color: #0f172a; }
+                .manual-custom-result button.ghost { background: #e2e8f0; color: #0f172a; }
                 .manual-custom-results { display: grid; gap: 8px; margin-top: 12px; }
                 .manual-custom-result { display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid #e2e8f0; border-radius: 14px; padding: 10px; background: #f8fafc; }
                 .manual-preview-modal { width: min(720px, 100%); }
@@ -1572,9 +1633,14 @@ export default function App() {
                   .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
                   .manual-officer-title { font-size: 20px; padding-top: 0; }
                   .manual-officer-chip { min-height: 46px; font-size: 17px; }
+                  .manual-officer-list.station-leader-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
                   .manual-officer-station { width: 100%; justify-content: space-between; box-sizing: border-box; }
-                  .manual-officer-station select { flex: 1; min-width: 0; }
-                  .manual-extra-work-grid { grid-template-columns: 1fr; }
+                  .manual-officer-station:not(.leader-card) select { flex: 1; min-width: 0; }
+                  .manual-officer-station.leader-card { width: 100%; box-sizing: border-box; padding: 6px; border-radius: 16px; }
+                  .manual-officer-station.leader-card select { min-height: 38px; padding: 5px 7px; font-size: 13px; }
+                  .manual-officer-station.leader-card .manual-officer-chip { min-height: 34px; padding: 5px 6px; font-size: 14px; }
+                  .manual-extra-compact-header { display: block; }
+                  .manual-extra-pill { width: 100%; border-radius: 22px; }
                   .manual-modal { width: calc(100vw - 24px); max-height: 84dvh; padding: 16px; }
                   .manual-modal h3 { top: -16px; margin: -16px -16px 12px; padding: 16px 16px 12px; }
                   .manual-modal-actions { bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
@@ -1623,9 +1689,9 @@ export default function App() {
                     return (
                       <div className="manual-officer-row" key={role}>
                         <div className="manual-officer-title">{role}</div>
-                        <div className="manual-officer-list">
+                        <div className={`manual-officer-list${role === "站長" ? " station-leader-grid" : ""}`}>
                           {people.length ? people.map((person) => role === "站長" ? (
-                            <label className="manual-officer-station" key={person.id}>
+                            <label className="manual-officer-station leader-card" key={person.id}>
                               <select
                                 aria-label={`${person.name} 站長站點`}
                                 value={manualOfficerStations[person.id] || ""}
@@ -1650,48 +1716,30 @@ export default function App() {
                 <p className="manual-officer-note">幹部站位會先保留出勤人力；主任僅顯示姓名，不列入待排人力計算。</p>
               </div>
 
-              <div className="panel manual-extra-work-panel">
-                <h3>自訂工作</h3>
-                <p className="manual-extra-note">提供 2 個臨時空白欄位，適合安排不屬於固定站點的額外工作；只會進入本次班表與圖片，不會寫入主檔站點。</p>
-                <div className="manual-extra-work-grid">
+              <div className="panel manual-extra-work-panel compact">
+                <div className="manual-extra-compact-header">
+                  <div>
+                    <h3>自訂工作</h3>
+                    <p>提供 2 個臨時欄位；需要時點一下小標籤設定工作與人員，只會進入本次班表與圖片。</p>
+                  </div>
+                </div>
+                <div className="manual-extra-pill-row">
                   {manualExtraWorks.map((extra, index) => {
                     const selectedPeople = extra.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
-                    const usedAssignedIds = new Set([
-                      ...Object.values(manualAssignments).flat(),
-                      ...manualOfficerPeople.map((person) => person.id),
-                    ]);
-                    const availablePeople = manualAttendance.all
-                      .filter((person) => !usedAssignedIds.has(person.id) || extra.personIds.includes(person.id))
-                      .filter((person) => !isPersonUsedInManualExtra(person.id, extra.id) || extra.personIds.includes(person.id))
-                      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }));
+                    const title = extra.workName.trim() || `自訂工作 ${index + 1}`;
+                    const isFilled = Boolean(extra.workName.trim() || selectedPeople.length);
                     return (
-                      <div className="manual-extra-work-card" key={extra.id}>
-                        <h3>自訂欄位 {index + 1}</h3>
-                        <label>
-                          自訂工作
-                          <input
-                            value={extra.workName}
-                            placeholder="例如：搬料、清潔、支援外務"
-                            onChange={(event) => updateManualExtraWork(extra.id, { workName: event.target.value })}
-                          />
-                        </label>
-                        <label>
-                          自訂人員
-                          <select value="" onChange={(event) => addManualExtraPerson(extra.id, event.target.value)}>
-                            <option value="">選擇人員加入</option>
-                            {availablePeople.map((person) => (
-                              <option key={person.id} value={person.id}>{person.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <div className="manual-extra-selected">
-                          {selectedPeople.length ? selectedPeople.map((person) => (
-                            <button key={person.id} type="button" onClick={() => removeManualExtraPerson(extra.id, person.id)} title="點擊移除">
-                              {person.name} ×
-                            </button>
-                          )) : <span className="muted">尚未加入人員</span>}
-                        </div>
-                      </div>
+                      <button
+                        type="button"
+                        className={`manual-extra-pill ${isFilled ? "is-filled" : "is-empty"}`}
+                        key={extra.id}
+                        onClick={() => openManualExtraDialog(extra.id)}
+                      >
+                        <span className="slot-label">{index + 1}</span>
+                        <strong>{title}</strong>
+                        <span className="slot-count">{selectedPeople.length} 人</span>
+                        <em>{selectedPeople.length ? selectedPeople.map((person) => person.name).join("、") : "點一下設定內容"}</em>
+                      </button>
                     );
                   })}
                 </div>
@@ -1963,6 +2011,60 @@ export default function App() {
                       <div className="manual-modal-actions">
                         <button type="button" className="ghost" onClick={() => setManualTrainingDialog(null)}>取消</button>
                         <button type="button" className="primary" onClick={confirmManualTrainingPerson}>加入訓練</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })() : null}
+
+              {manualExtraDialog && manualExtraDialogItem ? (() => {
+                const selectedPeople = manualExtraDialogItem.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
+                return (
+                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
+                    <div className="manual-modal">
+                      <h3>設定自訂工作</h3>
+                      <label className="manual-extra-dialog-field">
+                        自訂工作名稱
+                        <input
+                          value={manualExtraDialogItem.workName}
+                          onChange={(event) => updateManualExtraWork(manualExtraDialogItem.id, { workName: event.target.value })}
+                          placeholder="例如：搬料、清潔、支援外務"
+                          autoFocus
+                        />
+                      </label>
+                      <label className="manual-extra-dialog-field">
+                        搜尋人員
+                        <input
+                          value={manualExtraKeyword}
+                          onChange={(event) => setManualExtraKeyword(event.target.value)}
+                          placeholder="輸入姓名或工號"
+                        />
+                      </label>
+                      <div className="manual-extra-selected">
+                        {selectedPeople.length ? selectedPeople.map((person) => (
+                          <button key={person.id} type="button" onClick={() => removeManualExtraPerson(manualExtraDialogItem.id, person.id)} title="點擊移除">
+                            {person.name} ×
+                          </button>
+                        )) : <span className="muted">尚未加入人員</span>}
+                      </div>
+                      <div className="manual-custom-results">
+                        {manualExtraCandidates.length ? manualExtraCandidates.map((person) => {
+                          const selected = manualExtraDialogItem.personIds.includes(person.id);
+                          return (
+                            <div className="manual-custom-result" key={person.id}>
+                              <div><strong>{person.name}</strong><br /><span className="muted">{person.id}｜{String(getTeamOfPerson(person))}</span></div>
+                              {selected ? (
+                                <button type="button" className="ghost" onClick={() => removeManualExtraPerson(manualExtraDialogItem.id, person.id)}>移除</button>
+                              ) : (
+                                <button type="button" onClick={() => addManualExtraPerson(manualExtraDialogItem.id, person.id)}>加入</button>
+                              )}
+                            </div>
+                          );
+                        }) : <p className="muted">找不到可加入的人員，或人員已安排在其他站點。</p>}
+                      </div>
+                      <div className="manual-modal-actions">
+                        <button type="button" className="ghost" onClick={() => clearManualExtraWork(manualExtraDialogItem.id)}>清空此欄</button>
+                        <button type="button" className="primary" onClick={closeManualExtraDialog}>完成</button>
                       </div>
                     </div>
                   </div>
