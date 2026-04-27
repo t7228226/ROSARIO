@@ -67,8 +67,9 @@ const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任"
 const permissionEligibleJobs = new Set(["領班", "組長", "主任", "站長"]);
 const officerRoleOrder = ["主任", "組長", "領班", "站長"] as const;
 type OfficerRole = (typeof officerRoleOrder)[number];
-type SchedulePreviewStyle = "card" | "table" | "share" | "section";
+type SchedulePreviewStyle = "card" | "table" | "share" | "section" | "matrix";
 type ManualExtraWork = { id: string; workName: string; personIds: string[] };
+type SchedulePreviewPerson = { name: string; isOfficer?: boolean };
 
 
 const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: string }> = [
@@ -76,6 +77,7 @@ const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: str
   { key: "table", label: "表格版" },
   { key: "share", label: "可愛圖卡" },
   { key: "section", label: "海報版" },
+  { key: "matrix", label: "橫版班表" },
 ];
 
 const initialManualExtraWorks: ManualExtraWork[] = [
@@ -547,6 +549,20 @@ export default function App() {
   const manualSchedulePreview = useMemo(() => {
     const peopleById = new Map(data.people.map((person) => [person.id, person]));
     const uniqueNames = (names: string[]) => Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
+    const uniquePreviewPeople = (people: SchedulePreviewPerson[]) => {
+      const map = new Map<string, SchedulePreviewPerson>();
+      people.forEach((person) => {
+        const name = person.name.trim();
+        if (!name) return;
+        const current = map.get(name);
+        map.set(name, { name, isOfficer: Boolean(current?.isOfficer || person.isOfficer) });
+      });
+      return Array.from(map.values());
+    };
+    const toPreviewPerson = (person?: Person | null, forceOfficer = false): SchedulePreviewPerson | null => {
+      if (!person?.name) return null;
+      return { name: person.name, isOfficer: forceOfficer || normalizeOfficerRole(person.role) !== null };
+    };
     const activeTeamPeople = data.people.filter((person) => {
       const employment = String(person.employmentStatus || "").trim();
       const isInactive = employment.includes("離職") || employment.includes("停用") || employment.toUpperCase() === "N";
@@ -557,7 +573,7 @@ export default function App() {
         .filter((person) => normalizeOfficerRole(person.role) === role)
         .map((person) => person.name)
     );
-    const stationOrder = new Map(data.stations.map((station, index) => [station.id, index]));
+    const stationOrder = new Map<string, number>(data.stations.map((station, index) => [station.id, index]));
     const orderedManualRules = [...manualRules].sort((a, b) => {
       const orderA = stationOrder.get(a.stationId) ?? 9999;
       const orderB = stationOrder.get(b.stationId) ?? 9999;
@@ -574,26 +590,29 @@ export default function App() {
       rows: [
         ...orderedManualRules.map((rule) => {
           const station = data.stations.find((item) => item.id === rule.stationId);
-          const assignedNames = (manualAssignments[rule.stationId] || [])
-            .map((id) => peopleById.get(id)?.name || "")
-            .filter(Boolean);
-          const selectedOfficerNames = manualOfficerPeople
+          const assignedPeople = (manualAssignments[rule.stationId] || [])
+            .map((id) => toPreviewPerson(peopleById.get(id)))
+            .filter((person): person is SchedulePreviewPerson => Boolean(person));
+          const selectedOfficerPeople = manualOfficerPeople
             .filter((person) => manualOfficerStations[person.id] === rule.stationId)
-            .map((person) => person.name);
+            .map((person) => toPreviewPerson(person, true))
+            .filter((person): person is SchedulePreviewPerson => Boolean(person));
           return {
             stationId: rule.stationId,
             stationName: getScheduleStationDisplayName(station),
-            people: uniqueNames([...assignedNames, ...selectedOfficerNames]),
+            people: uniquePreviewPeople([...assignedPeople, ...selectedOfficerPeople]),
           };
         }),
         ...manualExtraWorks
           .map((item, index) => {
             const stationName = item.workName.trim() || `自訂工作 ${index + 1}`;
-            const people = item.personIds.map((id) => peopleById.get(id)?.name || "").filter(Boolean);
+            const people = item.personIds
+              .map((id) => toPreviewPerson(peopleById.get(id)))
+              .filter((person): person is SchedulePreviewPerson => Boolean(person));
             return {
               stationId: item.id,
               stationName,
-              people: uniqueNames(people),
+              people: uniquePreviewPeople(people),
             };
           })
           .filter((row) => row.stationName || row.people.length > 0),
@@ -903,7 +922,7 @@ export default function App() {
     lines.push("");
     manualSchedulePreview.rows.forEach((row) => {
       lines.push(row.stationName);
-      lines.push(row.people.join("、") || "-");
+      lines.push(row.people.map((person) => person.name).join("、") || "-");
       lines.push("");
     });
     return lines.join("\n").trim();
@@ -954,7 +973,150 @@ export default function App() {
     return lines.length ? lines : ["-"];
   }
 
+
+  function splitScheduleStationLabel(stationName: string) {
+    const text = String(stationName || "").trim();
+    const match = text.match(/^(.*?)[（(]([^（）()]+)[）)]$/);
+    if (!match) return { name: text || "未命名站點", code: "" };
+    return { name: match[1].trim() || text, code: match[2].trim() };
+  }
+
+  function downloadManualScheduleMatrixImage() {
+    if (typeof document === "undefined") return;
+    const scale = 2;
+    const leftWidth = 300;
+    const colWidth = 136;
+    const headerHeight = 190;
+    const personRowHeight = 46;
+    const footerHeight = 40;
+    const rows = manualSchedulePreview.rows;
+    const maxPeople = Math.max(4, ...rows.map((row) => row.people.length));
+    const width = Math.max(1180, leftWidth + rows.length * colWidth + 48);
+    const height = headerHeight + maxPeople * personRowHeight + footerHeight;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setFlashMessage("此瀏覽器不支援產生橫版班表圖片。");
+      return;
+    }
+
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.scale(scale, scale);
+
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = "#475569";
+    ctx.lineWidth = 1;
+
+    const x0 = 24;
+    const y0 = 24;
+    const tableWidth = leftWidth + rows.length * colWidth;
+    const tableHeight = headerHeight + maxPeople * personRowHeight;
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(x0, y0, tableWidth, tableHeight);
+    ctx.strokeRect(x0, y0, tableWidth, tableHeight);
+
+    const leftGrad = ctx.createLinearGradient(x0, y0, x0, y0 + tableHeight);
+    leftGrad.addColorStop(0, "#fef08a");
+    leftGrad.addColorStop(1, "#dcfce7");
+    ctx.fillStyle = leftGrad;
+    ctx.fillRect(x0, y0, leftWidth, tableHeight);
+    ctx.strokeRect(x0, y0, leftWidth, tableHeight);
+
+    ctx.fillStyle = "#b91c1c";
+    ctx.font = "900 34px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText(manualSchedulePreview.team, x0 + 28, y0 + 48);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "900 24px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText(`主任　${manualSchedulePreview.officers.主任.join("、") || "-"}`, x0 + 28, y0 + 94);
+    ctx.fillText(`組長　${manualSchedulePreview.officers.組長.join("、") || "-"}`, x0 + 28, y0 + 132);
+    const leaderText = `領班　${manualSchedulePreview.officers.領班.join("、") || "-"}`;
+    wrapCanvasText(ctx, leaderText, leftWidth - 56).slice(0, 2).forEach((line, idx) => {
+      ctx.fillText(line, x0 + 28, y0 + 170 + idx * 30);
+    });
+
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fillRect(x0 + leftWidth, y0, rows.length * colWidth, 44);
+    ctx.fillStyle = "#0f172a";
+    ctx.font = "900 19px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText("站點 / Station", x0 + leftWidth + 16, y0 + 29);
+
+    rows.forEach((row, index) => {
+      const x = x0 + leftWidth + index * colWidth;
+      const headerColor = index % 4 === 0 ? "#bfdbfe" : index % 4 === 1 ? "#d9f99d" : index % 4 === 2 ? "#fde68a" : "#bae6fd";
+      ctx.fillStyle = headerColor;
+      ctx.fillRect(x, y0 + 44, colWidth, headerHeight - 44);
+      ctx.strokeStyle = "#64748b";
+      ctx.strokeRect(x, y0, colWidth, tableHeight);
+      ctx.beginPath();
+      ctx.moveTo(x, y0 + headerHeight);
+      ctx.lineTo(x + colWidth, y0 + headerHeight);
+      ctx.stroke();
+
+      const label = splitScheduleStationLabel(row.stationName);
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "900 20px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      const nameLines = wrapCanvasText(ctx, label.name, colWidth - 18).slice(0, 3);
+      nameLines.forEach((line, idx) => ctx.fillText(line, x + 9, y0 + 82 + idx * 25));
+      if (label.code) {
+        ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
+        ctx.fillText(label.code, x + 9, y0 + 160);
+      }
+    });
+
+    ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    for (let rowIndex = 0; rowIndex < maxPeople; rowIndex += 1) {
+      const y = y0 + headerHeight + rowIndex * personRowHeight;
+      ctx.fillStyle = rowIndex % 2 === 0 ? "#ffffff" : "#f8fafc";
+      ctx.fillRect(x0 + leftWidth, y, rows.length * colWidth, personRowHeight);
+      ctx.strokeStyle = "#cbd5e1";
+      ctx.beginPath();
+      ctx.moveTo(x0 + leftWidth, y);
+      ctx.lineTo(x0 + tableWidth, y);
+      ctx.stroke();
+      rows.forEach((row, colIndex) => {
+        const x = x0 + leftWidth + colIndex * colWidth;
+        const person = row.people[rowIndex];
+        if (!person) return;
+        const chipX = x + 8;
+        const chipY = y + 7;
+        const chipW = colWidth - 16;
+        const chipH = 32;
+        ctx.beginPath();
+        ctx.roundRect(chipX, chipY, chipW, chipH, 12);
+        ctx.fillStyle = person.isOfficer ? "#bbf7d0" : "#f1f5f9";
+        ctx.fill();
+        ctx.lineWidth = person.isOfficer ? 2 : 1;
+        ctx.strokeStyle = person.isOfficer ? "#16a34a" : "#cbd5e1";
+        ctx.stroke();
+        ctx.fillStyle = person.isOfficer ? "#166534" : "#334155";
+        ctx.fillText(person.name, chipX + 10, chipY + 22);
+      });
+    }
+
+    ctx.fillStyle = "#64748b";
+    ctx.font = "700 15px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText("※ 綠色人名為站長以上／幹部站位。", x0, height - 16);
+
+    const link = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+    link.download = `${manualSchedulePreview.team}-橫版班表-${date}.png`;
+    link.href = canvas.toDataURL("image/png");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setFlashMessage("橫版班表圖片已產生，請依瀏覽器提示下載或分享。手機瀏覽器通常無法靜默自動存入相簿。");
+  }
+
   function downloadManualSchedulePreviewImage() {
+    if (manualPreviewStyle === "matrix") {
+      downloadManualScheduleMatrixImage();
+      return;
+    }
     if (typeof document === "undefined") return;
     const scale = 2;
     const width = 900;
@@ -969,7 +1131,7 @@ export default function App() {
 
     ctx.font = "30px 'Noto Sans TC', 'PingFang TC', sans-serif";
     const rowHeights = manualSchedulePreview.rows.map((row) => {
-      const lines = wrapCanvasText(ctx, row.people.join("、") || "-", width - padding * 2 - 36);
+      const lines = wrapCanvasText(ctx, row.people.map((person) => person.name).join("、") || "-", width - padding * 2 - 36);
       return Math.max(88, 56 + lines.length * 36);
     });
     const height = Math.max(860, 260 + rowHeights.reduce((sum, item) => sum + item + rowGap, 0));
@@ -1030,11 +1192,30 @@ export default function App() {
       ctx.font = "800 30px 'Noto Sans TC', 'PingFang TC', sans-serif";
       ctx.fillText(row.stationName, x + 28, y + 40);
 
-      ctx.fillStyle = isPoster ? "#e2e8f0" : "#334155";
-      ctx.font = "700 28px 'Noto Sans TC', 'PingFang TC', sans-serif";
-      const lines = wrapCanvasText(ctx, row.people.join("、") || "-", w - 56);
-      lines.forEach((line, lineIndex) => {
-        ctx.fillText(line, x + 28, y + 82 + lineIndex * 36);
+      ctx.font = "700 24px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      const chipHeight = 34;
+      const chipGap = 10;
+      let chipX = x + 28;
+      let chipY = y + 64;
+      const chipMaxX = x + w - 28;
+      const people = row.people.length ? row.people : [{ name: "-", isOfficer: false }];
+      people.forEach((person) => {
+        const text = person.name;
+        const chipWidth = Math.min(Math.max(58, ctx.measureText(text).width + 24), chipMaxX - x - 56);
+        if (chipX + chipWidth > chipMaxX && chipX > x + 28) {
+          chipX = x + 28;
+          chipY += chipHeight + 10;
+        }
+        ctx.beginPath();
+        ctx.roundRect(chipX, chipY, chipWidth, chipHeight, 16);
+        ctx.fillStyle = person.isOfficer ? "#dcfce7" : (isPoster ? "rgba(255,255,255,.16)" : "#f1f5f9");
+        ctx.fill();
+        ctx.lineWidth = person.isOfficer ? 2 : 1;
+        ctx.strokeStyle = person.isOfficer ? "#22c55e" : (isPoster ? "rgba(255,255,255,.24)" : "#e2e8f0");
+        ctx.stroke();
+        ctx.fillStyle = person.isOfficer ? "#166534" : (isPoster ? "#e2e8f0" : "#334155");
+        ctx.fillText(text, chipX + 12, chipY + 24);
+        chipX += chipWidth + chipGap;
       });
       y += rowHeight + rowGap;
     });
@@ -1052,6 +1233,19 @@ export default function App() {
   function confirmManualSchedulePreview() {
     downloadManualSchedulePreviewImage();
     setManualPreviewOpen(false);
+  }
+
+  function renderSchedulePreviewPeople(people: SchedulePreviewPerson[], joinMode: "comma" | "space" = "comma") {
+    if (!people.length) return <span className="schedule-empty-name">-</span>;
+    return (
+      <span className={`schedule-name-tags ${joinMode === "space" ? "space" : "comma"}`}>
+        {people.map((person, index) => (
+          <span key={`${person.name}-${index}`} className={`schedule-person-tag${person.isOfficer ? " officer" : ""}`}>
+            {person.name}
+          </span>
+        ))}
+      </span>
+    );
   }
 
   async function handleCustomAssign(target: "manual" | "smart", stationId: string) {
@@ -1276,6 +1470,7 @@ export default function App() {
                 .manual-officer-title { font-size: 22px; font-weight: 950; color: #0f172a; padding-top: 9px; }
                 .manual-officer-list { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
                 .manual-officer-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 76px; padding: 8px 16px; border-radius: 999px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; font-size: 18px; font-weight: 900; white-space: nowrap; }
+                .manual-officer-chip.station-leader { background: #dcfce7; border-color: #22c55e; color: #166534; box-shadow: 0 2px 10px rgba(34, 197, 94, .16); }
                 .manual-officer-station { display: inline-flex; align-items: center; gap: 8px; padding: 6px; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
                 .manual-officer-station select { width: auto; min-width: 126px; min-height: 42px; border-radius: 14px; padding: 6px 10px; font-size: 16px; }
                 .manual-officer-note { margin: 10px 0 0; color: #64748b; font-weight: 800; line-height: 1.6; }
@@ -1317,6 +1512,15 @@ export default function App() {
                 .schedule-card-row { border-radius: 18px; background: #fff; border: 1px solid #e2e8f0; padding: 13px 14px; }
                 .schedule-card-row strong { display: block; margin-bottom: 8px; color: #0f172a; font-size: 18px; font-weight: 950; }
                 .schedule-name-line { color: #334155; font-size: 16px; font-weight: 850; line-height: 1.65; }
+                .schedule-name-tags { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+                .schedule-person-tag { display: inline-flex; align-items: center; min-height: 28px; border-radius: 999px; padding: 3px 10px; background: #f1f5f9; border: 1px solid #e2e8f0; color: #334155; font-size: 15px; font-weight: 900; line-height: 1.35; }
+                .schedule-person-tag.officer { background: #dcfce7; border-color: #22c55e; color: #166534; box-shadow: 0 2px 8px rgba(34, 197, 94, .14); }
+                .schedule-empty-name { color: #94a3b8; font-weight: 900; }
+                .schedule-table-preview .schedule-name-tags { gap: 6px; }
+                .schedule-table-preview .schedule-person-tag { font-size: 14px; min-height: 26px; }
+                .schedule-poster-card .schedule-person-tag { background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.24); color: #dbeafe; }
+                .schedule-poster-card .schedule-person-tag.officer { background: rgba(34,197,94,.22); border-color: #4ade80; color: #dcfce7; }
+                .schedule-share-card .schedule-person-tag.officer { background: #dcfce7; border-color: #22c55e; color: #166534; }
                 .schedule-table-preview { width: 100%; border-collapse: separate; border-spacing: 0 8px; }
                 .schedule-table-preview th { text-align: left; padding: 10px 12px; color: #fff; background: #243b53; font-size: 14px; }
                 .schedule-table-preview th:first-child { border-radius: 14px 0 0 14px; }
@@ -1339,6 +1543,26 @@ export default function App() {
                 .schedule-poster-row { display: grid; grid-template-columns: minmax(90px, .36fr) 1fr; gap: 12px; align-items: start; padding: 13px 14px; border-radius: 18px; background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.16); }
                 .schedule-poster-row strong { color: #fff; font-size: 17px; font-weight: 950; }
                 .schedule-poster-row span { color: #dbeafe; font-size: 16px; font-weight: 850; line-height: 1.6; }
+                .schedule-matrix-paper { background: #f8fafc; border-color: #cbd5e1; padding: 12px; }
+                .schedule-matrix-scroll { overflow-x: auto; border-radius: 18px; border: 1px solid #94a3b8; background: #fff; }
+                .schedule-matrix-table { border-collapse: collapse; min-width: 1080px; width: max-content; table-layout: fixed; }
+                .schedule-matrix-table th, .schedule-matrix-table td { border: 1px solid #94a3b8; vertical-align: top; }
+                .schedule-matrix-meta { width: 260px; min-width: 260px; background: linear-gradient(180deg, #fef08a 0%, #dcfce7 100%); padding: 14px; text-align: left; }
+                .schedule-matrix-team { color: #b91c1c; font-size: 28px; font-weight: 950; margin-bottom: 12px; }
+                .schedule-matrix-officers { display: grid; gap: 8px; color: #0f172a; font-size: 17px; font-weight: 950; line-height: 1.45; }
+                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; }
+                .schedule-matrix-table th:nth-child(4n+2) { background: #bfdbfe; }
+                .schedule-matrix-table th:nth-child(4n+3) { background: #d9f99d; }
+                .schedule-matrix-table th:nth-child(4n+4) { background: #fde68a; }
+                .schedule-matrix-table th:nth-child(4n+5) { background: #bae6fd; }
+                .schedule-matrix-station-name { display: block; font-size: 18px; font-weight: 950; line-height: 1.25; word-break: keep-all; }
+                .schedule-matrix-station-code { display: block; margin-top: 8px; font-size: 17px; font-weight: 950; color: #1e3a8a; }
+                .schedule-matrix-row-label { width: 260px; min-width: 260px; background: #f1f5f9; color: #475569; font-size: 15px; font-weight: 950; text-align: center; padding: 8px; }
+                .schedule-matrix-person-cell { width: 126px; min-width: 126px; height: 42px; padding: 5px; background: #fff; text-align: center; }
+                .schedule-matrix-table tr:nth-child(even) .schedule-matrix-person-cell { background: #f8fafc; }
+                .schedule-matrix-person-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 72px; max-width: 112px; min-height: 28px; border-radius: 10px; padding: 2px 8px; background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; font-size: 15px; font-weight: 950; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .schedule-matrix-person-chip.officer { background: #bbf7d0; border-color: #16a34a; color: #166534; box-shadow: 0 2px 8px rgba(22, 163, 74, .15); }
+                .schedule-matrix-note { margin: 10px 4px 0; color: #64748b; font-weight: 850; font-size: 13px; }
                 .mobile-modal-header { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .95); }
                 .mobile-modal-close { position: sticky; top: 8px; z-index: 6; }
                 .mobile-modal-fab-close { position: sticky; bottom: 14px; z-index: 6; }
@@ -1362,6 +1586,8 @@ export default function App() {
                   .schedule-poster-row { grid-template-columns: 1fr; gap: 4px; }
                   .schedule-table-preview { min-width: 520px; }
                   .schedule-table-wrap { overflow-x: auto; }
+                  .schedule-matrix-table { min-width: 1040px; }
+                  .schedule-matrix-meta, .schedule-matrix-row-label { width: 230px; min-width: 230px; }
                 }
               `}</style>
 
@@ -1411,7 +1637,7 @@ export default function App() {
                                   return <option key={rule.stationId} value={rule.stationId}>{station?.name || rule.stationId}</option>;
                                 })}
                               </select>
-                              <span className="manual-officer-chip">{person.name}</span>
+                              <span className={`manual-officer-chip${manualOfficerStations[person.id] ? " station-leader" : ""}`}>{person.name}</span>
                             </label>
                           ) : (
                             <span className="manual-officer-chip" key={person.id}>{person.name}</span>
@@ -1571,7 +1797,7 @@ export default function App() {
                           {manualSchedulePreview.rows.map((row) => (
                             <div className="schedule-card-row" key={row.stationId}>
                               <strong>{row.stationName}</strong>
-                              <div className="schedule-name-line">{row.people.join("、") || "-"}</div>
+                              <div className="schedule-name-line">{renderSchedulePreviewPeople(row.people)}</div>
                             </div>
                           ))}
                         </div>
@@ -1591,7 +1817,7 @@ export default function App() {
                             <thead><tr><th>站點</th><th>人員</th></tr></thead>
                             <tbody>
                               {manualSchedulePreview.rows.map((row) => (
-                                <tr key={row.stationId}><td>{row.stationName}</td><td>{row.people.join("、") || "-"}</td></tr>
+                                <tr key={row.stationId}><td>{row.stationName}</td><td>{renderSchedulePreviewPeople(row.people)}</td></tr>
                               ))}
                             </tbody>
                           </table>
@@ -1611,7 +1837,7 @@ export default function App() {
                           {manualSchedulePreview.rows.map((row) => (
                             <div className="schedule-card-row" key={row.stationId}>
                               <strong>{row.stationName}</strong>
-                              <div className="schedule-name-line">{row.people.join("　") || "-"}</div>
+                              <div className="schedule-name-line">{renderSchedulePreviewPeople(row.people, "space")}</div>
                             </div>
                           ))}
                         </div>
@@ -1630,10 +1856,57 @@ export default function App() {
                           {manualSchedulePreview.rows.map((row) => (
                             <div className="schedule-poster-row" key={row.stationId}>
                               <strong>{row.stationName}</strong>
-                              <span>{row.people.join("、") || "-"}</span>
+                              <span>{renderSchedulePreviewPeople(row.people)}</span>
                             </div>
                           ))}
                         </div>
+                      </div>
+                    ) : null}
+
+
+                    {manualPreviewStyle === "matrix" ? (
+                      <div className="schedule-paper schedule-matrix-paper">
+                        <div className="schedule-matrix-scroll">
+                          <table className="schedule-matrix-table">
+                            <thead>
+                              <tr>
+                                <th className="schedule-matrix-meta">
+                                  <div className="schedule-matrix-team">{manualSchedulePreview.team}</div>
+                                  <div className="schedule-matrix-officers">
+                                    <div>主任　{manualSchedulePreview.officers.主任.join("、") || "-"}</div>
+                                    <div>組長　{manualSchedulePreview.officers.組長.join("、") || "-"}</div>
+                                    <div>領班　{manualSchedulePreview.officers.領班.join("、") || "-"}</div>
+                                  </div>
+                                </th>
+                                {manualSchedulePreview.rows.map((row) => {
+                                  const label = splitScheduleStationLabel(row.stationName);
+                                  return (
+                                    <th className="schedule-matrix-station" key={row.stationId}>
+                                      <span className="schedule-matrix-station-name">{label.name}</span>
+                                      {label.code ? <span className="schedule-matrix-station-code">{label.code}</span> : null}
+                                    </th>
+                                  );
+                                })}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Array.from({ length: Math.max(4, ...manualSchedulePreview.rows.map((row) => row.people.length)) }).map((_, rowIndex) => (
+                                <tr key={`matrix-row-${rowIndex}`}>
+                                  <td className="schedule-matrix-row-label">人員 {rowIndex + 1}</td>
+                                  {manualSchedulePreview.rows.map((row) => {
+                                    const person = row.people[rowIndex];
+                                    return (
+                                      <td className="schedule-matrix-person-cell" key={`${row.stationId}-${rowIndex}`}>
+                                        {person ? <span className={`schedule-matrix-person-chip${person.isOfficer ? " officer" : ""}`}>{person.name}</span> : null}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="schedule-matrix-note">橫向滑動查看完整班表；確認完成會輸出完整橫版 PNG。</div>
                       </div>
                     ) : null}
 
