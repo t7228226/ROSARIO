@@ -92,40 +92,38 @@ function cleanScheduleStationName(raw?: string) {
   return cleaned || value || "未命名站點";
 }
 
-function getScheduleStationEnglishName(station?: AppBootstrap["stations"][number] | null) {
+function getScheduleStationCode(station?: AppBootstrap["stations"][number] | null) {
   if (!station) return "";
   const raw = station as unknown as Record<string, unknown>;
   const direct = String(
-    raw.englishCode ??
+    raw.stationCode ??
+      raw.code ??
+      raw.englishCode ??
       raw.stationEnglishCode ??
       raw.stationCodeEn ??
       raw.codeEn ??
+      raw["站點代碼"] ??
+      raw["站點代號"] ??
       raw["英文代號"] ??
       raw["站點英文代號"] ??
       raw["英文代碼"] ??
       raw["站點英文代碼"] ??
-      raw.englishName ??
-      raw.stationEnglishName ??
-      raw.nameEn ??
-      raw.enName ??
-      raw["英文名稱"] ??
-      raw["站點英文"] ??
-      raw["英文站點名稱"] ??
+      station.id ??
       ""
   ).trim();
   if (direct) return direct;
 
   const noteText = [station.description, station.note].map((item) => String(item || "")).join(" ");
-  const bracketMatch = noteText.match(/[（(]([A-Za-z][A-Za-z0-9 ,/&+\-]{2,})[）)]/);
+  const bracketMatch = noteText.match(/[（(]([A-Za-z][A-Za-z0-9 ,/&+\-]{1,})[）)]/);
   if (bracketMatch) return bracketMatch[1].trim();
-  const labelMatch = noteText.match(/(?:英文|English|EN)\s*[:：]\s*([A-Za-z][A-Za-z0-9 ,/&+\-]{2,})/i);
-  return labelMatch ? labelMatch[1].trim() : "";
+  return "";
 }
 
 function getScheduleStationDisplayName(station?: AppBootstrap["stations"][number] | null) {
   const zhName = cleanScheduleStationName(station?.name);
-  const enName = getScheduleStationEnglishName(station);
-  return enName ? `${zhName}（${enName}）` : zhName;
+  const code = getScheduleStationCode(station);
+  if (!code || code === zhName || zhName.includes(`(${code})`) || zhName.includes(`（${code}）`)) return zhName;
+  return `${zhName}（${code}）`;
 }
 
 function normalizeOfficerRole(raw?: string): OfficerRole | null {
@@ -559,6 +557,13 @@ export default function App() {
         .filter((person) => normalizeOfficerRole(person.role) === role)
         .map((person) => person.name)
     );
+    const stationOrder = new Map(data.stations.map((station, index) => [station.id, index]));
+    const orderedManualRules = [...manualRules].sort((a, b) => {
+      const orderA = stationOrder.get(a.stationId) ?? 9999;
+      const orderB = stationOrder.get(b.stationId) ?? 9999;
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.stationId).localeCompare(String(b.stationId), "zh-Hant", { numeric: true });
+    });
     return {
       team: manualShift,
       officers: {
@@ -567,7 +572,7 @@ export default function App() {
         領班: officerNamesByRole("領班"),
       },
       rows: [
-        ...manualRules.map((rule) => {
+        ...orderedManualRules.map((rule) => {
           const station = data.stations.find((item) => item.id === rule.stationId);
           const assignedNames = (manualAssignments[rule.stationId] || [])
             .map((id) => peopleById.get(id)?.name || "")
