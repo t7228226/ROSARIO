@@ -65,6 +65,21 @@ const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不
 const dayOptions: ShiftMode[] = DAY_OPTIONS;
 const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任", "站長", "最高權限"];
 const permissionEligibleJobs = new Set(["領班", "組長", "主任", "站長"]);
+const officerRoleOrder = ["主任", "組長", "領班", "站長"] as const;
+type OfficerRole = (typeof officerRoleOrder)[number];
+
+function normalizeOfficerRole(raw?: string): OfficerRole | null {
+  const value = String(raw || "").trim();
+  if (value.includes("主任")) return "主任";
+  if (value.includes("組長")) return "組長";
+  if (value.includes("領班")) return "領班";
+  if (value.includes("站長")) return "站長";
+  return null;
+}
+
+function isOfficerPerson(person: Person) {
+  return normalizeOfficerRole(person.role) !== null;
+}
 
 const roleRank: Record<UserRole, number> = {
   技術員: 1,
@@ -192,6 +207,7 @@ export default function App() {
   const [manualCustomDialog, setManualCustomDialog] = useState<null | { stationId: string }>(null);
   const [manualTrainingDialog, setManualTrainingDialog] = useState<null | { stationId: string; personId: string; currentStatus: string }>(null);
   const [manualCustomKeyword, setManualCustomKeyword] = useState("");
+  const [manualOfficerStations, setManualOfficerStations] = useState<Record<string, string>>({});
 
   const hasManualAssignments = useMemo(
     () => Object.values(manualAssignments).some((list) => list.length > 0),
@@ -200,6 +216,7 @@ export default function App() {
 
   function applyManualSwitch(type: "shift" | "day" | "mode", value: TeamName | ShiftMode | SmartScheduleMode) {
     setManualAssignments({});
+    setManualOfficerStations({});
     if (type === "shift") setManualShift(value as TeamName);
     if (type === "day") setManualDay(value as ShiftMode);
     if (type === "mode") setManualMode(value as SmartScheduleMode);
@@ -427,6 +444,31 @@ export default function App() {
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
+  const manualOfficerPeople = useMemo(() => {
+    return manualAttendance.all
+      .filter(isOfficerPerson)
+      .sort((a, b) => {
+        const roleA = normalizeOfficerRole(a.role);
+        const roleB = normalizeOfficerRole(b.role);
+        const orderA = roleA ? officerRoleOrder.indexOf(roleA) : 99;
+        const orderB = roleB ? officerRoleOrder.indexOf(roleB) : 99;
+        if (orderA !== orderB) return orderA - orderB;
+        return a.name.localeCompare(b.name, "zh-Hant", { numeric: true });
+      });
+  }, [manualAttendance.all]);
+  const manualOfficerGroups = useMemo(() => {
+    const groups: Record<OfficerRole, Person[]> = { 主任: [], 組長: [], 領班: [], 站長: [] };
+    manualOfficerPeople.forEach((person) => {
+      const role = normalizeOfficerRole(person.role);
+      if (role) groups[role].push(person);
+    });
+    return groups;
+  }, [manualOfficerPeople]);
+  const manualOfficerIds = useMemo(() => new Set(manualOfficerPeople.map((person) => person.id)), [manualOfficerPeople]);
+  const manualCountedOfficerCount = useMemo(() => {
+    return manualOfficerPeople.filter((person) => normalizeOfficerRole(person.role) !== "主任").length;
+  }, [manualOfficerPeople]);
+  const manualDirectorCount = manualOfficerGroups.主任.length;
 
   const smartAttendance = useMemo(() => getAttendanceForTeam(data.people, smartShift, smartDay), [data.people, smartShift, smartDay]);
   const smartRules = useMemo(() => getApplicableRules(smartShift, smartDay, data.stationRules || []), [data.stationRules, smartShift, smartDay]);
@@ -434,6 +476,9 @@ export default function App() {
   const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, "當班", data.stationRules || []), [rulesTeam, data.stationRules]);
 
   const manualSummary = useMemo(() => getAssignmentSummary(manualAssignments, manualRules), [manualAssignments, manualRules]);
+  const manualEffectiveAssigned = manualSummary.assigned + manualCountedOfficerCount;
+  const manualCountableTotal = Math.max(0, manualAttendance.totalCount - manualDirectorCount);
+  const manualPendingCount = Math.max(0, manualCountableTotal - manualEffectiveAssigned);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
 
   function hasAccess(minRole?: UserRole) {
@@ -628,23 +673,25 @@ export default function App() {
   }
 
   function runManualPlan() {
-    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], data.people, data.qualifications, manualMode);
+    const assignablePeople = data.people.filter((person) => !isOfficerPerson(person));
+    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], assignablePeople, data.qualifications, manualMode);
     const next: Record<string, string[]> = {};
     rows.forEach((row) => {
-      next[row.stationId] = row.assigned.map((person) => person.id);
+      next[row.stationId] = row.assigned.filter((person) => !manualOfficerIds.has(person.id)).map((person) => person.id);
     });
     setManualAssignments(next);
-    setFlashMessage(`一鍵安排已完成：${manualMode}`);
+    setFlashMessage(`一鍵安排已完成：${manualMode}；幹部站位已保留。`);
   }
 
   const manualCustomCandidates = useMemo(() => {
     if (!manualCustomDialog) return [] as Person[];
     const keyword = manualCustomKeyword.trim().toLowerCase();
-    if (!keyword) return manualAttendance.all.slice(0, 30);
-    return manualAttendance.all.filter((person) => {
+    const candidates = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
+    if (!keyword) return candidates.slice(0, 30);
+    return candidates.filter((person) => {
       return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
     }).slice(0, 30);
-  }, [manualAttendance.all, manualCustomDialog, manualCustomKeyword]);
+  }, [manualAttendance.all, manualOfficerIds, manualCustomDialog, manualCustomKeyword]);
 
   async function addManualCustomPerson(personId: string) {
     if (!manualCustomDialog) return;
@@ -653,6 +700,10 @@ export default function App() {
     const station = data.stations.find((item) => item.id === stationId);
     if (!person || !station) {
       setFlashMessage("找不到指定人員或站點，無法加入自訂人選。");
+      return;
+    }
+    if (isOfficerPerson(person)) {
+      setFlashMessage(`${person.name} 已列入幹部站位，請在幹部區塊安排。`);
       return;
     }
 
@@ -706,8 +757,21 @@ export default function App() {
     lines.push(`班別：${manualShift}`);
     lines.push(`日別：${manualDay}`);
     lines.push(`模式：${manualMode}`);
-    lines.push(`已排：${manualSummary.assigned}`);
-    lines.push(`待排：${Math.max(0, manualAttendance.totalCount - manualSummary.assigned)}`);
+    lines.push(`已排：${manualEffectiveAssigned}`);
+    lines.push(`待排：${manualPendingCount}`);
+    lines.push("");
+    lines.push("幹部站位：");
+    officerRoleOrder.forEach((role) => {
+      const names = manualOfficerGroups[role].map((person) => {
+        if (role === "站長") {
+          const stationId = manualOfficerStations[person.id];
+          const station = data.stations.find((item) => item.id === stationId);
+          return `${person.name}${station ? `（${station.name}）` : ""}`;
+        }
+        return person.name;
+      });
+      lines.push(`${role}：${names.join("、") || "-"}`);
+    });
     lines.push("");
     manualRules.forEach((rule) => {
       const station = data.stations.find((item) => item.id === rule.stationId);
@@ -950,6 +1014,14 @@ export default function App() {
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+                .manual-officer-board { display: grid; gap: 14px; }
+                .manual-officer-row { display: grid; grid-template-columns: 88px 1fr; gap: 12px; align-items: start; }
+                .manual-officer-title { font-size: 22px; font-weight: 950; color: #0f172a; padding-top: 9px; }
+                .manual-officer-list { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+                .manual-officer-chip { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 76px; padding: 8px 16px; border-radius: 999px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; font-size: 18px; font-weight: 900; white-space: nowrap; }
+                .manual-officer-station { display: inline-flex; align-items: center; gap: 8px; padding: 6px; border-radius: 18px; background: #f8fafc; border: 1px solid #e2e8f0; }
+                .manual-officer-station select { width: auto; min-width: 126px; min-height: 42px; border-radius: 14px; padding: 6px 10px; font-size: 16px; }
+                .manual-officer-note { margin: 10px 0 0; color: #64748b; font-weight: 800; line-height: 1.6; }
                 .manual-floating-tip-react { position: fixed; right: 18px; bottom: 18px; z-index: 260; border-radius: 18px; background: #0ea5e9; color: #fff; padding: 16px; box-shadow: 0 18px 48px rgba(2, 132, 199, .28); font-size: 20px; font-weight: 950; text-align: center; min-width: 128px; }
                 .manual-floating-tip-react button { display: block; width: 100%; margin-top: 10px; border: 0; border-radius: 14px; background: #fff; color: #075985; padding: 10px 16px; font-weight: 950; cursor: pointer; }
                 .manual-modal-backdrop { position: fixed; inset: 0; z-index: 500; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .44); }
@@ -971,6 +1043,11 @@ export default function App() {
                 @media (max-width: 900px) {
                   .manual-floating-tip-react { right: 10px; bottom: 12px; font-size: 18px; }
                   .manual-schedule-station .manual-schedule-group h4 { font-size: 20px; }
+                  .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
+                  .manual-officer-title { font-size: 20px; padding-top: 0; }
+                  .manual-officer-chip { min-height: 46px; font-size: 17px; }
+                  .manual-officer-station { width: 100%; justify-content: space-between; box-sizing: border-box; }
+                  .manual-officer-station select { flex: 1; min-width: 0; }
                   .manual-modal { width: calc(100vw - 24px); max-height: 84dvh; padding: 16px; }
                   .manual-modal h3 { top: -16px; margin: -16px -16px 12px; padding: 16px 16px 12px; }
                   .manual-modal-actions { bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
@@ -1002,13 +1079,39 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="panel">
+              <div className="panel manual-officer-panel">
                 <h3>幹部站位</h3>
-                <div className="chips">
-                  <span className="chip">主任 × 1</span>
-                  <span className="chip">組長 × 1</span>
-                  <span className="chip">領班 × 3</span>
+                <div className="manual-officer-board">
+                  {officerRoleOrder.map((role) => {
+                    const people = manualOfficerGroups[role];
+                    return (
+                      <div className="manual-officer-row" key={role}>
+                        <div className="manual-officer-title">{role}</div>
+                        <div className="manual-officer-list">
+                          {people.length ? people.map((person) => role === "站長" ? (
+                            <label className="manual-officer-station" key={person.id}>
+                              <select
+                                aria-label={`${person.name} 站長站點`}
+                                value={manualOfficerStations[person.id] || ""}
+                                onChange={(event) => setManualOfficerStations((current) => ({ ...current, [person.id]: event.target.value }))}
+                              >
+                                <option value="">站點選單</option>
+                                {manualRules.map((rule) => {
+                                  const station = data.stations.find((item) => item.id === rule.stationId);
+                                  return <option key={rule.stationId} value={rule.stationId}>{station?.name || rule.stationId}</option>;
+                                })}
+                              </select>
+                              <span className="manual-officer-chip">{person.name}</span>
+                            </label>
+                          ) : (
+                            <span className="manual-officer-chip" key={person.id}>{person.name}</span>
+                          )) : <span className="muted">-</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
+                <p className="manual-officer-note">幹部站位會先保留出勤人力；主任僅顯示姓名，不列入待排人力計算。</p>
               </div>
 
               {manualRules.length ? (
@@ -1016,7 +1119,8 @@ export default function App() {
                   {manualRules.map((rule) => {
                     const station = data.stations.find((item) => item.id === rule.stationId);
                     const selectedIds = manualAssignments[rule.stationId] || [];
-                    const candidates = getQualifiedPeopleForStation(rule.stationId, manualAttendance.all, data.qualifications)
+                    const assignableAttendance = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
+                    const candidates = getQualifiedPeopleForStation(rule.stationId, assignableAttendance, data.qualifications)
                       .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }));
                     const assignedPeople = candidates.filter((person) => selectedIds.includes(person.id));
                     const pendingPeople = candidates.filter((person) => !selectedIds.includes(person.id));
@@ -1073,10 +1177,10 @@ export default function App() {
                 </div>
               ) : <Empty text="找不到此班別的正式站點規則，無法進行站點試排。" />}
 
-              {manualSummary.assigned > 0 ? (
+              {manualEffectiveAssigned > 0 ? (
                 <div className="manual-floating-tip-react">
-                  <div>已排:{manualSummary.assigned}</div>
-                  <div>待排:{Math.max(0, manualAttendance.totalCount - manualSummary.assigned)}</div>
+                  <div>已排:{manualEffectiveAssigned}</div>
+                  <div>待排:{manualPendingCount}</div>
                   <button type="button" onClick={completeManualSchedule}>安排完成</button>
                   <button type="button" onClick={() => scrollToTop()}>回到頂部</button>
                 </div>
