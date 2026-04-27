@@ -869,7 +869,6 @@ export default function App() {
                   {selectedEmployee ? <PersonDetailView person={selectedEmployee} qualifications={selectedEmployeeQualifications} /> : <Empty text="此班別目前沒有可顯示人員。" />}
                 </div>
               </div>
-              </div>
             </Layout>
           ) : null}
 
