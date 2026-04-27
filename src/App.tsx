@@ -1720,6 +1720,10 @@ export default function App() {
                 .manual-modal-backdrop-top .manual-modal { box-shadow: 0 30px 80px rgba(15, 23, 42, .42); }
                 .manual-modal { width: min(460px, 100%); max-height: 86vh; overflow: auto; border-radius: 20px; background: #fff; padding: 18px; box-shadow: 0 22px 60px rgba(15, 23, 42, .3); color: #0f172a; overscroll-behavior: contain; }
                 .manual-modal h3 { position: sticky; top: -18px; z-index: 3; margin: -18px -18px 12px; padding: 18px 18px 12px; font-size: 22px; font-weight: 950; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .85); }
+                .manual-modal-title-row { position: sticky; top: -18px; z-index: 8; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -18px -18px 12px; padding: 16px 16px 12px 18px; background: #fff; border-bottom: 1px solid rgba(226, 232, 240, .9); }
+                .manual-modal-title-row h3 { position: static; margin: 0; padding: 0; border: 0; font-size: 22px; font-weight: 950; background: transparent; }
+                .manual-modal-close-button { width: 44px; height: 44px; flex: 0 0 auto; border: 0; border-radius: 999px; background: #e2e8f0; color: #0f172a; font-size: 26px; line-height: 1; font-weight: 950; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation; }
+                .manual-modal-close-button:active { transform: scale(.96); }
                 .manual-modal p { line-height: 1.7; color: #334155; font-weight: 800; }
                 .manual-modal input { width: 100%; box-sizing: border-box; border: 1px solid #cbd5e1; border-radius: 14px; padding: 13px 14px; font-size: 18px; }
                 .manual-modal-actions { position: sticky; bottom: -18px; z-index: 4; display: flex; justify-content: flex-end; gap: 10px; margin: 16px -18px -18px; padding: 14px 18px 18px; background: rgba(255,255,255,.96); border-top: 1px solid rgba(226, 232, 240, .95); box-shadow: 0 -12px 28px rgba(15, 23, 42, .08); backdrop-filter: blur(10px); }
@@ -1814,6 +1818,8 @@ export default function App() {
                   .manual-extra-pill { width: 100%; border-radius: 22px; }
                   .manual-modal { width: calc(100vw - 24px); max-height: 84dvh; padding: 16px; }
                   .manual-modal h3 { top: -16px; margin: -16px -16px 12px; padding: 16px 16px 12px; }
+                  .manual-modal-title-row { top: -16px; margin: -16px -16px 12px; padding: 14px 14px 10px 16px; }
+                  .manual-modal-close-button { width: 42px; height: 42px; font-size: 25px; }
                   .manual-modal-actions { bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); flex-direction: column-reverse; }
                   .manual-modal-actions button { width: 100%; min-height: 52px; font-size: 17px; }
                   .manual-preview-modal { max-height: 88dvh; }
@@ -2191,9 +2197,12 @@ export default function App() {
               {manualExtraDialog && manualExtraDialogItem ? (() => {
                 const selectedPeople = manualExtraDialogItem.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
                 return (
-                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
-                    <div className="manual-modal">
-                      <h3>設定自訂工作</h3>
+                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true" translate="no" onClick={closeManualExtraDialog}>
+                    <div className="manual-modal" onClick={(event) => event.stopPropagation()}>
+                      <div className="manual-modal-title-row">
+                        <h3>設定自訂工作</h3>
+                        <button type="button" className="manual-modal-close-button" aria-label="關閉自訂工作視窗" onClick={closeManualExtraDialog}>×</button>
+                      </div>
                       <label className="manual-extra-dialog-field">
                         自訂工作名稱
                         <input
