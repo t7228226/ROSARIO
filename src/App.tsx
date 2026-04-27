@@ -105,6 +105,17 @@ type RolePermissionMapDefinition = {
   note?: string;
 };
 
+type PermissionAdminTab = "role" | "account" | "items" | "exceptions" | "check";
+type PersonalPermissionEffect = "allow" | "deny";
+type PersonalPermissionExceptionDefinition = {
+  id: string;
+  employeeId: string;
+  permissionId: string;
+  effect: PersonalPermissionEffect;
+  enabled: string;
+  note?: string;
+};
+
 const databasePermissionItems: PermissionItemDefinition[] = [
   { id: "PERM_001", name: "首頁查看", category: "查詢", page: "首頁", action: "查看", mobileFirst: "Y", enabled: "啟用", note: "基本入口" },
   { id: "PERM_002", name: "查詢人員資格查看", category: "查詢", page: "查詢人員資格", action: "查看", mobileFirst: "Y", enabled: "啟用", note: "主功能" },
@@ -388,6 +399,10 @@ export default function App() {
 
   const [peopleSearchKeyword, setPeopleSearchKeyword] = useState("");
   const [permissionSearchKeyword, setPermissionSearchKeyword] = useState("");
+  const [permissionAdminTab, setPermissionAdminTab] = useState<PermissionAdminTab>("role");
+  const [permissionSelectedRole, setPermissionSelectedRole] = useState<UserRole>("組長");
+  const [permissionSelectedPersonId, setPermissionSelectedPersonId] = useState("");
+  const [personalPermissionExceptions, setPersonalPermissionExceptions] = useState<PersonalPermissionExceptionDefinition[]>([]);
 
   const [smartShift, setSmartShift] = useState<TeamName>("婷芬班");
   const [smartDay, setSmartDay] = useState<ShiftMode>("當班");
@@ -1450,77 +1465,238 @@ export default function App() {
   function renderPermissionAdmin() {
     const permissionItemMap = new Map(databasePermissionItems.map((item) => [item.id, item]));
     const enabledAccountCount = permissionRows.filter((person) => String(person.employmentStatus || "").trim() !== "停用").length;
+    const visiblePermissions = databasePermissionItems.filter((item) => permissionSearchMatches([item.id, item.name, item.category, item.page, item.action, item.enabled, item.note], permissionSearchKeyword));
+    const availablePermissions = databasePermissionItems.filter((item) => item.enabled !== "停用");
+    const selectedPermissionPerson = permissionRows.find((person) => person.id === permissionSelectedPersonId) || permissionRows[0] || null;
+    const selectedPersonExceptions = selectedPermissionPerson
+      ? personalPermissionExceptions.filter((item) => item.employeeId === selectedPermissionPerson.id && item.enabled !== "停用")
+      : [];
+    const selectedPersonExceptionMap = new Map(selectedPersonExceptions.map((item) => [item.permissionId, item]));
+
+    function getRoleAllowed(role: UserRole, permissionId: string) {
+      const allowedRoles = permissionOptions.filter((item) => roleRank[item] <= roleRank[role]);
+      return databaseRolePermissionMaps.some((item) =>
+        allowedRoles.includes(item.role) &&
+        item.permissionId === permissionId &&
+        item.allowed === "Y" &&
+        item.enabled === "啟用"
+      );
+    }
+
+    function getPersonFinalAllowed(person: Person, permissionId: string) {
+      const role = getSystemPermission(person) || "技術員";
+      const exception = personalPermissionExceptions.find((item) => item.employeeId === person.id && item.permissionId === permissionId && item.enabled !== "停用");
+      if (exception?.effect === "deny") return false;
+      if (exception?.effect === "allow") return true;
+      return getRoleAllowed(role, permissionId);
+    }
+
+    function setPersonalException(person: Person | null, permissionId: string, effect: PersonalPermissionEffect) {
+      if (!person) return;
+      setPersonalPermissionExceptions((current) => {
+        const exists = current.find((item) => item.employeeId === person.id && item.permissionId === permissionId);
+        if (exists?.effect === effect && exists.enabled !== "停用") {
+          return current.map((item) => item.id === exists.id ? { ...item, enabled: "停用" } : item);
+        }
+        if (exists) {
+          return current.map((item) => item.id === exists.id ? { ...item, effect, enabled: "啟用" } : item);
+        }
+        return [
+          ...current,
+          {
+            id: `EXC_${Date.now()}_${permissionId}`,
+            employeeId: person.id,
+            permissionId,
+            effect,
+            enabled: "啟用",
+            note: effect === "allow" ? "個人額外開放" : "個人單獨禁止",
+          },
+        ];
+      });
+    }
+
+    const tabButton = (key: PermissionAdminTab, label: string) => (
+      <button
+        key={key}
+        type="button"
+        className={permissionAdminTab === key ? "primary" : "ghost"}
+        onClick={() => setPermissionAdminTab(key)}
+        style={{ minHeight: 40, borderRadius: 999, padding: "8px 14px", fontWeight: 900 }}
+      >
+        {label}
+      </button>
+    );
+
+    const roleButton = (role: UserRole) => (
+      <button
+        key={role}
+        type="button"
+        className={permissionSelectedRole === role ? "primary" : "ghost"}
+        onClick={() => setPermissionSelectedRole(role)}
+        style={{ minHeight: 38, borderRadius: 999, padding: "8px 13px", fontWeight: 900 }}
+      >
+        {role}
+      </button>
+    );
+
     return (
-      <Layout title="權限管理" subtitle="依資料庫 07_帳號管理、08_權限項目、09_角色權限對應三個頁面呈現；智能試排已關閉並停用。">
+      <Layout title="權限管理" subtitle="以角色權限為主，個人例外為輔；對應 07_帳號管理、08_權限項目、09_角色權限對應，並預留 10_個人例外權限。">
         <div className="grid three compact-home-stats">
           <StatCard title="07 帳號管理" value={String(permissionRows.length)} note={`啟用參考：${enabledAccountCount}`} />
           <StatCard title="08 權限項目" value={String(databasePermissionItems.length)} note="含停用項目" />
-          <StatCard title="09 角色權限對應" value={String(databaseRolePermissionMaps.length)} note="角色與功能對照" />
+          <StatCard title="個人例外權限" value={String(personalPermissionExceptions.filter((item) => item.enabled !== "停用").length)} note="本頁範本暫存" />
         </div>
+
         <div className="panel">
+          <div className="toolbar" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {[tabButton("role", "角色權限"), tabButton("account", "帳號管理"), tabButton("items", "權限項目"), tabButton("exceptions", "例外權限"), tabButton("check", "權限檢查")]}
+          </div>
           <div className="toolbar">
             <input placeholder="搜尋工號、姓名、權限項目、角色、功能頁面" value={permissionSearchKeyword} onChange={(e) => setPermissionSearchKeyword(e.target.value)} />
           </div>
-          <p className="muted">此頁已改為對應資料庫 07 / 08 / 09 的管理口徑。P0033 固定為最高權限；智能試排功能不再出現在選單，也不再允許執行。</p>
+          <p className="muted">判斷順序：個人單獨禁止 ＞ 個人額外開放 ＞ 角色預設權限。智能試排保留停用紀錄，不開放操作入口。</p>
         </div>
-        <div className="panel">
-          <div className="panel-header"><h3>07_帳號管理</h3><span>工號 / 登入帳號 / 系統權限 / 啟用狀態</span></div>
-          <table className="table">
-            <thead><tr><th>工號</th><th>登入帳號</th><th>姓名 / 備註</th><th>系統權限</th><th>調整權限</th><th>啟用狀態</th></tr></thead>
-            <tbody>{permissionRows.map((person) => {
-              const permission = String(getSystemPermission(person) || "技術員");
-              const status = String(person.employmentStatus || "啟用");
-              return (
-                <tr key={person.id}>
-                  <td>{person.id}</td>
-                  <td>{person.id}</td>
-                  <td>{person.name}</td>
-                  <td>{permission}{person.id === "P0033" ? "（鎖定）" : ""}</td>
-                  <td>{person.id === "P0033" ? <span>最高權限（鎖定）</span> : <ConfirmSelect value={permission} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />}</td>
-                  <td><span className={permissionStatusClass(status)}>{status || "啟用"}</span></td>
-                </tr>
-              );
-            })}</tbody>
-          </table>
-        </div>
-        <div className="panel">
-          <div className="panel-header"><h3>08_權限項目</h3><span>功能頁面 / 動作類型 / 手機優先</span></div>
-          <table className="table">
-            <thead><tr><th>權限項目ID</th><th>權限項目名稱</th><th>分類</th><th>功能頁面</th><th>動作</th><th>手機</th><th>狀態</th><th>備註</th></tr></thead>
-            <tbody>{permissionItemRows.map((item) => (
-              <tr key={item.id}>
-                <td>{item.id}</td>
-                <td>{item.name}</td>
-                <td>{item.category}</td>
-                <td>{item.page}</td>
-                <td>{item.action}</td>
-                <td>{item.mobileFirst}</td>
-                <td><span className={permissionStatusClass(item.enabled)}>{item.enabled}</span></td>
-                <td>{item.note || "-"}</td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-        <div className="panel">
-          <div className="panel-header"><h3>09_角色權限對應</h3><span>角色 / 權限項目 / 是否允許</span></div>
-          <table className="table">
-            <thead><tr><th>對應ID</th><th>系統權限角色</th><th>權限項目ID</th><th>權限項目名稱</th><th>是否允許</th><th>啟用狀態</th><th>備註</th></tr></thead>
-            <tbody>{rolePermissionRows.map((item) => {
-              const permissionItem = permissionItemMap.get(item.permissionId);
-              return (
+
+        {permissionAdminTab === "role" ? (
+          <>
+            <div className="panel">
+              <div className="panel-header"><h3>角色權限</h3><span>先選身分，再檢視該身分可開放的項目</span></div>
+              <div className="toolbar" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                {permissionOptions.map(roleButton)}
+              </div>
+              <div className="grid two">
+                {visiblePermissions.map((item) => {
+                  const allowed = getRoleAllowed(permissionSelectedRole, item.id);
+                  const disabled = item.enabled === "停用";
+                  return (
+                    <div key={item.id} className="panel" style={{ margin: 0, opacity: disabled ? 0.55 : 1 }}>
+                      <div className="panel-header"><h3>{item.page}</h3><span>{item.id}</span></div>
+                      <strong>{item.name}</strong>
+                      <p className="muted">{item.category}｜{item.action}{item.note ? `｜${item.note}` : ""}</p>
+                      <span className={allowed && !disabled ? "chip" : "chip danger"}>{disabled ? "已停用" : allowed ? "已開放" : "未開放"}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="panel">
+              <div className="panel-header"><h3>{permissionSelectedRole} 人員</h3><span>此區只做檢視；人員角色請到帳號管理調整</span></div>
+              <div className="grid three">
+                {permissionRows.filter((person) => getSystemPermission(person) === permissionSelectedRole).map((person) => (
+                  <div key={person.id} className="panel" style={{ margin: 0 }}>
+                    <strong>{person.name}</strong>
+                    <p className="muted">{person.id}｜{String(getTeamOfPerson(person))}</p>
+                    <span className={permissionStatusClass(String(person.employmentStatus || "啟用"))}>{String(person.employmentStatus || "啟用")}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        ) : null}
+
+        {permissionAdminTab === "account" ? (
+          <div className="panel">
+            <div className="panel-header"><h3>07_帳號管理</h3><span>工號 / 登入帳號 / 系統權限 / 啟用狀態</span></div>
+            <table className="table">
+              <thead><tr><th>工號</th><th>登入帳號</th><th>姓名</th><th>系統權限</th><th>調整權限</th><th>狀態</th></tr></thead>
+              <tbody>{permissionRows.map((person) => {
+                const permission = String(getSystemPermission(person) || "技術員");
+                const status = String(person.employmentStatus || "啟用");
+                return (
+                  <tr key={person.id}>
+                    <td>{person.id}</td>
+                    <td>{person.id}</td>
+                    <td>{person.name}</td>
+                    <td>{permission}{person.id === "P0033" ? "（鎖定）" : ""}</td>
+                    <td>{person.id === "P0033" ? <span>最高權限（鎖定）</span> : <ConfirmSelect value={permission} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />}</td>
+                    <td><span className={permissionStatusClass(status)}>{status || "啟用"}</span></td>
+                  </tr>
+                );
+              })}</tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {permissionAdminTab === "items" ? (
+          <div className="panel">
+            <div className="panel-header"><h3>08_權限項目</h3><span>進階設定：功能頁面 / 動作類型 / 啟用狀態</span></div>
+            <table className="table">
+              <thead><tr><th>權限ID</th><th>名稱</th><th>分類</th><th>頁面</th><th>動作</th><th>手機</th><th>狀態</th><th>備註</th></tr></thead>
+              <tbody>{permissionItemRows.map((item) => (
                 <tr key={item.id}>
-                  <td>{item.id}</td>
-                  <td>{item.role}</td>
-                  <td>{item.permissionId}</td>
-                  <td>{permissionItem?.name || "-"}</td>
-                  <td><span className={permissionStatusClass(item.allowed)}>{item.allowed}</span></td>
-                  <td><span className={permissionStatusClass(item.enabled)}>{item.enabled}</span></td>
-                  <td>{item.note || "-"}</td>
+                  <td>{item.id}</td><td>{item.name}</td><td>{item.category}</td><td>{item.page}</td><td>{item.action}</td><td>{item.mobileFirst}</td>
+                  <td><span className={permissionStatusClass(item.enabled)}>{item.enabled}</span></td><td>{item.note || "-"}</td>
                 </tr>
-              );
-            })}</tbody>
-          </table>
-        </div>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : null}
+
+        {permissionAdminTab === "exceptions" ? (
+          <div className="panel">
+            <div className="panel-header"><h3>10_個人例外權限</h3><span>針對特定對象單獨開放或禁止，不改變原本身分</span></div>
+            <div className="grid two">
+              <div className="panel" style={{ margin: 0 }}>
+                <h3>選擇人員</h3>
+                <div className="list-scroll" style={{ maxHeight: 420 }}>
+                  {permissionRows.map((person) => (
+                    <button
+                      key={person.id}
+                      type="button"
+                      className={selectedPermissionPerson?.id === person.id ? "list-row active" : "list-row"}
+                      onClick={() => setPermissionSelectedPersonId(person.id)}
+                    >
+                      <strong>{person.name}</strong>
+                      <span>{person.id}｜{String(getSystemPermission(person) || "技術員")}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="panel" style={{ margin: 0 }}>
+                <h3>{selectedPermissionPerson ? `${selectedPermissionPerson.name} 的例外權限` : "請先選擇人員"}</h3>
+                <p className="muted">綠色代表額外開放；紅色代表單獨禁止。再次點同一狀態可取消例外。</p>
+                <div className="list-scroll" style={{ maxHeight: 420 }}>
+                  {availablePermissions.map((item) => {
+                    const exception = selectedPersonExceptionMap.get(item.id);
+                    const finalAllowed = selectedPermissionPerson ? getPersonFinalAllowed(selectedPermissionPerson, item.id) : false;
+                    return (
+                      <div key={item.id} className="list-row" style={{ alignItems: "stretch" }}>
+                        <div>
+                          <strong>{item.page}</strong>
+                          <span>{item.name}｜最後結果：{finalAllowed ? "可使用" : "不可使用"}</span>
+                        </div>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                          <button type="button" className={exception?.effect === "allow" ? "primary" : "ghost"} onClick={() => setPersonalException(selectedPermissionPerson, item.id, "allow")}>額外開放</button>
+                          <button type="button" className={exception?.effect === "deny" ? "danger" : "ghost"} onClick={() => setPersonalException(selectedPermissionPerson, item.id, "deny")}>單獨禁止</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <p className="muted">目前這版先以前端暫存呈現流程；若要寫回資料庫，建議新增 10_個人例外權限 並補 GAS/API 寫入端點。</p>
+          </div>
+        ) : null}
+
+        {permissionAdminTab === "check" ? (
+          <div className="panel">
+            <div className="panel-header"><h3>權限檢查</h3><span>快速盤查停用功能、例外權限與高權限帳號</span></div>
+            <div className="grid three compact-home-stats">
+              <StatCard title="停用功能" value={String(databasePermissionItems.filter((item) => item.enabled === "停用").length)} note="例如智能試排" />
+              <StatCard title="個人例外" value={String(personalPermissionExceptions.filter((item) => item.enabled !== "停用").length)} note="allow / deny" />
+              <StatCard title="最高權限帳號" value={String(permissionRows.filter((person) => getSystemPermission(person) === "最高權限").length)} note="需定期檢查" />
+            </div>
+            <table className="table">
+              <thead><tr><th>人員</th><th>角色</th><th>例外項目</th><th>效果</th></tr></thead>
+              <tbody>{personalPermissionExceptions.filter((item) => item.enabled !== "停用").map((item) => {
+                const person = permissionRows.find((row) => row.id === item.employeeId);
+                const perm = permissionItemMap.get(item.permissionId);
+                return <tr key={item.id}><td>{person?.name || item.employeeId}</td><td>{String(person ? getSystemPermission(person) || "技術員" : "-")}</td><td>{perm?.name || item.permissionId}</td><td><span className={item.effect === "allow" ? "chip" : "chip danger"}>{item.effect === "allow" ? "額外開放" : "單獨禁止"}</span></td></tr>;
+              })}</tbody>
+            </table>
+          </div>
+        ) : null}
       </Layout>
     );
   }
