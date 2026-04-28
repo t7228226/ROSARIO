@@ -1550,13 +1550,14 @@ export default function App() {
     const selectedPersonExceptionMap = new Map(selectedPersonExceptions.map((item) => [item.permissionId, item]));
 
     function getRoleAllowed(role: UserRole, permissionId: string) {
-      const allowedRoles = permissionOptions.filter((item) => roleRank[item] <= roleRank[role]);
-      return rolePermissionMapStates.some((item) =>
-        allowedRoles.includes(item.role) &&
+      // 角色權限管理頁採「該角色直接設定」口徑。
+      // 不再繼承低階角色權限，避免例如「組長」因技術員已開放而無法關閉同一功能。
+      const match = rolePermissionMapStates.find((item) =>
+        item.role === role &&
         item.permissionId === permissionId &&
-        item.allowed === "Y" &&
         item.enabled === "啟用"
       );
+      return match?.allowed === "Y";
     }
 
     function getPersonFinalAllowed(person: Person, permissionId: string) {
@@ -1706,7 +1707,7 @@ export default function App() {
         {permissionAdminTab === "role" ? (
           <>
             <div className="panel">
-              <div className="panel-header"><h3>角色權限</h3><span>最高權限可直接點擊切換該角色是否開放功能</span></div>
+              <div className="panel-header"><h3>角色權限</h3><span>最高權限可直接點擊切換該角色是否開放功能；每個角色獨立設定，不再被低階角色繼承卡住</span></div>
               <div className="toolbar" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {permissionOptions.map(roleButton)}
               </div>
