@@ -86,11 +86,11 @@ const globalThemeOptions: Array<{ key: GlobalThemeKey; label: string; note: stri
 ];
 
 const globalFontOptions: Array<{ key: GlobalFontKey; label: string; note: string }> = [
-  { key: "system", label: "系統清晰", note: "預設，手機最穩定" },
-  { key: "rounded", label: "圓潤可愛", note: "柔和、易讀" },
-  { key: "serif", label: "典雅明體", note: "正式、標題感強" },
-  { key: "mono", label: "科技等寬", note: "數字與代碼整齊" },
-  { key: "hand", label: "手寫溫度", note: "較有親和感" },
+  { key: "system", label: "黑體清晰", note: "繁中手機最穩定，適合正式操作" },
+  { key: "rounded", label: "圓體柔和", note: "圓潤感明顯，適合可愛柔和樣式" },
+  { key: "serif", label: "明體典雅", note: "筆畫有襯線，標題正式感強" },
+  { key: "mono", label: "等寬科技", note: "每個字寬接近一致，數字代碼整齊" },
+  { key: "hand", label: "楷體手寫", note: "繁中楷體感，和黑體差異明顯" },
   { key: "random", label: "隨機字型", note: "每次重新整理自動抽一款" },
 ];
 
@@ -2202,6 +2202,114 @@ export default function App() {
         .theme-selector-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
         .theme-selector-heading h3 { margin: 0; font-size: 22px; }
         .theme-selector-heading p { margin: 6px 0 0; color: var(--theme-muted); }
+
+        /* 全站水平置中與可讀性修正 */
+        .brand-card, .control-card, .layout-title, .content > section, .panel, .stat-card {
+          text-align: center;
+        }
+        .brand-card, .control-card {
+          background: var(--theme-panel) !important;
+          color: var(--theme-text) !important;
+          border: 1px solid var(--theme-border) !important;
+        }
+        .brand-card *, .control-card *, .layout-title *, .panel *, .stat-card * {
+          color: inherit;
+        }
+        .brand-card p, .control-card label, .layout-title p, .panel p, .muted, .list-row span {
+          color: var(--theme-muted) !important;
+        }
+        .brand-kicker, .brand-card h1, .layout-title h1, .content h1, .content h2, .content h3, .panel h3 {
+          color: var(--theme-text) !important;
+          text-align: center;
+        }
+        .control-card input, .control-card select, .control-card button,
+        .toolbar input, .toolbar select, .toolbar button,
+        .content input, .content select, .content textarea {
+          text-align: center;
+        }
+        .nav-list {
+          align-items: stretch;
+        }
+        .nav-item {
+          text-align: center;
+          justify-content: center;
+        }
+        .list-row {
+          text-align: center;
+          justify-content: center;
+          align-items: center;
+        }
+        .list-row strong, .list-row span {
+          width: 100%;
+          text-align: center;
+        }
+        .panel-header {
+          justify-content: center;
+          text-align: center;
+        }
+        .panel-header > * {
+          text-align: center;
+        }
+        .grid, .toolbar {
+          justify-items: center;
+        }
+        .toolbar {
+          justify-content: center;
+        }
+        .home-style-card {
+          text-align: center;
+        }
+        .home-style-card strong, .home-style-card span {
+          text-align: center;
+        }
+
+        /* 通知 Toast：強制浮在目前視窗，不佔頁面高度 */
+        .app-toast {
+          position: fixed !important;
+          top: calc(env(safe-area-inset-top, 0px) + 14px) !important;
+          left: 50% !important;
+          transform: translateX(-50%) !important;
+          z-index: 99999 !important;
+          width: min(720px, calc(100vw - 28px)) !important;
+          max-width: calc(100vw - 28px);
+          display: grid;
+          grid-template-columns: 1fr auto;
+          align-items: center;
+          gap: 12px;
+          padding: 14px 16px;
+          border-radius: 18px;
+          pointer-events: none;
+          text-align: center;
+        }
+        .app-toast span {
+          color: var(--theme-toast-text, #fff) !important;
+          text-align: center;
+          font-weight: 950;
+        }
+        .app-toast-close {
+          pointer-events: auto !important;
+          color: var(--theme-toast-text, #fff) !important;
+          background: color-mix(in srgb, var(--theme-toast-text, #fff) 13%, transparent) !important;
+          border: 1px solid color-mix(in srgb, var(--theme-toast-text, #fff) 28%, transparent) !important;
+        }
+
+        /* 繁體中文字型：使用系統內常見可用字族，差異比原本更明顯 */
+        .app-font-system { --theme-font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+        .app-font-rounded { --theme-font-family: "jf open 粉圓 2.0", "Gen Jyuu Gothic", "Kosugi Maru", "Arial Rounded MT Bold", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+        .app-font-serif { --theme-font-family: "Noto Serif TC", "Source Han Serif TC", "Songti TC", "PMingLiU", "MingLiU", serif; }
+        .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
+        .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
+
+        @media (max-width: 700px) {
+          .app-toast {
+            top: calc(env(safe-area-inset-top, 0px) + 10px) !important;
+            width: calc(100vw - 20px) !important;
+            max-width: calc(100vw - 20px);
+          }
+          .brand-card, .control-card, .panel {
+            border-radius: 20px;
+          }
+        }
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
@@ -2234,7 +2342,20 @@ export default function App() {
           </nav>
         </aside>
         {flash ? (
-          <div className={`app-toast ${toastStyleMode}`} role="status" aria-live="polite">
+          <div
+            className={`app-toast ${toastStyleMode}`}
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "fixed",
+              top: "calc(env(safe-area-inset-top, 0px) + 14px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              zIndex: 99999,
+              width: "min(720px, calc(100vw - 28px))",
+              pointerEvents: "none",
+            }}
+          >
             <span>{flash}</span>
             <button type="button" className="app-toast-close" onClick={() => setFlash("")} aria-label="關閉通知">×</button>
           </div>
