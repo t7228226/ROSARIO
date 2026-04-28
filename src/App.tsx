@@ -2246,6 +2246,32 @@ export default function App() {
         }
 
 
+        /* 首頁標題軸線修正：標題、副標、內容全部使用同一個容器置中 */
+        .content:has(.home-flat-page) .layout-title {
+          display: none !important;
+        }
+        .home-flat-title {
+          display: grid;
+          justify-items: center;
+          text-align: center;
+          width: 100%;
+          margin: 0 auto 18px;
+        }
+        .home-flat-title h1 {
+          margin: 0 0 8px;
+          color: var(--theme-text) !important;
+          font-size: clamp(34px, 5vw, 52px);
+          line-height: 1.1;
+          text-align: center !important;
+        }
+        .home-flat-title p {
+          margin: 0;
+          width: 100%;
+          color: var(--theme-muted) !important;
+          font-size: clamp(17px, 2.5vw, 24px);
+          line-height: 1.45;
+          text-align: center !important;
+        }
         /* 極簡首頁：單一主軸，不再使用大摘要卡，避免右側大片空白 */
         .content:has(.home-flat-page) {
           display: block;
@@ -2429,6 +2455,21 @@ export default function App() {
         .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
         .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
 
+        .home-flat-page {
+          margin-left: auto !important;
+          margin-right: auto !important;
+          justify-items: stretch !important;
+        }
+        .home-flat-page > * {
+          width: 100%;
+        }
+        .home-flat-title,
+        .home-flat-title h1,
+        .home-flat-title p {
+          justify-self: center;
+          text-align: center !important;
+        }
+
         @media (max-width: 700px) {
           .content:has(.home-flat-page) > section {
             width: 100%;
@@ -2535,8 +2576,12 @@ export default function App() {
         ) : null}
         <main className="content" ref={contentRef}>
           {page === "home" ? (
-            <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
+            <Layout title="" subtitle="">
               <section className="home-flat-page">
+                <div className="home-flat-title">
+                  <h1>首頁</h1>
+                  <p>全站入口、系統摘要與個人外觀設定。</p>
+                </div>
                 <div className="home-flat-stats">
                   <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
                   <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
