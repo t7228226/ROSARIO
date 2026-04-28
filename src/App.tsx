@@ -407,6 +407,7 @@ export default function App() {
   const [rolePermissionMapStates, setRolePermissionMapStates] = useState<RolePermissionMapDefinition[]>(() => databaseRolePermissionMaps.map((item) => ({ ...item })));
   const [accountStatusById, setAccountStatusById] = useState<Record<string, string>>({});
   const [accountPasswordDrafts, setAccountPasswordDrafts] = useState<Record<string, string>>({});
+  const [permissionExceptionKeyword, setPermissionExceptionKeyword] = useState("");
 
   const [smartShift, setSmartShift] = useState<TeamName>("婷芬班");
   const [smartDay, setSmartDay] = useState<ShiftMode>("當班");
@@ -1469,6 +1470,12 @@ export default function App() {
     const permissionItemMap = new Map(permissionItemStates.map((item) => [item.id, item]));
     const getAccountStatus = (person: Person) =>
       accountStatusById[person.id] || (String((person as Person & Record<string, unknown>).accountStatus || (person as Person & Record<string, unknown>).enabled || "啟用").includes("停") ? "停用" : "啟用");
+    const getAccountPassword = (person: Person) => String(
+      (person as Person & Record<string, unknown>).password ??
+        (person as Person & Record<string, unknown>).loginPassword ??
+        (person as Person & Record<string, unknown>)["登入密碼"] ??
+        ""
+    );
     const enabledAccountCount = permissionRows.filter((person) => getAccountStatus(person) === "啟用").length;
     const visiblePermissions = permissionItemStates.filter((item) => permissionSearchMatches([item.id, item.name, item.category, item.page, item.action, item.enabled, item.note], permissionSearchKeyword));
     const availablePermissions = permissionItemStates.filter((item) => item.enabled !== "停用");
@@ -1651,7 +1658,10 @@ export default function App() {
                           <h3 style={{ marginBottom: 2 }}>{item.page}</h3>
                           <span>{item.name}</span>
                         </div>
-                        {enabledToggleButton(enabled, () => !disabled && toggleRolePermission(permissionSelectedRole, item.id), disabled ? "功能停用" : enabled ? "啟用" : "停用")}
+                        {enabledToggleButton(enabled, () => {
+                          if (disabled) togglePermissionItemEnabled(item.id);
+                          else toggleRolePermission(permissionSelectedRole, item.id);
+                        }, disabled ? "功能停用" : enabled ? "啟用" : "停用")}
                       </div>
                       <p className="muted" style={{ margin: "8px 0 0" }}>{item.category}｜{item.action}{item.note ? `｜${item.note}` : ""}</p>
                     </div>
@@ -1676,44 +1686,60 @@ export default function App() {
 
         {permissionAdminTab === "account" ? (
           <div className="panel">
-            <div className="panel-header"><h3>07_帳號管理</h3><span>帳號 / 角色 / 密碼 / 啟用狀態</span></div>
-            <div className="grid two">
+            <div className="panel-header"><h3>07_帳號管理</h3><span>緊湊版：角色 / 密碼 / 啟用狀態</span></div>
+            <div style={{ display: "grid", gap: 8 }}>
               {permissionRows.map((person) => {
                 const permission = String(getSystemPermission(person) || "技術員");
                 const accountStatus = getAccountStatus(person);
+                const currentPassword = getAccountPassword(person);
                 return (
-                  <div key={person.id} className="panel" style={{ margin: 0, padding: 12 }}>
-                    <div className="panel-header" style={{ alignItems: "center", gap: 8 }}>
-                      <div>
-                        <h3 style={{ marginBottom: 2 }}>{person.name}</h3>
-                        <span>{person.id}｜{String(getTeamOfPerson(person))}</span>
-                      </div>
-                      {enabledToggleButton(accountStatus === "啟用", () => toggleAccountEnabled(person))}
+                  <div
+                    key={person.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "minmax(86px, 1fr) minmax(82px, 0.85fr) minmax(108px, 1.05fr) auto",
+                      gap: 7,
+                      alignItems: "center",
+                      padding: "8px 9px",
+                      border: "1px solid #e2e8f0",
+                      borderRadius: 15,
+                      background: "#ffffff",
+                    }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ display: "block", fontSize: 15, lineHeight: 1.2 }}>{person.name}</strong>
+                      <span className="muted" style={{ fontSize: 12 }}>{person.id}</span>
                     </div>
-                    <div className="toolbar" style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8, margin: "8px 0 0" }}>
-                      <label style={{ fontWeight: 900, color: "#475569" }}>系統權限</label>
-                      {person.id === "P0033" ? (
-                        <span className="chip">最高權限（鎖定）</span>
-                      ) : (
-                        <ConfirmSelect value={permission} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />
-                      )}
-                      <label style={{ fontWeight: 900, color: "#475569" }}>更改密碼</label>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                    {person.id === "P0033" ? (
+                      <span className="chip" style={{ justifyContent: "center" }}>最高權限</span>
+                    ) : (
+                      <ConfirmSelect value={permission} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />
+                    )}
+                    <div style={{ display: "grid", gap: 5 }}>
+                      <input
+                        type="text"
+                        readOnly
+                        value={currentPassword || "未讀取"}
+                        title="目前密碼"
+                        style={{ minHeight: 32, fontSize: 13, background: "#f8fafc" }}
+                      />
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 5 }}>
                         <input
-                          type="password"
-                          placeholder="輸入新密碼"
+                          type="text"
+                          placeholder="新密碼"
                           value={accountPasswordDrafts[person.id] || ""}
                           onChange={(e) => setAccountPasswordDrafts((current) => ({ ...current, [person.id]: e.target.value }))}
-                          style={{ minHeight: 40 }}
+                          style={{ minHeight: 32, fontSize: 13 }}
                         />
-                        <button className="primary" type="button" onClick={() => updateAccountPassword(person)} style={{ borderRadius: 14, minHeight: 40, padding: "0 14px" }}>設定</button>
+                        <button className="primary" type="button" onClick={() => updateAccountPassword(person)} style={{ borderRadius: 12, minHeight: 32, padding: "0 9px", fontSize: 13 }}>改</button>
                       </div>
                     </div>
+                    {enabledToggleButton(accountStatus === "啟用", () => toggleAccountEnabled(person))}
                   </div>
                 );
               })}
             </div>
-            <p className="muted">狀態為帳號啟用/停用，不代表在職狀態。若狀態或密碼未永久寫回，請同步補 GAS updatePerson 對 accountStatus / password 欄位的支援。</p>
+            <p className="muted">目前密碼只有在 GAS/bootstrap 有回傳 password、loginPassword 或「登入密碼」欄位時才會顯示。若顯示未讀取，代表資料源尚未提供密碼欄位。</p>
           </div>
         ) : null}
 
@@ -1743,11 +1769,19 @@ export default function App() {
         {permissionAdminTab === "exceptions" ? (
           <div className="panel">
             <div className="panel-header"><h3>10_個人例外權限</h3><span>針對特定對象單獨開放或禁止，不改變原本身分</span></div>
+            <input
+              value={permissionExceptionKeyword}
+              onChange={(e) => setPermissionExceptionKeyword(e.target.value)}
+              placeholder="搜尋姓名、工號、權限項目"
+              style={{ marginBottom: 12 }}
+            />
             <div className="grid two">
               <div className="panel" style={{ margin: 0 }}>
                 <h3>選擇人員</h3>
                 <div className="list-scroll" style={{ maxHeight: 420 }}>
-                  {permissionRows.map((person) => (
+                  {permissionRows
+                    .filter((person) => permissionSearchMatches([person.name, person.id, String(getSystemPermission(person) || "技術員")], permissionExceptionKeyword))
+                    .map((person) => (
                     <button
                       key={person.id}
                       type="button"
@@ -1764,7 +1798,9 @@ export default function App() {
                 <h3>{selectedPermissionPerson ? `${selectedPermissionPerson.name} 的例外權限` : "請先選擇人員"}</h3>
                 <p className="muted">綠色代表額外開放；紅色代表單獨禁止。再次點同一狀態可取消例外。</p>
                 <div className="list-scroll" style={{ maxHeight: 420 }}>
-                  {availablePermissions.map((item) => {
+                  {availablePermissions
+                    .filter((item) => permissionSearchMatches([item.id, item.name, item.page, item.category], permissionExceptionKeyword))
+                    .map((item) => {
                     const exception = selectedPersonExceptionMap.get(item.id);
                     const finalAllowed = selectedPermissionPerson ? getPersonFinalAllowed(selectedPermissionPerson, item.id) : false;
                     return (
