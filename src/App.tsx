@@ -2524,6 +2524,144 @@ export default function App() {
             border-radius: 20px;
           }
         }
+
+        /* 選單 UI 隔離修正：避免首頁/全站置中樣式污染登入區與功能選單 */
+        .sidebar {
+          background: #0f172a !important;
+          color: #f8fafc !important;
+          display: grid !important;
+          gap: 14px !important;
+          align-content: start !important;
+          text-align: left !important;
+        }
+        .sidebar * {
+          box-sizing: border-box;
+        }
+        .sidebar .brand-card,
+        .sidebar .control-card {
+          width: 100% !important;
+          background: rgba(255, 255, 255, .94) !important;
+          color: #0f172a !important;
+          border: 1px solid rgba(203, 213, 225, .75) !important;
+          box-shadow: 0 14px 34px rgba(15, 23, 42, .16) !important;
+          border-radius: 24px !important;
+          text-align: center !important;
+        }
+        .sidebar .brand-card {
+          padding: 18px 16px !important;
+        }
+        .sidebar .control-card {
+          padding: 16px !important;
+          display: grid !important;
+          gap: 10px !important;
+        }
+        .sidebar .brand-kicker,
+        .sidebar .brand-card h1,
+        .sidebar .brand-card p,
+        .sidebar .control-card label,
+        .sidebar .logged-user,
+        .sidebar .logged-user strong,
+        .sidebar .logged-user span {
+          text-align: center !important;
+          color: inherit !important;
+        }
+        .sidebar .brand-kicker {
+          color: #64748b !important;
+          font-weight: 800 !important;
+          font-size: 13px !important;
+        }
+        .sidebar .brand-card h1 {
+          color: #0f172a !important;
+          margin: 6px 0 8px !important;
+          line-height: 1.15 !important;
+        }
+        .sidebar .brand-card p {
+          color: #475569 !important;
+          margin: 0 !important;
+          line-height: 1.5 !important;
+        }
+        .sidebar .control-card label {
+          color: #475569 !important;
+          font-weight: 900 !important;
+          letter-spacing: .03em !important;
+        }
+        .sidebar .control-card input,
+        .sidebar .control-card select {
+          width: 100% !important;
+          min-height: 46px !important;
+          border-radius: 14px !important;
+          border: 1px solid #cbd5e1 !important;
+          background: #ffffff !important;
+          color: #0f172a !important;
+          text-align: center !important;
+          box-shadow: none !important;
+        }
+        .sidebar .control-card input::placeholder {
+          color: #94a3b8 !important;
+        }
+        .sidebar .control-card .primary,
+        .sidebar .control-card button.primary {
+          width: 100% !important;
+          min-height: 46px !important;
+          border-radius: 14px !important;
+          background: #2563eb !important;
+          color: #ffffff !important;
+          border: 1px solid #2563eb !important;
+          font-weight: 900 !important;
+          text-align: center !important;
+          justify-content: center !important;
+        }
+        .sidebar .control-card .ghost,
+        .sidebar .control-card button.ghost {
+          background: #eff6ff !important;
+          color: #1d4ed8 !important;
+          border: 1px solid #bfdbfe !important;
+        }
+        .sidebar .nav-list {
+          display: grid !important;
+          gap: 10px !important;
+          width: 100% !important;
+          align-items: stretch !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        .sidebar .nav-item {
+          width: 100% !important;
+          min-height: 48px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+          border-radius: 14px !important;
+          border: 1px solid rgba(148, 163, 184, .25) !important;
+          background: rgba(255, 255, 255, .10) !important;
+          color: #e2e8f0 !important;
+          box-shadow: none !important;
+          font-weight: 900 !important;
+        }
+        .sidebar .nav-item.active {
+          background: #2563eb !important;
+          color: #ffffff !important;
+          border-color: #2563eb !important;
+        }
+        .sidebar .nav-item:hover {
+          background: rgba(59, 130, 246, .22) !important;
+        }
+
+        @media (max-width: 900px) {
+          .sidebar {
+            padding: 14px !important;
+            gap: 12px !important;
+          }
+          .sidebar .brand-card,
+          .sidebar .control-card {
+            border-radius: 22px !important;
+          }
+          .sidebar .nav-list {
+            grid-template-columns: 1fr !important;
+          }
+        }
+
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
