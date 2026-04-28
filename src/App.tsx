@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
@@ -45,6 +45,70 @@ type PageKey =
   | "gap-analysis"
   | "manual-schedule"
   | "smart-schedule";
+
+type EntranceKey = PageKey | "login-required";
+
+type EntranceMeta = {
+  title: string;
+  subtitle: string;
+};
+
+const entranceMeta: Record<EntranceKey, EntranceMeta> = {
+  home: {
+    title: "首頁",
+    subtitle: "全站入口、系統摘要與個人外觀設定。",
+  },
+  "person-query": {
+    title: "查詢人員資格",
+    subtitle: "可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。",
+  },
+  "station-query": {
+    title: "查詢站點人選",
+    subtitle: "新增班別選項與日別選項，可快速檢視當班與對班支援人力。",
+  },
+  "qualification-review": {
+    title: "站點考核",
+    subtitle: "(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。",
+  },
+  "gap-analysis": {
+    title: "站點缺口分析",
+    subtitle: "切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。",
+  },
+  "manual-schedule": {
+    title: "站點試排",
+    subtitle: "正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。",
+  },
+  "station-rules": {
+    title: "站點規則設定",
+    subtitle: "此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。",
+  },
+  "people-management": {
+    title: "人員名單管理",
+    subtitle: "職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。",
+  },
+  "permission-admin": {
+    title: "權限管理",
+    subtitle: "最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。",
+  },
+  "smart-schedule": {
+    title: "智能試排",
+    subtitle: "此入口目前保留停用，避免干涉站點試排。",
+  },
+  "login-required": {
+    title: "尚未登入",
+    subtitle: "請先登入後開啟對應功能。",
+  },
+};
+
+function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children: ReactNode }) {
+  const meta = entranceMeta[pageKey];
+  return (
+    <Layout title={meta.title} subtitle={meta.subtitle}>
+      <span className="entrance-layout-marker" data-entrance-key={pageKey} aria-hidden="true" />
+      {children}
+    </Layout>
+  );
+}
 
 type MobileDetailModal =
   | { type: "person"; personId: string }
@@ -1830,7 +1894,7 @@ export default function App() {
     );
 
     return (
-      <Layout title="權限管理" subtitle="最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。">
+      <EntranceLayout pageKey="permission-admin">
         <div className="grid three compact-home-stats">
           <StatCard title="07 帳號管理" value={String(permissionRows.length)} note={`啟用參考：${enabledAccountCount}`} />
           <StatCard title="08 權限項目" value={String(permissionItemStates.length)} note="可切換啟用/停用" />
@@ -2049,7 +2113,7 @@ export default function App() {
             </table>
           </div>
         ) : null}
-      </Layout>
+      </EntranceLayout>
     );
   }
 
@@ -2771,6 +2835,23 @@ export default function App() {
           text-align: center !important;
         }
 
+        /* 獨立入口說明系統：只鎖定 EntranceLayout 產生的入口標題與入口說明水平置中 */
+        .entrance-layout-marker {
+          display: none !important;
+        }
+        .content:has(.entrance-layout-marker) .layout-title,
+        .content:has(.entrance-layout-marker) .layout-title h1,
+        .content:has(.entrance-layout-marker) .layout-title p {
+          width: 100% !important;
+          max-width: 980px !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
+          text-align: center !important;
+          justify-content: center !important;
+          justify-items: center !important;
+          align-items: center !important;
+        }
+
         /* 手機上避免文字看似偏移：常用標題一律同寬置中 */
         @media (max-width: 900px) {
           .layout-title,
@@ -2836,7 +2917,7 @@ export default function App() {
         ) : null}
         <main className="content" ref={contentRef}>
           {page === "home" ? (
-            <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
+            <EntranceLayout pageKey="home">
               <section className="home-flat-page">
                 <div className="home-flat-stats">
                   <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
@@ -2879,12 +2960,12 @@ export default function App() {
                   </div>
                 </div>
               </section>
-            </Layout>
+            </EntranceLayout>
           ) : null}
-          {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
+          {!currentRole && page !== "home" ? <EntranceLayout pageKey="login-required"><Empty text="請先登入。" /></EntranceLayout> : null}
 
           {currentRole && page === "person-query" ? (
-            <Layout title="查詢人員資格" subtitle="可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。">
+            <EntranceLayout pageKey="person-query">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -2907,11 +2988,11 @@ export default function App() {
                   {selectedEmployee ? <PersonDetailView person={selectedEmployee} qualifications={selectedEmployeeQualifications} /> : <Empty text="此班別目前沒有可顯示人員。" />}
                 </div>
               </div>
-            </Layout>
+            </EntranceLayout>
           ) : null}
 
           {currentRole && page === "station-query" ? (
-            <Layout title="查詢站點人選" subtitle="新增班別選項與日別選項，可快速檢視當班與對班支援人力。">
+            <EntranceLayout pageKey="station-query">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -2932,11 +3013,11 @@ export default function App() {
                   {selectedStation ? <StationDetailView station={selectedStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={selectedStationQualifications} people={data.people} /> : <Empty text="找不到符合條件的站點。" />}
                 </div>
               </div>
-            </Layout>
+            </EntranceLayout>
           ) : null}
 
           {currentRole && page === "qualification-review" && hasAccess("領班") ? (
-            <Layout title="站點考核" subtitle="(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。">
+            <EntranceLayout pageKey="qualification-review">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -2973,12 +3054,12 @@ export default function App() {
                 <h3>班別人員總攬</h3>
                 <table className="table"><thead><tr><th>工號</th><th>姓名</th><th>職務</th><th>系統權限</th><th>國籍</th><th>合格</th><th>訓練中</th><th>不可排</th></tr></thead><tbody>{reviewOverviewRows.map((row) => <tr key={row.id}><td>{row.id}</td><td>{row.name}</td><td>{row.role}</td><td>{String(getSystemPermission(data.people.find((p) => p.id === row.id) || null) || "-")}</td><td>{row.nationality}</td><td>{row.qualified}</td><td>{row.training}</td><td>{row.blocked}</td></tr>)}</tbody></table>
               </div>
-            </Layout>
+            </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "gap-analysis" && hasAccess("組長") ? <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></Layout> : null}
+          {currentRole && page === "gap-analysis" && hasAccess("組長") ? <EntranceLayout pageKey="gap-analysis"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></EntranceLayout> : null}
           {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
-            <Layout title="站點試排" subtitle="正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。">
+            <EntranceLayout pageKey="manual-schedule">
               <div translate="no">
               <style>{`
                 .app-toast { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); z-index: 9999; width: min(720px, calc(100vw - 28px)); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; background: rgba(15, 23, 42, .94); color: #fff; border: 1px solid rgba(148, 163, 184, .45); box-shadow: 0 16px 40px rgba(15, 23, 42, .22); backdrop-filter: blur(12px); pointer-events: none; animation: toastSlideIn .22s ease-out; }
@@ -3590,10 +3671,10 @@ export default function App() {
                 </div>
               ) : null}
               </div>
-            </Layout>
+            </EntranceLayout>
           ) : null}
-          {currentRole && page === "station-rules" && hasAccess("主任") ? <Layout title="站點規則設定" subtitle="此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></Layout> : null}
-          {currentRole && page === "people-management" && hasAccess("主任") ? <Layout title="人員名單管理" subtitle="職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></Layout> : null}
+          {currentRole && page === "station-rules" && hasAccess("主任") ? <EntranceLayout pageKey="station-rules"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></EntranceLayout> : null}
+          {currentRole && page === "people-management" && hasAccess("主任") ? <EntranceLayout pageKey="people-management"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></EntranceLayout> : null}
                     {currentRole && page === "permission-admin" && hasAccess("最高權限") ? renderPermissionAdmin() : null}
           {false && page === "smart-schedule" ? null : null}
           {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
