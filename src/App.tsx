@@ -2202,6 +2202,49 @@ export default function App() {
         .theme-selector-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
         .theme-selector-heading h3 { margin: 0; font-size: 22px; }
         .theme-selector-heading p { margin: 6px 0 0; color: var(--theme-muted); }
+        .compact-preference-panel { display: grid; gap: 14px; }
+        .compact-selector-header { align-items: center; margin-bottom: 0; }
+        .compact-selector-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .compact-selector-card {
+          display: grid;
+          gap: 8px;
+          padding: 14px;
+          border: 1px solid var(--theme-border);
+          border-radius: 20px;
+          background: color-mix(in srgb, var(--theme-panel) 92%, white);
+          text-align: center;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.35);
+        }
+        .compact-selector-title {
+          font-size: 15px;
+          font-weight: 900;
+          color: var(--theme-text);
+          letter-spacing: .02em;
+        }
+        .compact-selector-card select {
+          width: 100%;
+          min-height: 46px;
+        }
+        .compact-selector-card small {
+          color: var(--theme-muted);
+          line-height: 1.5;
+          min-height: 22px;
+        }
+        .compact-selector-tips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          justify-content: center;
+        }
+        .compact-home-stats {
+          align-items: stretch;
+        }
+        .compact-home-stats .stat-card {
+          width: 100%;
+          max-width: 220px;
+          margin: 0 auto;
+        }
+
 
         /* 全站水平置中與可讀性修正 */
         .brand-card, .control-card, .layout-title, .content > section, .panel, .stat-card {
@@ -2375,50 +2418,35 @@ export default function App() {
                 <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
               </div>
 
-              <div className="panel">
-                <div className="theme-selector-heading">
+              <div className="panel compact-preference-panel">
+                <div className="theme-selector-heading compact-selector-header">
                   <div>
-                    <h3>全區域樣式</h3>
-                    <p>任何人都可以依自己的手機或電腦喜好選擇，全站立即套用。</p>
+                    <h3>全區域外觀</h3>
+                    <p>改用選單方式切換，避免樣式設定過度佔用首頁版面；選擇後會立即套用到全站。</p>
                   </div>
                   <span className="chip">目前：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label} / {globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
                 </div>
-                <div className="home-style-grid">
-                  {globalThemeOptions.map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      className={`home-style-card${globalThemeOption === item.key ? " active" : ""}`}
-                      onClick={() => updateGlobalTheme(item.key)}
-                    >
-                      <i className="home-style-swatch" />
-                      <strong>{item.label}</strong>
-                      <span>{item.note}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                <div className="compact-selector-grid">
+                  <label className="compact-selector-card">
+                    <span className="compact-selector-title">樣式主題</span>
+                    <select value={globalThemeOption} onChange={(e) => updateGlobalTheme(e.target.value as GlobalThemeKey)}>
+                      {globalThemeOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                    </select>
+                    <small>{globalThemeOptions.find((item) => item.key === globalThemeOption)?.note}</small>
+                  </label>
 
-              <div className="panel">
-                <div className="theme-selector-heading">
-                  <div>
-                    <h3>字型風格</h3>
-                    <p>提供 5 款字型與隨機選項，讓標題、清單與按鈕文字排列更一致。</p>
-                  </div>
+                  <label className="compact-selector-card">
+                    <span className="compact-selector-title">字型風格</span>
+                    <select value={globalFontOption} onChange={(e) => updateGlobalFont(e.target.value as GlobalFontKey)}>
+                      {globalFontOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                    </select>
+                    <small>{globalFontOptions.find((item) => item.key === globalFontOption)?.note}</small>
+                  </label>
                 </div>
-                <div className="home-style-grid">
-                  {globalFontOptions.map((item) => (
-                    <button
-                      key={item.key}
-                      type="button"
-                      className={`home-style-card${globalFontOption === item.key ? " active" : ""}`}
-                      onClick={() => updateGlobalFont(item.key)}
-                    >
-                      <i className="home-style-swatch" />
-                      <strong>{item.label}</strong>
-                      <span>{item.note}</span>
-                    </button>
-                  ))}
+                <div className="compact-selector-tips">
+                  <span className="chip">樣式：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label}</span>
+                  <span className="chip">字型：{globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
+                  <span className="chip">隨機選項會於重新整理時自動抽一款</span>
                 </div>
               </div>
             </Layout>
@@ -2529,7 +2557,11 @@ export default function App() {
                 .app-toast-close { pointer-events: auto; border: 0; width: 32px; height: 32px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
                 .app-toast-close:hover { background: rgba(255,255,255,.24); }
                 @keyframes toastSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
-                @media (max-width: 700px) { .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
+                @media (max-width: 700px) {
+          .compact-selector-grid { grid-template-columns: 1fr; }
+          .compact-selector-header { justify-content: center; }
+          .compact-home-stats .stat-card { max-width: none; }
+ .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
                 .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
                 .manual-schedule-list { display: flex; flex-wrap: wrap; gap: 10px; max-height: none; overflow: visible; }
