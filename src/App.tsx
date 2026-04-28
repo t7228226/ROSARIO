@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
@@ -66,6 +66,26 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
+const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
+
+type GasWriteResponse = {
+  ok?: boolean;
+  message?: string;
+  [key: string]: unknown;
+};
+
+async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
+  const response = await fetch(GAS_WRITE_ENDPOINT, {
+    method: "POST",
+    body: JSON.stringify({ action, payload }),
+  });
+
+  const result = (await response.json()) as GasWriteResponse;
+  if (!response.ok || result.ok === false) {
+    throw new Error(String(result.message || `GAS ${action} 儲存失敗`));
+  }
+  return result;
+}
 
 function getStoredLoginKeep(): LoginKeepKey {
   const stored = typeof window !== "undefined" ? window.localStorage.getItem(loginKeepStorageKey) : "";
@@ -360,41 +380,6 @@ function getViewportMode(): ViewMode {
   return window.innerWidth <= 900 ? "mobile" : "desktop";
 }
 
-type EntranceKey = PageKey | "login-required";
-
-const entranceMeta: Record<EntranceKey, { title: string; subtitle: string }> = {
-  home: { title: "首頁", subtitle: "全站入口、系統摘要與個人外觀設定。" },
-  "person-query": { title: "查詢人員資格", subtitle: "可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。" },
-  "station-query": { title: "查詢站點人選", subtitle: "新增班別選項與日別選項，可快速檢視當班與對班支援人力。" },
-  "qualification-review": { title: "站點考核", subtitle: "(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。" },
-  "gap-analysis": { title: "站點缺口分析", subtitle: "切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。" },
-  "manual-schedule": { title: "站點試排", subtitle: "正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。" },
-  "smart-schedule": { title: "智能試排", subtitle: "智能試排目前停用，避免干涉站點試排。" },
-  "station-rules": { title: "站點規則設定", subtitle: "此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。" },
-  "people-management": { title: "人員名單管理", subtitle: "職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。" },
-  "permission-admin": { title: "權限管理", subtitle: "最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。" },
-  "login-required": { title: "尚未登入", subtitle: "請先登入後開啟對應功能。" },
-};
-
-function EntranceHeader({ pageKey }: { pageKey: EntranceKey }) {
-  const meta = entranceMeta[pageKey];
-  return (
-    <div className="entrance-header entrance-layout-marker" data-entrance-key={pageKey}>
-      <h1>{meta.title}</h1>
-      <p>{meta.subtitle}</p>
-    </div>
-  );
-}
-
-function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children: ReactNode }) {
-  return (
-    <Layout title="" subtitle="">
-      <EntranceHeader pageKey={pageKey} />
-      {children}
-    </Layout>
-  );
-}
-
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
@@ -592,6 +577,20 @@ export default function App() {
         const next = await fetchBootstrapData();
         if (!active) return;
         setData(next);
+        const permissionConfig = next as AppBootstrap & {
+          permissionItems?: PermissionItemDefinition[];
+          rolePermissionMaps?: RolePermissionMapDefinition[];
+          personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
+        };
+        if (Array.isArray(permissionConfig.permissionItems) && permissionConfig.permissionItems.length > 0) {
+          setPermissionItemStates(permissionConfig.permissionItems);
+        }
+        if (Array.isArray(permissionConfig.rolePermissionMaps) && permissionConfig.rolePermissionMaps.length > 0) {
+          setRolePermissionMapStates(permissionConfig.rolePermissionMaps);
+        }
+        if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
+          setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
+        }
       } catch {
         if (!active) return;
         setData(emptyBootstrap);
@@ -1317,6 +1316,57 @@ export default function App() {
     setManualPreviewOpen(true);
   }
 
+  async function saveManualScheduleDraft() {
+    if (!hasManualAssignments) {
+      setFlashMessage("目前沒有可儲存的站點試排內容。");
+      return;
+    }
+
+    const details = [
+      ...Object.entries(manualAssignments).flatMap(([stationId, personIds]) =>
+        personIds.map((employeeId, index) => ({
+          stationId,
+          employeeId,
+          type: "站點",
+          order: index + 1,
+          note: "手動站點試排",
+        }))
+      ),
+      ...Object.entries(manualOfficerStations).map(([employeeId, stationId], index) => ({
+        stationId,
+        employeeId,
+        type: "幹部",
+        order: index + 1,
+        note: "幹部站位",
+      })),
+      ...manualExtraWorks.flatMap((work, workIndex) =>
+        work.personIds.map((employeeId, personIndex) => ({
+          stationId: work.id,
+          employeeId,
+          type: "自訂",
+          order: workIndex * 100 + personIndex + 1,
+          note: work.workName.trim() || `自訂工作 ${workIndex + 1}`,
+        }))
+      ),
+    ];
+
+    try {
+      await postGasAction("saveScheduleDraft", {
+        name: `${manualShift}_${manualDay}_${manualMode}_站點試排`,
+        team: manualShift,
+        dayKey: manualDay,
+        mode: manualMode,
+        status: "草稿",
+        createdBy: currentUser?.name || currentUser?.id || "前端",
+        note: "由站點試排頁面儲存",
+        details,
+      });
+      setFlashMessage("站點試排草稿已儲存到試算表。");
+    } catch (error) {
+      setFlashMessage(`站點試排草稿儲存失敗：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   async function copyManualSchedulePreview() {
     try {
       await navigator.clipboard.writeText(buildManualSchedulePreviewText());
@@ -1443,14 +1493,26 @@ export default function App() {
       ctx.stroke();
 
       const label = splitScheduleStationLabel(row.stationName);
+      const headerTop = y0 + 44;
+      const headerBodyHeight = headerHeight - 44;
+      const stationCenterX = x + colWidth / 2;
+      const stationLineHeight = 25;
+      const codeGap = label.code ? 12 : 0;
+      const codeLineHeight = label.code ? 24 : 0;
       ctx.fillStyle = "#0f172a";
       ctx.font = "900 20px 'Noto Sans TC', 'PingFang TC', sans-serif";
       const nameLines = wrapCanvasText(ctx, label.name, colWidth - 18).slice(0, 3);
-      nameLines.forEach((line, idx) => ctx.fillText(line, x + 9, y0 + 82 + idx * 25));
+      const stationTextHeight = nameLines.length * stationLineHeight + codeGap + codeLineHeight;
+      const stationStartY = headerTop + (headerBodyHeight - stationTextHeight) / 2 + 20;
+      ctx.textAlign = "center";
+      nameLines.forEach((line, idx) => ctx.fillText(line, stationCenterX, stationStartY + idx * stationLineHeight));
       if (label.code) {
         ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
-        ctx.fillText(label.code, x + 9, y0 + 160);
+        ctx.fillStyle = "#1e3a8a";
+        ctx.fillText(label.code, stationCenterX, stationStartY + nameLines.length * stationLineHeight + codeGap);
+        ctx.fillStyle = "#0f172a";
       }
+      ctx.textAlign = "start";
     });
 
     ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
@@ -1733,48 +1795,97 @@ export default function App() {
       return getRoleAllowed(role, permissionId);
     }
 
-    function setPersonalException(person: Person | null, permissionId: string, effect: PersonalPermissionEffect) {
-      if (!person) return;
-      setPersonalPermissionExceptions((current) => {
-        const exists = current.find((item) => item.employeeId === person.id && item.permissionId === permissionId);
-        if (exists?.effect === effect && exists.enabled !== "停用") {
-          return current.map((item) => item.id === exists.id ? { ...item, enabled: "停用" } : item);
+    async function setPersonalException(person: Person | null, permissionId: string, effect: PersonalPermissionEffect) {
+      if (!person || currentRole !== "最高權限") return;
+      const before = personalPermissionExceptions;
+      const exists = before.find((item) => item.employeeId === person.id && item.permissionId === permissionId);
+      const updatedBy = currentUser?.name || currentUser?.id || "前端";
+
+      if (exists?.effect === effect && exists.enabled !== "停用") {
+        const next = before.map((item) => item.id === exists.id ? { ...item, enabled: "停用" } : item);
+        setPersonalPermissionExceptions(next);
+        try {
+          await postGasAction("deletePersonalPermissionException", {
+            id: exists.id,
+            employeeId: person.id,
+            permissionId,
+            updatedBy,
+          });
+          setFlashMessage("個人例外權限已取消並儲存。");
+        } catch (error) {
+          setPersonalPermissionExceptions(before);
+          setFlashMessage(`個人例外權限取消失敗：${error instanceof Error ? error.message : String(error)}`);
         }
-        if (exists) {
-          return current.map((item) => item.id === exists.id ? { ...item, effect, enabled: "啟用" } : item);
-        }
-        return [
-          ...current,
-          {
-            id: `EXC_${Date.now()}_${permissionId}`,
+        return;
+      }
+
+      const nextItem: PersonalPermissionExceptionDefinition = exists
+        ? { ...exists, effect, enabled: "啟用", note: effect === "allow" ? "個人額外開放" : "個人單獨禁止" }
+        : {
+            id: `EXC_${person.id}_${permissionId}`,
             employeeId: person.id,
             permissionId,
             effect,
             enabled: "啟用",
             note: effect === "allow" ? "個人額外開放" : "個人單獨禁止",
-          },
-        ];
-      });
+          };
+      const next = exists
+        ? before.map((item) => item.id === exists.id ? nextItem : item)
+        : [...before, nextItem];
+      setPersonalPermissionExceptions(next);
+
+      try {
+        await postGasAction("upsertPersonalPermissionException", { ...nextItem, updatedBy });
+        setFlashMessage("個人例外權限已儲存到試算表。");
+      } catch (error) {
+        setPersonalPermissionExceptions(before);
+        setFlashMessage(`個人例外權限儲存失敗：${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    function togglePermissionItemEnabled(permissionId: string) {
+    async function togglePermissionItemEnabled(permissionId: string) {
       if (currentRole !== "最高權限") return;
-      setPermissionItemStates((current) => current.map((item) => item.id === permissionId ? { ...item, enabled: item.enabled === "啟用" ? "停用" : "啟用" } : item));
-      setFlashMessage("本頁範本暫存：權限項目啟用狀態已切換；若要永久保存，需補 GAS 寫入端點。");
+      const before = permissionItemStates;
+      const target = before.find((item) => item.id === permissionId);
+      if (!target) return;
+      const nextItem = { ...target, enabled: target.enabled === "啟用" ? "停用" : "啟用" };
+      setPermissionItemStates(before.map((item) => item.id === permissionId ? nextItem : item));
+      try {
+        await postGasAction("updatePermissionItem", {
+          ...nextItem,
+          updatedBy: currentUser?.name || currentUser?.id || "前端",
+        });
+        setFlashMessage(`權限項目已${nextItem.enabled}並儲存到試算表。`);
+      } catch (error) {
+        setPermissionItemStates(before);
+        setFlashMessage(`權限項目儲存失敗：${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
-    function toggleRolePermission(role: UserRole, permissionId: string) {
+    async function toggleRolePermission(role: UserRole, permissionId: string) {
       if (currentRole !== "最高權限") return;
+      const before = rolePermissionMapStates;
       const mapId = `ROLEMAP_${role}_${permissionId}`;
-      setRolePermissionMapStates((current) => {
-        const exists = current.find((item) => item.role === role && item.permissionId === permissionId);
-        if (exists) {
-          const nextAllowed = exists.allowed === "Y" && exists.enabled === "啟用" ? "N" : "Y";
-          return current.map((item) => item.id === exists.id ? { ...item, allowed: nextAllowed, enabled: "啟用", note: nextAllowed === "Y" ? "角色已開放" : "角色已關閉" } : item);
-        }
-        return [...current, { id: mapId, role, permissionId, allowed: "Y", enabled: "啟用", note: "角色已開放" }];
-      });
-      setFlashMessage("本頁範本暫存：角色權限已切換；若要永久保存，需補 GAS 寫入端點。");
+      const exists = before.find((item) => item.role === role && item.permissionId === permissionId);
+      const nextAllowed = exists?.allowed === "Y" && exists.enabled === "啟用" ? "N" : "Y";
+      const nextItem: RolePermissionMapDefinition = exists
+        ? { ...exists, allowed: nextAllowed, enabled: "啟用", note: nextAllowed === "Y" ? "角色已開放" : "角色已關閉" }
+        : { id: mapId, role, permissionId, allowed: "Y", enabled: "啟用", note: "角色已開放" };
+      const next = exists
+        ? before.map((item) => item.id === exists.id ? nextItem : item)
+        : [...before, nextItem];
+      setRolePermissionMapStates(next);
+      try {
+        await postGasAction("updateRolePermission", {
+          ...nextItem,
+          mapId: nextItem.id,
+          updatedBy: currentUser?.name || currentUser?.id || "前端",
+        });
+        setFlashMessage(`角色權限已${nextItem.allowed === "Y" ? "開放" : "關閉"}並儲存到試算表。`);
+      } catch (error) {
+        setRolePermissionMapStates(before);
+        setFlashMessage(`角色權限儲存失敗：${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
     async function toggleAccountEnabled(person: Person) {
@@ -1853,11 +1964,11 @@ export default function App() {
     );
 
     return (
-      <EntranceLayout pageKey="permission-admin">
+      <Layout title="權限管理" subtitle="最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。">
         <div className="grid three compact-home-stats">
           <StatCard title="07 帳號管理" value={String(permissionRows.length)} note={`啟用參考：${enabledAccountCount}`} />
           <StatCard title="08 權限項目" value={String(permissionItemStates.length)} note="可切換啟用/停用" />
-          <StatCard title="個人例外權限" value={String(personalPermissionExceptions.filter((item) => item.enabled !== "停用").length)} note="本頁範本暫存" />
+          <StatCard title="個人例外權限" value={String(personalPermissionExceptions.filter((item) => item.enabled !== "停用").length)} note="已接 GAS 存檔" />
         </div>
 
         <div className="panel">
@@ -2050,7 +2161,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <p className="muted">目前這版先以前端暫存呈現流程；若要寫回資料庫，建議新增 10_個人例外權限 並補 GAS/API 寫入端點。</p>
+            <p className="muted">此頁已接 GAS 寫入端點；個人例外權限會寫入 10_個人例外權限。</p>
           </div>
         ) : null}
 
@@ -2072,7 +2183,7 @@ export default function App() {
             </table>
           </div>
         ) : null}
-      </EntranceLayout>
+      </Layout>
     );
   }
 
@@ -2278,44 +2389,6 @@ export default function App() {
           width: 100%;
           max-width: 220px;
           margin: 0 auto;
-        }
-
-
-        /* 獨立入口說明框架：不再依賴 Layout subtitle 排版，入口標題與說明固定水平置中 */
-        .content section:has(.entrance-layout-marker) > .layout-title {
-          display: none !important;
-        }
-        .entrance-header {
-          width: min(100%, 980px);
-          margin: 0 auto 18px;
-          padding: clamp(10px, 2vw, 18px) clamp(12px, 3vw, 24px);
-          box-sizing: border-box;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          text-align: center !important;
-        }
-        .entrance-header h1 {
-          width: 100%;
-          max-width: 900px;
-          margin: 0 0 6px;
-          color: var(--theme-text) !important;
-          text-align: center !important;
-          line-height: 1.18;
-          letter-spacing: var(--theme-title-spacing);
-        }
-        .entrance-header p {
-          width: 100%;
-          max-width: 760px;
-          margin: 0 auto;
-          color: var(--theme-muted) !important;
-          text-align: center !important;
-          line-height: 1.55;
-          font-weight: 750;
-        }
-        .entrance-header * {
-          text-align: center !important;
         }
 
 
@@ -2845,35 +2918,6 @@ export default function App() {
           }
         }
 
-      
-/* 測試：只鎖定首頁外觀設定卡片，排除左右 flex */
-.home-flat-settings .theme-selector-heading.compact-selector-header {
-  display: grid !important;
-  grid-template-columns: 1fr !important;
-  justify-items: center !important;
-  justify-content: center !important;
-  align-items: center !important;
-  text-align: center !important;
-  gap: 10px !important;
-}
-.home-flat-settings .theme-selector-heading.compact-selector-header > div {
-  width: 100% !important;
-  display: grid !important;
-  justify-items: center !important;
-  text-align: center !important;
-}
-.home-flat-settings .theme-selector-heading.compact-selector-header h3,
-.home-flat-settings .theme-selector-heading.compact-selector-header p {
-  width: 100% !important;
-  text-align: center !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-}
-.home-flat-settings .theme-selector-heading.compact-selector-header .chip {
-  justify-self: center !important;
-  margin: 4px auto 0 !important;
-}
-
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
@@ -2926,7 +2970,7 @@ export default function App() {
         ) : null}
         <main className="content" ref={contentRef}>
           {page === "home" ? (
-            <EntranceLayout pageKey="home">
+            <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
               <section className="home-flat-page">
                 <div className="home-flat-stats">
                   <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
@@ -2969,12 +3013,12 @@ export default function App() {
                   </div>
                 </div>
               </section>
-            </EntranceLayout>
+            </Layout>
           ) : null}
-          {!currentRole && page !== "home" ? <EntranceLayout pageKey="login-required"><Empty text="請先登入。" /></EntranceLayout> : null}
+          {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
 
           {currentRole && page === "person-query" ? (
-            <EntranceLayout pageKey="person-query">
+            <Layout title="查詢人員資格" subtitle="可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -2997,11 +3041,11 @@ export default function App() {
                   {selectedEmployee ? <PersonDetailView person={selectedEmployee} qualifications={selectedEmployeeQualifications} /> : <Empty text="此班別目前沒有可顯示人員。" />}
                 </div>
               </div>
-            </EntranceLayout>
+            </Layout>
           ) : null}
 
           {currentRole && page === "station-query" ? (
-            <EntranceLayout pageKey="station-query">
+            <Layout title="查詢站點人選" subtitle="新增班別選項與日別選項，可快速檢視當班與對班支援人力。">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -3022,11 +3066,11 @@ export default function App() {
                   {selectedStation ? <StationDetailView station={selectedStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={selectedStationQualifications} people={data.people} /> : <Empty text="找不到符合條件的站點。" />}
                 </div>
               </div>
-            </EntranceLayout>
+            </Layout>
           ) : null}
 
           {currentRole && page === "qualification-review" && hasAccess("領班") ? (
-            <EntranceLayout pageKey="qualification-review">
+            <Layout title="站點考核" subtitle="(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。">
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
@@ -3063,12 +3107,12 @@ export default function App() {
                 <h3>班別人員總攬</h3>
                 <table className="table"><thead><tr><th>工號</th><th>姓名</th><th>職務</th><th>系統權限</th><th>國籍</th><th>合格</th><th>訓練中</th><th>不可排</th></tr></thead><tbody>{reviewOverviewRows.map((row) => <tr key={row.id}><td>{row.id}</td><td>{row.name}</td><td>{row.role}</td><td>{String(getSystemPermission(data.people.find((p) => p.id === row.id) || null) || "-")}</td><td>{row.nationality}</td><td>{row.qualified}</td><td>{row.training}</td><td>{row.blocked}</td></tr>)}</tbody></table>
               </div>
-            </EntranceLayout>
+            </Layout>
           ) : null}
 
-          {currentRole && page === "gap-analysis" && hasAccess("組長") ? <EntranceLayout pageKey="gap-analysis"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></EntranceLayout> : null}
+          {currentRole && page === "gap-analysis" && hasAccess("組長") ? <Layout title="站點缺口分析" subtitle="切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></Layout> : null}
           {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
-            <EntranceLayout pageKey="manual-schedule">
+            <Layout title="站點試排" subtitle="正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。">
               <div translate="no">
               <style>{`
                 .app-toast { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); z-index: 9999; width: min(720px, calc(100vw - 28px)); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; background: rgba(15, 23, 42, .94); color: #fff; border: 1px solid rgba(148, 163, 184, .45); box-shadow: 0 16px 40px rgba(15, 23, 42, .22); backdrop-filter: blur(12px); pointer-events: none; animation: toastSlideIn .22s ease-out; }
@@ -3195,7 +3239,7 @@ export default function App() {
                 .schedule-matrix-meta { width: 260px; min-width: 260px; background: linear-gradient(180deg, #fef08a 0%, #dcfce7 100%); padding: 14px; text-align: left; }
                 .schedule-matrix-team { color: #b91c1c; font-size: 28px; font-weight: 950; margin-bottom: 12px; }
                 .schedule-matrix-officers { display: grid; gap: 8px; color: #0f172a; font-size: 17px; font-weight: 950; line-height: 1.45; }
-                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; }
+                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; vertical-align: middle !important; }
                 .schedule-matrix-table th:nth-child(4n+2) { background: #bfdbfe; }
                 .schedule-matrix-table th:nth-child(4n+3) { background: #d9f99d; }
                 .schedule-matrix-table th:nth-child(4n+4) { background: #fde68a; }
@@ -3255,6 +3299,7 @@ export default function App() {
                     {SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                   <button className="primary" type="button" onClick={runManualPlan}>一鍵安排</button>
+                  <button className="ghost" type="button" onClick={saveManualScheduleDraft}>儲存草稿</button>
                 </div>
                 <div className="detail-grid">
                   <Info label="本籍出勤" value={String(manualAttendance.localCount)} />
@@ -3546,6 +3591,7 @@ export default function App() {
 
                     <div className="manual-modal-actions">
                       <button type="button" className="ghost" onClick={() => setManualPreviewOpen(false)}>返回修改</button>
+                      <button type="button" className="ghost" onClick={saveManualScheduleDraft}>儲存草稿</button>
                       <button type="button" className="ghost" onClick={copyManualSchedulePreview}>複製文字</button>
                       <button type="button" className="primary" onClick={shareManualSchedulePreview}>系統分享</button>
                       <button type="button" className="primary" onClick={confirmManualSchedulePreview}>確認完成並下載圖片</button>
@@ -3680,10 +3726,10 @@ export default function App() {
                 </div>
               ) : null}
               </div>
-            </EntranceLayout>
+            </Layout>
           ) : null}
-          {currentRole && page === "station-rules" && hasAccess("主任") ? <EntranceLayout pageKey="station-rules"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></EntranceLayout> : null}
-          {currentRole && page === "people-management" && hasAccess("主任") ? <EntranceLayout pageKey="people-management"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></EntranceLayout> : null}
+          {currentRole && page === "station-rules" && hasAccess("主任") ? <Layout title="站點規則設定" subtitle="此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></Layout> : null}
+          {currentRole && page === "people-management" && hasAccess("主任") ? <Layout title="人員名單管理" subtitle="職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></Layout> : null}
                     {currentRole && page === "permission-admin" && hasAccess("最高權限") ? renderPermissionAdmin() : null}
           {false && page === "smart-schedule" ? null : null}
           {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
