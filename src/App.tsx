@@ -2625,6 +2625,153 @@ export default function App() {
           }
         }
 
+
+        /* === 全站文字美感統一：不要同頁有些靠左、有些置中 === */
+
+        /* 首頁：入口標題、副標、系統說明、外觀設定全部同一中心線 */
+        .content:has(.home-flat-page) .layout-title,
+        .content:has(.home-flat-page) .layout-title *,
+        .home-flat-page,
+        .home-flat-page *,
+        .home-flat-info,
+        .home-flat-info *,
+        .home-flat-settings,
+        .home-flat-settings *,
+        .compact-preference-panel,
+        .compact-preference-panel * {
+          text-align: center !important;
+        }
+        .content:has(.home-flat-page) .layout-title {
+          display: grid !important;
+          justify-items: center !important;
+        }
+        .content:has(.home-flat-page) .layout-title h1,
+        .content:has(.home-flat-page) .layout-title p,
+        .home-flat-info p,
+        .home-flat-settings p {
+          margin-left: auto !important;
+          margin-right: auto !important;
+        }
+
+        /* 首頁統計卡：標題、數字、備註固定置中 */
+        .home-flat-stats .stat-card,
+        .home-flat-stats .stat-card *,
+        .compact-home-stats .stat-card,
+        .compact-home-stats .stat-card * {
+          text-align: center !important;
+          justify-content: center !important;
+          justify-items: center !important;
+          align-items: center !important;
+        }
+
+        /* 下拉選單本體也置中，避免選項框內文字偏左破壞整體 */
+        .home-flat-page select,
+        .compact-preference-panel select,
+        .compact-selector-card select {
+          text-align: center !important;
+          text-align-last: center !important;
+        }
+
+        /* 站點試排：站點卡片、需求、按鈕、已安排/尚未安排名單全部置中 */
+        .manual-schedule-card,
+        .manual-station-card,
+        .manual-station-card *,
+        .manual-assignment-card,
+        .manual-assignment-card *,
+        .manual-station-title,
+        .manual-station-title *,
+        .manual-station-header,
+        .manual-station-header *,
+        .manual-station-body,
+        .manual-station-body *,
+        .assigned-list,
+        .assigned-list *,
+        .unassigned-list,
+        .unassigned-list *,
+        .assigned-person,
+        .unassigned-person {
+          text-align: center !important;
+          justify-content: center !important;
+          justify-items: center !important;
+          align-items: center !important;
+        }
+
+        /* 藍色已排人員長條：文字固定水平置中 */
+        .assigned-person,
+        .assigned-person-chip,
+        .manual-assigned-person,
+        .manual-person-chip,
+        .person-chip,
+        .manual-schedule-card .chip,
+        .manual-station-card .chip {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          text-align: center !important;
+        }
+
+        /* 幹部站位：主任、組長、領班、站長姓名標籤固定置中 */
+        .manual-officer-section,
+        .manual-officer-section *,
+        .manual-officer-group,
+        .manual-officer-group *,
+        .manual-officer-chip,
+        .officer-chip,
+        .manual-officer-name,
+        .officer-name-chip {
+          text-align: center !important;
+          justify-content: center !important;
+          justify-items: center !important;
+          align-items: center !important;
+        }
+
+        /* 班表預覽 / 完成視窗：表格欄位、站點名稱、人員姓名固定置中 */
+        .schedule-preview,
+        .schedule-preview *,
+        .schedule-preview-table,
+        .schedule-preview-table *,
+        .preview-schedule-table,
+        .preview-schedule-table *,
+        .schedule-modal,
+        .schedule-modal *,
+        .preview-modal,
+        .preview-modal *,
+        .matrix-preview,
+        .matrix-preview *,
+        .matrix-schedule,
+        .matrix-schedule * {
+          text-align: center !important;
+        }
+        .schedule-preview td,
+        .schedule-preview th,
+        .preview-schedule-table td,
+        .preview-schedule-table th,
+        .matrix-preview td,
+        .matrix-preview th {
+          vertical-align: middle !important;
+          text-align: center !important;
+        }
+
+        /* 功能頁標題與副標保持置中，但列表資料區保留正常可讀寬度 */
+        .content:not(:has(.home-flat-page)) .layout-title,
+        .content:not(:has(.home-flat-page)) .layout-title h1,
+        .content:not(:has(.home-flat-page)) .layout-title p {
+          text-align: center !important;
+        }
+
+        /* 手機上避免文字看似偏移：常用標題一律同寬置中 */
+        @media (max-width: 900px) {
+          .layout-title,
+          .layout-title h1,
+          .layout-title p,
+          .panel-header,
+          .panel-header *,
+          .home-flat-page,
+          .home-flat-page * {
+            text-align: center !important;
+          }
+        }
+
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
