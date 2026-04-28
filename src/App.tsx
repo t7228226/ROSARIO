@@ -2241,11 +2241,135 @@ export default function App() {
         }
         .compact-home-stats .stat-card {
           width: 100%;
-          max-width: 220px;
-          margin: 0 auto;
+          max-width: none;
+          margin: 0;
         }
 
 
+        /* 首頁儀表板版型：摘要卡橫向並排，避免直立堆疊 */
+        .home-dashboard {
+          display: grid;
+          gap: 18px;
+          width: 100%;
+        }
+        .home-hero-panel {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 16px;
+          padding: 22px;
+          border: 1px solid var(--theme-border);
+          border-radius: 28px;
+          background:
+            radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--theme-accent) 16%, transparent), transparent 34%),
+            var(--theme-panel);
+          box-shadow: var(--theme-shadow);
+          text-align: left;
+        }
+        .home-hero-copy {
+          display: grid;
+          gap: 8px;
+          text-align: left;
+        }
+        .home-eyebrow {
+          display: inline-flex;
+          width: fit-content;
+          padding: 6px 11px;
+          border-radius: 999px;
+          background: var(--theme-soft);
+          color: var(--theme-primary);
+          font-size: 13px;
+          font-weight: 950;
+          letter-spacing: .04em;
+        }
+        .home-hero-copy h2 {
+          margin: 0;
+          color: var(--theme-text);
+          font-size: clamp(24px, 3vw, 36px);
+          line-height: 1.15;
+          text-align: left;
+        }
+        .home-hero-copy p {
+          margin: 0;
+          color: var(--theme-muted) !important;
+          line-height: 1.55;
+          text-align: left;
+        }
+        .home-status-pill {
+          display: grid;
+          justify-items: center;
+          gap: 4px;
+          min-width: 128px;
+          padding: 14px 16px;
+          border-radius: 22px;
+          background: color-mix(in srgb, var(--theme-soft) 72%, white);
+          border: 1px solid color-mix(in srgb, var(--theme-primary) 26%, var(--theme-border));
+          color: var(--theme-text);
+        }
+        .home-status-pill span {
+          color: var(--theme-muted) !important;
+          font-size: 13px;
+          font-weight: 800;
+        }
+        .home-status-pill strong {
+          color: var(--theme-primary) !important;
+          font-size: 18px;
+          font-weight: 950;
+        }
+        .home-stat-row {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 14px;
+          align-items: stretch;
+          width: 100%;
+        }
+        .home-stat-row .stat-card {
+          width: 100%;
+          max-width: none !important;
+          min-height: 138px;
+          margin: 0 !important;
+          display: grid;
+          align-content: center;
+          justify-items: center;
+          gap: 8px;
+          padding: 20px 14px;
+          border-radius: 26px;
+          background: var(--theme-panel);
+          border: 1px solid var(--theme-border);
+          box-shadow: var(--theme-shadow);
+        }
+        .home-stat-row .stat-card span {
+          color: var(--theme-muted) !important;
+          font-weight: 900;
+        }
+        .home-stat-row .stat-card strong {
+          color: var(--theme-text) !important;
+          font-size: clamp(34px, 5vw, 48px);
+          line-height: 1;
+          letter-spacing: .03em;
+        }
+        .home-stat-row .stat-card small {
+          color: var(--theme-muted) !important;
+          font-weight: 800;
+        }
+        .home-lower-grid {
+          display: grid;
+          grid-template-columns: minmax(0, .95fr) minmax(360px, 1.05fr);
+          gap: 16px;
+          align-items: stretch;
+        }
+        .home-info-panel,
+        .home-preference-panel {
+          margin: 0;
+          height: 100%;
+          align-content: center;
+        }
+        .home-info-panel p {
+          max-width: 760px;
+          margin-left: auto;
+          margin-right: auto;
+          line-height: 1.75;
+        }
         /* 全站水平置中與可讀性修正 */
         .brand-card, .control-card, .layout-title, .content > section, .panel, .stat-card {
           text-align: center;
@@ -2296,6 +2420,10 @@ export default function App() {
         .grid, .toolbar {
           justify-items: center;
         }
+        .home-stat-row,
+        .home-lower-grid {
+          justify-items: stretch;
+        }
         .toolbar {
           justify-content: center;
         }
@@ -2343,6 +2471,42 @@ export default function App() {
         .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
         .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
 
+        @media (max-width: 980px) {
+          .home-hero-panel,
+          .home-lower-grid {
+            grid-template-columns: 1fr;
+          }
+          .home-hero-panel,
+          .home-hero-copy,
+          .home-hero-copy h2,
+          .home-hero-copy p {
+            text-align: center;
+          }
+          .home-eyebrow {
+            margin: 0 auto;
+          }
+          .home-status-pill {
+            width: 100%;
+          }
+        }
+        @media (max-width: 760px) {
+          .home-stat-row {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 8px;
+          }
+          .home-stat-row .stat-card {
+            min-height: 112px;
+            padding: 14px 8px;
+            border-radius: 20px;
+          }
+          .home-stat-row .stat-card strong {
+            font-size: clamp(26px, 9vw, 34px);
+          }
+          .home-stat-row .stat-card span,
+          .home-stat-row .stat-card small {
+            font-size: 12px;
+          }
+        }
         @media (max-width: 700px) {
           .app-toast {
             top: calc(env(safe-area-inset-top, 0px) + 10px) !important;
@@ -2406,49 +2570,60 @@ export default function App() {
         <main className="content" ref={contentRef}>
           {page === "home" ? (
             <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
-              <div className="grid three compact-home-stats">
-                <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
-                <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
-                <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
-              </div>
-
-              <div className="panel intro-panel">
-                <h3>系統說明</h3>
-                <p>這是通用型站點資格管理系統，提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p>
-                <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
-              </div>
-
-              <div className="panel compact-preference-panel">
-                <div className="theme-selector-heading compact-selector-header">
-                  <div>
-                    <h3>全區域外觀</h3>
-                    <p>改用選單方式切換，避免樣式設定過度佔用首頁版面；選擇後會立即套用到全站。</p>
+              <section className="home-dashboard">
+                <div className="home-hero-panel">
+                  <div className="home-hero-copy">
+                    <span className="home-eyebrow">站點資格管理系統</span>
+                    <h2>快速查看目前系統資料狀態</h2>
+                    <p>首頁只保留最重要的摘要、系統說明與個人外觀設定，避免資訊過度堆疊。</p>
                   </div>
-                  <span className="chip">目前：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label} / {globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
+                  <div className="home-status-pill">
+                    <span>目前登入</span>
+                    <strong>{currentUser ? currentUser.name : "尚未登入"}</strong>
+                  </div>
                 </div>
-                <div className="compact-selector-grid">
-                  <label className="compact-selector-card">
-                    <span className="compact-selector-title">樣式主題</span>
-                    <select value={globalThemeOption} onChange={(e) => updateGlobalTheme(e.target.value as GlobalThemeKey)}>
-                      {globalThemeOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-                    </select>
-                    <small>{globalThemeOptions.find((item) => item.key === globalThemeOption)?.note}</small>
-                  </label>
 
-                  <label className="compact-selector-card">
-                    <span className="compact-selector-title">字型風格</span>
-                    <select value={globalFontOption} onChange={(e) => updateGlobalFont(e.target.value as GlobalFontKey)}>
-                      {globalFontOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-                    </select>
-                    <small>{globalFontOptions.find((item) => item.key === globalFontOption)?.note}</small>
-                  </label>
+                <div className="home-stat-row">
+                  <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
+                  <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
+                  <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
                 </div>
-                <div className="compact-selector-tips">
-                  <span className="chip">樣式：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label}</span>
-                  <span className="chip">字型：{globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
-                  <span className="chip">隨機選項會於重新整理時自動抽一款</span>
+
+                <div className="home-lower-grid">
+                  <div className="panel intro-panel home-info-panel">
+                    <h3>系統說明</h3>
+                    <p>提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p>
+                    <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
+                  </div>
+
+                  <div className="panel compact-preference-panel home-preference-panel">
+                    <div className="theme-selector-heading compact-selector-header">
+                      <div>
+                        <h3>外觀設定</h3>
+                        <p>用選單快速切換全站樣式與繁中文字型。</p>
+                      </div>
+                      <span className="chip">目前：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label} / {globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
+                    </div>
+                    <div className="compact-selector-grid">
+                      <label className="compact-selector-card">
+                        <span className="compact-selector-title">樣式主題</span>
+                        <select value={globalThemeOption} onChange={(e) => updateGlobalTheme(e.target.value as GlobalThemeKey)}>
+                          {globalThemeOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                        </select>
+                        <small>{globalThemeOptions.find((item) => item.key === globalThemeOption)?.note}</small>
+                      </label>
+
+                      <label className="compact-selector-card">
+                        <span className="compact-selector-title">字型風格</span>
+                        <select value={globalFontOption} onChange={(e) => updateGlobalFont(e.target.value as GlobalFontKey)}>
+                          {globalFontOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                        </select>
+                        <small>{globalFontOptions.find((item) => item.key === globalFontOption)?.note}</small>
+                      </label>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </section>
             </Layout>
           ) : null}
           {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
