@@ -53,6 +53,63 @@ type MobileDetailModal =
   | null;
 
 type ViewMode = "desktop" | "mobile";
+type GlobalThemeKey = "glass" | "kawaii" | "cyber" | "premium" | "comic" | "random";
+type GlobalFontKey = "system" | "rounded" | "serif" | "mono" | "hand" | "random";
+type LoginKeepKey = "8h" | "12h" | "24h" | "7d";
+
+const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> = [
+  { key: "8h", label: "8小時", ms: 8 * 60 * 60 * 1000 },
+  { key: "12h", label: "12小時", ms: 12 * 60 * 60 * 1000 },
+  { key: "24h", label: "24小時", ms: 24 * 60 * 60 * 1000 },
+  { key: "7d", label: "7天", ms: 7 * 24 * 60 * 60 * 1000 },
+];
+
+const loginSessionStorageKey = "stationAppLoginSession";
+const loginKeepStorageKey = "stationAppLoginKeep";
+
+function getStoredLoginKeep(): LoginKeepKey {
+  const stored = typeof window !== "undefined" ? window.localStorage.getItem(loginKeepStorageKey) : "";
+  return loginKeepOptions.some((item) => item.key === stored) ? (stored as LoginKeepKey) : "12h";
+}
+
+function getLoginKeepMs(key: LoginKeepKey) {
+  return loginKeepOptions.find((item) => item.key === key)?.ms || loginKeepOptions[1].ms;
+}
+
+const globalThemeOptions: Array<{ key: GlobalThemeKey; label: string; note: string }> = [
+  { key: "glass", label: "極簡玻璃", note: "清爽、乾淨、最適合日常使用" },
+  { key: "kawaii", label: "甜心柔和", note: "柔和可愛、提示較親切" },
+  { key: "cyber", label: "霓虹科技", note: "高對比、醒目、科技感強" },
+  { key: "premium", label: "精品典雅", note: "深藍金色、正式感高" },
+  { key: "comic", label: "漫畫活力", note: "活潑、辨識度最高" },
+  { key: "random", label: "隨機樣式", note: "每次重新整理自動抽一款" },
+];
+
+const globalFontOptions: Array<{ key: GlobalFontKey; label: string; note: string }> = [
+  { key: "system", label: "系統清晰", note: "預設，手機最穩定" },
+  { key: "rounded", label: "圓潤可愛", note: "柔和、易讀" },
+  { key: "serif", label: "典雅明體", note: "正式、標題感強" },
+  { key: "mono", label: "科技等寬", note: "數字與代碼整齊" },
+  { key: "hand", label: "手寫溫度", note: "較有親和感" },
+  { key: "random", label: "隨機字型", note: "每次重新整理自動抽一款" },
+];
+
+const concreteThemeKeys = globalThemeOptions.filter((item) => item.key !== "random").map((item) => item.key) as Exclude<GlobalThemeKey, "random">[];
+const concreteFontKeys = globalFontOptions.filter((item) => item.key !== "random").map((item) => item.key) as Exclude<GlobalFontKey, "random">[];
+
+function pickRandomItem<T>(items: T[]): T {
+  return items[Math.floor(Math.random() * items.length)] || items[0];
+}
+
+function getStoredThemeOption(): GlobalThemeKey {
+  const stored = typeof window !== "undefined" ? window.localStorage.getItem("globalThemeOption") : "";
+  return globalThemeOptions.some((item) => item.key === stored) ? (stored as GlobalThemeKey) : "glass";
+}
+
+function getStoredFontOption(): GlobalFontKey {
+  const stored = typeof window !== "undefined" ? window.localStorage.getItem("globalFontOption") : "";
+  return globalFontOptions.some((item) => item.key === stored) ? (stored as GlobalFontKey) : "system";
+}
 
 const emptyBootstrap: AppBootstrap = {
   people: [],
@@ -307,7 +364,19 @@ export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState<PageKey>("home");
+  const [globalThemeOption, setGlobalThemeOption] = useState<GlobalThemeKey>(() => getStoredThemeOption());
+  const [globalFontOption, setGlobalFontOption] = useState<GlobalFontKey>(() => getStoredFontOption());
+  const [effectiveTheme, setEffectiveTheme] = useState<Exclude<GlobalThemeKey, "random">>(() => {
+    const option = getStoredThemeOption();
+    return option === "random" ? pickRandomItem(concreteThemeKeys) : option;
+  });
+  const [effectiveFont, setEffectiveFont] = useState<Exclude<GlobalFontKey, "random">>(() => {
+    const option = getStoredFontOption();
+    return option === "random" ? pickRandomItem(concreteFontKeys) : option;
+  });
   const [flash, setFlash] = useState("");
+  const toastDurationMs = 5000;
+  const toastStyleMode: "floating" | "banner" = "floating";
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => getViewportMode());
   const [mobileDetailModal, setMobileDetailModal] = useState<MobileDetailModal>(null);
@@ -317,6 +386,7 @@ export default function App() {
   const reviewDetailRef = useRef<HTMLDivElement | null>(null);
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
+  const [loginKeep, setLoginKeep] = useState<LoginKeepKey>(() => getStoredLoginKeep());
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
   const currentRole = getSystemPermission(currentUser);
 
@@ -418,7 +488,28 @@ export default function App() {
   const isMobileView = viewMode === "mobile";
 
   function setFlashMessage(text: string) {
-    setFlash(text);
+    setFlash("");
+    window.setTimeout(() => setFlash(text), 0);
+  }
+
+  useEffect(() => {
+    if (!flash) return;
+    const timer = window.setTimeout(() => setFlash(""), toastDurationMs);
+    return () => window.clearTimeout(timer);
+  }, [flash, toastDurationMs]);
+
+  function updateGlobalTheme(option: GlobalThemeKey) {
+    setGlobalThemeOption(option);
+    window.localStorage.setItem("globalThemeOption", option);
+    setEffectiveTheme(option === "random" ? pickRandomItem(concreteThemeKeys) : option);
+    setFlashMessage(option === "random" ? "已套用隨機全站樣式。" : `已套用全站樣式：${globalThemeOptions.find((item) => item.key === option)?.label || option}`);
+  }
+
+  function updateGlobalFont(option: GlobalFontKey) {
+    setGlobalFontOption(option);
+    window.localStorage.setItem("globalFontOption", option);
+    setEffectiveFont(option === "random" ? pickRandomItem(concreteFontKeys) : option);
+    setFlashMessage(option === "random" ? "已套用隨機字型。" : `已套用字型：${globalFontOptions.find((item) => item.key === option)?.label || option}`);
   }
 
   function scrollToTop(behavior: ScrollBehavior = "smooth") {
@@ -480,6 +571,26 @@ export default function App() {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!data.people.length || currentUser) return;
+    try {
+      const raw = window.localStorage.getItem(loginSessionStorageKey);
+      if (!raw) return;
+      const session = JSON.parse(raw) as { userId?: string; expiresAt?: number };
+      if (!session.userId || !session.expiresAt || Date.now() > session.expiresAt) {
+        window.localStorage.removeItem(loginSessionStorageKey);
+        return;
+      }
+      const restoredUser = data.people.find((person) => person.id === session.userId);
+      if (restoredUser) {
+        setCurrentUser(restoredUser);
+        setFlashMessage(`已恢復登入：${restoredUser.name}`);
+      }
+    } catch {
+      window.localStorage.removeItem(loginSessionStorageKey);
+    }
+  }, [data.people, currentUser]);
 
   useEffect(() => {
     const syncViewportMode = () => setViewMode(getViewportMode());
@@ -821,8 +932,21 @@ export default function App() {
     return window.confirm(message);
   }
 
+  function updateLoginKeep(option: LoginKeepKey) {
+    setLoginKeep(option);
+    window.localStorage.setItem(loginKeepStorageKey, option);
+    setFlashMessage(`重新整理保持登入時間已設定為：${loginKeepOptions.find((item) => item.key === option)?.label || option}`);
+    if (currentUser) {
+      window.localStorage.setItem(loginSessionStorageKey, JSON.stringify({
+        userId: currentUser.id,
+        expiresAt: Date.now() + getLoginKeepMs(option),
+      }));
+    }
+  }
+
   function logout() {
     setCurrentUser(null);
+    window.localStorage.removeItem(loginSessionStorageKey);
     setPage("home");
     setFlashMessage("已登出。");
     setMobileDetailModal(null);
@@ -853,9 +977,13 @@ export default function App() {
       const mergedUser = bootstrapUser ? { ...bootstrapUser, ...result.user } : result.user;
 
       setCurrentUser(mergedUser);
+      window.localStorage.setItem(loginSessionStorageKey, JSON.stringify({
+        userId: mergedUser.id,
+        expiresAt: Date.now() + getLoginKeepMs(loginKeep),
+      }));
       setLoginForm({ account: "", password: "" });
       setPage("home");
-      setFlashMessage(`登入成功：${mergedUser.name}`);
+      setFlashMessage(`登入成功：${mergedUser.name}，重新整理仍會保留登入。`);
       scrollToTop();
     } catch {
       setFlashMessage("登入失敗，請確認 GAS login 已重新部署。");
@@ -1931,7 +2059,151 @@ export default function App() {
 
   return (
     <>
-      <div className="app-shell" translate="no">
+      <style>{`
+        .app-shell {
+          --theme-bg: #f5f7fb;
+          --theme-surface: rgba(255,255,255,.92);
+          --theme-panel: #ffffff;
+          --theme-border: #dbe5f0;
+          --theme-text: #06142f;
+          --theme-muted: #64748b;
+          --theme-primary: #2563eb;
+          --theme-primary-contrast: #ffffff;
+          --theme-soft: #eff6ff;
+          --theme-success: #16a34a;
+          --theme-danger: #dc2626;
+          --theme-accent: #38bdf8;
+          --theme-shadow: 0 18px 42px rgba(15, 23, 42, .10);
+          --theme-title-spacing: .02em;
+          --theme-radius: 22px;
+          background: var(--theme-bg);
+          color: var(--theme-text);
+          font-family: var(--theme-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif);
+          transition: background .25s ease, color .25s ease;
+        }
+        .app-theme-glass {
+          --theme-bg: radial-gradient(circle at 12% 0%, #e0f2fe 0, transparent 30%), linear-gradient(180deg, #f8fbff 0%, #eef4fb 100%);
+          --theme-surface: rgba(255,255,255,.74);
+          --theme-panel: rgba(255,255,255,.86);
+          --theme-border: rgba(148, 163, 184, .32);
+          --theme-primary: #2563eb;
+          --theme-soft: #eff6ff;
+          --theme-accent: #22c55e;
+          --theme-shadow: 0 18px 52px rgba(59, 130, 246, .14);
+        }
+        .app-theme-kawaii {
+          --theme-bg: radial-gradient(circle at 18% 8%, #ffe4ef 0, transparent 28%), radial-gradient(circle at 92% 2%, #fff7ad 0, transparent 22%), linear-gradient(180deg, #fff7f2 0%, #fffaf7 100%);
+          --theme-surface: rgba(255,248,244,.92);
+          --theme-panel: #fffafa;
+          --theme-border: #ffd6c8;
+          --theme-text: #3f2f2f;
+          --theme-muted: #9a7b72;
+          --theme-primary: #fb7185;
+          --theme-soft: #fff1f2;
+          --theme-accent: #fbbf24;
+          --theme-success: #22c55e;
+          --theme-shadow: 0 18px 42px rgba(251, 113, 133, .15);
+          --theme-radius: 28px;
+        }
+        .app-theme-cyber {
+          --theme-bg: radial-gradient(circle at 20% 10%, rgba(14,165,233,.24), transparent 30%), radial-gradient(circle at 88% 0%, rgba(217,70,239,.28), transparent 32%), linear-gradient(180deg, #07111f 0%, #0f172a 100%);
+          --theme-surface: rgba(15, 23, 42, .78);
+          --theme-panel: rgba(15, 23, 42, .82);
+          --theme-border: rgba(34, 211, 238, .42);
+          --theme-text: #e0f2fe;
+          --theme-muted: #93c5fd;
+          --theme-primary: #06b6d4;
+          --theme-soft: rgba(8, 47, 73, .72);
+          --theme-accent: #e879f9;
+          --theme-success: #22d3ee;
+          --theme-danger: #fb7185;
+          --theme-shadow: 0 0 34px rgba(34,211,238,.16), 0 18px 44px rgba(0,0,0,.32);
+          --theme-radius: 12px;
+          --theme-title-spacing: .06em;
+        }
+        .app-theme-premium {
+          --theme-bg: linear-gradient(180deg, #fbf7ef 0%, #f5efe4 100%);
+          --theme-surface: rgba(255,252,247,.9);
+          --theme-panel: #fffdf8;
+          --theme-border: #d9c49e;
+          --theme-text: #102033;
+          --theme-muted: #927a55;
+          --theme-primary: #0f2742;
+          --theme-soft: #f6efe4;
+          --theme-accent: #b98c42;
+          --theme-success: #2f7d5b;
+          --theme-shadow: 0 18px 42px rgba(73, 54, 28, .13);
+          --theme-radius: 20px;
+          --theme-title-spacing: .04em;
+        }
+        .app-theme-comic {
+          --theme-bg: radial-gradient(circle at 10% 12%, #fff176 0, transparent 20%), radial-gradient(circle at 92% 8%, #7dd3fc 0, transparent 22%), linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+          --theme-surface: #ffffff;
+          --theme-panel: #ffffff;
+          --theme-border: #111827;
+          --theme-text: #111827;
+          --theme-muted: #475569;
+          --theme-primary: #2563eb;
+          --theme-soft: #fef3c7;
+          --theme-accent: #f43f5e;
+          --theme-success: #22c55e;
+          --theme-shadow: 6px 6px 0 rgba(17,24,39,.15);
+          --theme-radius: 18px;
+          --theme-title-spacing: .03em;
+        }
+        .app-font-system { --theme-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
+        .app-font-rounded { --theme-font-family: "Arial Rounded MT Bold", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
+        .app-font-serif { --theme-font-family: "Noto Serif TC", "Songti TC", "PMingLiU", Georgia, serif; }
+        .app-font-mono { --theme-font-family: "SFMono-Regular", Consolas, "Noto Sans Mono CJK TC", "Noto Sans TC", monospace; }
+        .app-font-hand { --theme-font-family: "Comic Sans MS", "Marker Felt", "Noto Sans TC", "PingFang TC", cursive; }
+        .content h1, .content h2, .content h3, .brand-card h1, .panel h3, .layout-title h1 {
+          color: var(--theme-text);
+          letter-spacing: var(--theme-title-spacing);
+          line-height: 1.18;
+        }
+        .content .panel, .control-card, .brand-card, .list-row, .stat-card {
+          background: var(--theme-panel);
+          border-color: var(--theme-border);
+          box-shadow: var(--theme-shadow);
+          border-radius: var(--theme-radius);
+        }
+        .content input, .content select, .content textarea {
+          background: color-mix(in srgb, var(--theme-panel) 88%, white);
+          color: var(--theme-text);
+          border-color: var(--theme-border);
+        }
+        .primary, .nav-item.active, .toolbar .primary {
+          background: var(--theme-primary) !important;
+          color: var(--theme-primary-contrast) !important;
+          border-color: var(--theme-primary) !important;
+        }
+        .ghost, .chip, .manual-officer-chip {
+          background: var(--theme-soft);
+          color: var(--theme-primary);
+          border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-border));
+        }
+        .app-toast {
+          background: var(--theme-toast-bg, rgba(15, 23, 42, .94));
+          color: var(--theme-toast-text, #fff);
+          border-color: var(--theme-toast-border, rgba(148, 163, 184, .45));
+        }
+        .app-theme-glass .app-toast { --theme-toast-bg: rgba(255,255,255,.78); --theme-toast-text: #0f172a; --theme-toast-border: rgba(34,197,94,.28); box-shadow: 0 20px 60px rgba(15,23,42,.16); backdrop-filter: blur(16px); }
+        .app-theme-kawaii .app-toast { --theme-toast-bg: #fff7ed; --theme-toast-text: #422006; --theme-toast-border: #fed7aa; border-radius: 28px; }
+        .app-theme-cyber .app-toast { --theme-toast-bg: rgba(2,6,23,.92); --theme-toast-text: #e0f2fe; --theme-toast-border: #22d3ee; box-shadow: 0 0 32px rgba(34,211,238,.24), 0 0 48px rgba(232,121,249,.16); border-radius: 10px; }
+        .app-theme-premium .app-toast { --theme-toast-bg: #fffdf7; --theme-toast-text: #102033; --theme-toast-border: #d6b16a; }
+        .app-theme-comic .app-toast { --theme-toast-bg: #fef08a; --theme-toast-text: #111827; --theme-toast-border: #111827; border-width: 2px; box-shadow: 5px 5px 0 rgba(17,24,39,.22); }
+        .home-style-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+        .home-style-card { border: 1px solid var(--theme-border); border-radius: 20px; padding: 14px; background: var(--theme-surface); color: var(--theme-text); text-align: left; cursor: pointer; box-shadow: var(--theme-shadow); min-height: 112px; transition: transform .18s ease, border-color .18s ease; }
+        .home-style-card:hover { transform: translateY(-2px); }
+        .home-style-card.active { border-color: var(--theme-primary); outline: 3px solid color-mix(in srgb, var(--theme-primary) 18%, transparent); }
+        .home-style-card strong { display: block; font-size: 17px; margin-bottom: 8px; }
+        .home-style-card span { display: block; color: var(--theme-muted); font-size: 13px; line-height: 1.45; }
+        .home-style-swatch { width: 100%; height: 10px; border-radius: 999px; margin-bottom: 12px; background: linear-gradient(90deg, var(--theme-primary), var(--theme-accent)); }
+        .theme-selector-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 14px; }
+        .theme-selector-heading h3 { margin: 0; font-size: 22px; }
+        .theme-selector-heading p { margin: 6px 0 0; color: var(--theme-muted); }
+      `}</style>
+      <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
           <div className="brand-card">
             <div className="brand-kicker">通用型檢測系統</div>
@@ -1948,8 +2220,11 @@ export default function App() {
               </div>
             ) : (
               <>
-                <input placeholder="登入帳號" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
-                <input type="password" placeholder="登入密碼" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
+                <input placeholder="登入帳號（不分大小寫）" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
+                <input type="password" placeholder="登入密碼（不分大小寫）" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
+                <select value={loginKeep} onChange={(e) => updateLoginKeep(e.target.value as LoginKeepKey)} aria-label="保持登入時間">
+                  {loginKeepOptions.map((item) => <option key={item.key} value={item.key}>重新整理保持登入：{item.label}</option>)}
+                </select>
                 <button className="primary" type="button" onClick={handleLogin}>登入</button>
               </>
             )}
@@ -1958,9 +2233,75 @@ export default function App() {
             {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => navigateToPage(item.key)}>{item.label}</button>)}
           </nav>
         </aside>
+        {flash ? (
+          <div className={`app-toast ${toastStyleMode}`} role="status" aria-live="polite">
+            <span>{flash}</span>
+            <button type="button" className="app-toast-close" onClick={() => setFlash("")} aria-label="關閉通知">×</button>
+          </div>
+        ) : null}
         <main className="content" ref={contentRef}>
-          {flash ? <div className="flash"><span>{flash}</span><button type="button" className="flash-close" onClick={() => setFlash("")}>×</button></div> : null}
-          {page === "home" ? <Layout title="首頁" subtitle="系統說明與功能總覽。未登入不顯示其他功能。"><div className="grid three compact-home-stats"><StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" /><StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" /><StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" /></div><div className="panel intro-panel"><h3>系統說明</h3><p>這是通用型站點資格管理系統，提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p><p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p></div></Layout> : null}
+          {page === "home" ? (
+            <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
+              <div className="grid three compact-home-stats">
+                <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
+                <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
+                <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
+              </div>
+
+              <div className="panel intro-panel">
+                <h3>系統說明</h3>
+                <p>這是通用型站點資格管理系統，提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p>
+                <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
+              </div>
+
+              <div className="panel">
+                <div className="theme-selector-heading">
+                  <div>
+                    <h3>全區域樣式</h3>
+                    <p>任何人都可以依自己的手機或電腦喜好選擇，全站立即套用。</p>
+                  </div>
+                  <span className="chip">目前：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label} / {globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
+                </div>
+                <div className="home-style-grid">
+                  {globalThemeOptions.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`home-style-card${globalThemeOption === item.key ? " active" : ""}`}
+                      onClick={() => updateGlobalTheme(item.key)}
+                    >
+                      <i className="home-style-swatch" />
+                      <strong>{item.label}</strong>
+                      <span>{item.note}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="theme-selector-heading">
+                  <div>
+                    <h3>字型風格</h3>
+                    <p>提供 5 款字型與隨機選項，讓標題、清單與按鈕文字排列更一致。</p>
+                  </div>
+                </div>
+                <div className="home-style-grid">
+                  {globalFontOptions.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`home-style-card${globalFontOption === item.key ? " active" : ""}`}
+                      onClick={() => updateGlobalFont(item.key)}
+                    >
+                      <i className="home-style-swatch" />
+                      <strong>{item.label}</strong>
+                      <span>{item.note}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </Layout>
+          ) : null}
           {!currentRole && page !== "home" ? <Layout title="尚未登入" subtitle="請先登入後開啟對應功能。"><Empty text="請先登入。" /></Layout> : null}
 
           {currentRole && page === "person-query" ? (
@@ -2061,6 +2402,13 @@ export default function App() {
             <Layout title="站點試排" subtitle="正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。">
               <div translate="no">
               <style>{`
+                .app-toast { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); z-index: 9999; width: min(720px, calc(100vw - 28px)); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; background: rgba(15, 23, 42, .94); color: #fff; border: 1px solid rgba(148, 163, 184, .45); box-shadow: 0 16px 40px rgba(15, 23, 42, .22); backdrop-filter: blur(12px); pointer-events: none; animation: toastSlideIn .22s ease-out; }
+                .app-toast.banner { top: calc(env(safe-area-inset-top, 0px) + 8px); width: min(920px, calc(100vw - 16px)); border-radius: 14px; }
+                .app-toast span { font-weight: 900; font-size: 16px; line-height: 1.35; }
+                .app-toast-close { pointer-events: auto; border: 0; width: 32px; height: 32px; border-radius: 999px; background: rgba(255,255,255,.14); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+                .app-toast-close:hover { background: rgba(255,255,255,.24); }
+                @keyframes toastSlideIn { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+                @media (max-width: 700px) { .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
                 .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
                 .manual-schedule-list { display: flex; flex-wrap: wrap; gap: 10px; max-height: none; overflow: visible; }
