@@ -2246,6 +2246,38 @@ export default function App() {
         }
 
 
+        /* 首頁獨立置中修正：避免全站樣式把標題、說明、卡片推歪 */
+        .content:has(.home-dashboard) {
+          display: block;
+        }
+        .content:has(.home-dashboard) > section {
+          width: 100%;
+          max-width: 1180px;
+          margin: 0 auto;
+          padding-inline: clamp(16px, 3vw, 32px);
+          box-sizing: border-box;
+        }
+        .content:has(.home-dashboard) .layout-title {
+          width: 100%;
+          max-width: 1180px;
+          margin: 0 auto 18px;
+          display: grid;
+          justify-items: center;
+          text-align: center;
+        }
+        .content:has(.home-dashboard) .layout-title h1,
+        .content:has(.home-dashboard) .layout-title p {
+          width: 100%;
+          max-width: 760px;
+          margin-left: auto;
+          margin-right: auto;
+          text-align: center !important;
+        }
+        .home-dashboard {
+          width: min(100%, 1180px);
+          margin: 0 auto;
+          justify-items: stretch;
+        }
         /* 首頁儀表板版型：摘要卡橫向並排，避免直立堆疊 */
         .home-dashboard {
           display: grid;
@@ -2264,12 +2296,15 @@ export default function App() {
             radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--theme-accent) 16%, transparent), transparent 34%),
             var(--theme-panel);
           box-shadow: var(--theme-shadow);
-          text-align: left;
+          text-align: center;
+          width: 100%;
+          box-sizing: border-box;
         }
         .home-hero-copy {
           display: grid;
           gap: 8px;
-          text-align: left;
+          text-align: center;
+          justify-items: center;
         }
         .home-eyebrow {
           display: inline-flex;
@@ -2287,13 +2322,13 @@ export default function App() {
           color: var(--theme-text);
           font-size: clamp(24px, 3vw, 36px);
           line-height: 1.15;
-          text-align: left;
+          text-align: center;
         }
         .home-hero-copy p {
           margin: 0;
           color: var(--theme-muted) !important;
           line-height: 1.55;
-          text-align: left;
+          text-align: center;
         }
         .home-status-pill {
           display: grid;
@@ -2322,6 +2357,8 @@ export default function App() {
           gap: 14px;
           align-items: stretch;
           width: 100%;
+          max-width: 980px;
+          margin: 0 auto;
         }
         .home-stat-row .stat-card {
           width: 100%;
@@ -2357,6 +2394,9 @@ export default function App() {
           grid-template-columns: minmax(0, .95fr) minmax(360px, 1.05fr);
           gap: 16px;
           align-items: stretch;
+          width: 100%;
+          max-width: 1180px;
+          margin: 0 auto;
         }
         .home-info-panel,
         .home-preference-panel {
@@ -2508,6 +2548,19 @@ export default function App() {
           }
         }
         @media (max-width: 700px) {
+          .content:has(.home-dashboard) > section {
+            padding-inline: 14px;
+          }
+          .home-dashboard,
+          .home-stat-row,
+          .home-lower-grid,
+          .home-hero-panel {
+            width: 100%;
+            max-width: 100%;
+            margin-left: auto;
+            margin-right: auto;
+          }
+
           .app-toast {
             top: calc(env(safe-area-inset-top, 0px) + 10px) !important;
             width: calc(100vw - 20px) !important;
