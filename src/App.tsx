@@ -1408,14 +1408,26 @@ export default function App() {
       ctx.stroke();
 
       const label = splitScheduleStationLabel(row.stationName);
+      const headerTop = y0 + 44;
+      const headerBodyHeight = headerHeight - 44;
+      const stationCenterX = x + colWidth / 2;
+      const stationLineHeight = 25;
+      const codeGap = label.code ? 12 : 0;
+      const codeLineHeight = label.code ? 24 : 0;
       ctx.fillStyle = "#0f172a";
       ctx.font = "900 20px 'Noto Sans TC', 'PingFang TC', sans-serif";
       const nameLines = wrapCanvasText(ctx, label.name, colWidth - 18).slice(0, 3);
-      nameLines.forEach((line, idx) => ctx.fillText(line, x + 9, y0 + 82 + idx * 25));
+      const stationTextHeight = nameLines.length * stationLineHeight + codeGap + codeLineHeight;
+      const stationStartY = headerTop + (headerBodyHeight - stationTextHeight) / 2 + 20;
+      ctx.textAlign = "center";
+      nameLines.forEach((line, idx) => ctx.fillText(line, stationCenterX, stationStartY + idx * stationLineHeight));
       if (label.code) {
         ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
-        ctx.fillText(label.code, x + 9, y0 + 160);
+        ctx.fillStyle = "#1e3a8a";
+        ctx.fillText(label.code, stationCenterX, stationStartY + nameLines.length * stationLineHeight + codeGap);
+        ctx.fillStyle = "#0f172a";
       }
+      ctx.textAlign = "start";
     });
 
     ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
@@ -2772,152 +2784,6 @@ export default function App() {
           }
         }
 
-
-        /* === 精準修正：首頁標題、試排人員標籤、橫版班表站點名稱 === */
-
-        /* 1. 首頁標題與說明：只用同一條中心線，不受其他 section / panel 規則干擾 */
-        .content .layout-title:has(+ .home-flat-page),
-        .content .layout-title:has(+ .home-flat-page) h1,
-        .content .layout-title:has(+ .home-flat-page) p,
-        .content:has(.home-flat-page) .layout-title,
-        .content:has(.home-flat-page) .layout-title h1,
-        .content:has(.home-flat-page) .layout-title p {
-          display: block !important;
-          width: 100% !important;
-          max-width: 100% !important;
-          margin-left: auto !important;
-          margin-right: auto !important;
-          text-align: center !important;
-          justify-content: center !important;
-          justify-items: center !important;
-        }
-        .content:has(.home-flat-page) .layout-title {
-          padding-left: 0 !important;
-          padding-right: 0 !important;
-          margin-bottom: 14px !important;
-        }
-        .content:has(.home-flat-page) .layout-title h1 {
-          margin: 0 auto 6px !important;
-          line-height: 1.16 !important;
-        }
-        .content:has(.home-flat-page) .layout-title p {
-          max-width: 720px !important;
-          line-height: 1.5 !important;
-        }
-
-        /* 2. 站點試排人員標籤：縮小，避免一個人佔整條；手機約 3 個一行，寬螢幕可 4 個一行 */
-        .manual-station-card .assigned-list,
-        .manual-station-card .unassigned-list,
-        .manual-assignment-card .assigned-list,
-        .manual-assignment-card .unassigned-list,
-        .manual-schedule-card .assigned-list,
-        .manual-schedule-card .unassigned-list,
-        .assigned-list,
-        .unassigned-list {
-          display: grid !important;
-          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-          gap: 8px !important;
-          width: 100% !important;
-          align-items: center !important;
-          justify-items: stretch !important;
-        }
-        .assigned-list > *,
-        .unassigned-list > *,
-        .assigned-person,
-        .unassigned-person,
-        .assigned-person-chip,
-        .manual-assigned-person,
-        .manual-person-chip,
-        .person-chip,
-        .manual-station-card .chip,
-        .manual-schedule-card .chip {
-          min-width: 0 !important;
-          width: 100% !important;
-          max-width: none !important;
-          min-height: 36px !important;
-          padding: 6px 8px !important;
-          border-radius: 999px !important;
-          font-size: clamp(13px, 3.2vw, 16px) !important;
-          line-height: 1.15 !important;
-          display: flex !important;
-          align-items: center !important;
-          justify-content: center !important;
-          text-align: center !important;
-          white-space: nowrap !important;
-          overflow: hidden !important;
-          text-overflow: ellipsis !important;
-          box-sizing: border-box !important;
-        }
-        @media (min-width: 760px) {
-          .manual-station-card .assigned-list,
-          .manual-station-card .unassigned-list,
-          .manual-assignment-card .assigned-list,
-          .manual-assignment-card .unassigned-list,
-          .manual-schedule-card .assigned-list,
-          .manual-schedule-card .unassigned-list,
-          .assigned-list,
-          .unassigned-list {
-            grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-          }
-        }
-
-        /* 3. 橫版班表預覽：站點中文名稱與英文代碼固定在格子正中央 */
-        .schedule-preview th,
-        .schedule-preview td,
-        .schedule-preview-table th,
-        .schedule-preview-table td,
-        .preview-schedule-table th,
-        .preview-schedule-table td,
-        .matrix-preview th,
-        .matrix-preview td,
-        .matrix-schedule th,
-        .matrix-schedule td {
-          text-align: center !important;
-          vertical-align: middle !important;
-        }
-        .schedule-preview th *,
-        .schedule-preview td *,
-        .schedule-preview-table th *,
-        .schedule-preview-table td *,
-        .preview-schedule-table th *,
-        .preview-schedule-table td *,
-        .matrix-preview th *,
-        .matrix-preview td *,
-        .matrix-schedule th *,
-        .matrix-schedule td * {
-          text-align: center !important;
-          justify-content: center !important;
-          justify-items: center !important;
-          align-items: center !important;
-          margin-left: auto !important;
-          margin-right: auto !important;
-        }
-        .schedule-preview .station-name,
-        .schedule-preview .station-code,
-        .schedule-preview .preview-station-name,
-        .schedule-preview .preview-station-code,
-        .schedule-preview-table .station-name,
-        .schedule-preview-table .station-code,
-        .matrix-preview .station-name,
-        .matrix-preview .station-code,
-        .matrix-schedule .station-name,
-        .matrix-schedule .station-code {
-          display: flex !important;
-          width: 100% !important;
-          height: 100% !important;
-          align-items: center !important;
-          justify-content: center !important;
-          text-align: center !important;
-        }
-
-        /* 表格預覽上方彩色站點格，避免文字貼上緣或偏左 */
-        .schedule-preview [class*="station"],
-        .schedule-preview-table [class*="station"],
-        .matrix-preview [class*="station"],
-        .matrix-schedule [class*="station"] {
-          text-align: center !important;
-        }
-
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
@@ -3239,7 +3105,7 @@ export default function App() {
                 .schedule-matrix-meta { width: 260px; min-width: 260px; background: linear-gradient(180deg, #fef08a 0%, #dcfce7 100%); padding: 14px; text-align: left; }
                 .schedule-matrix-team { color: #b91c1c; font-size: 28px; font-weight: 950; margin-bottom: 12px; }
                 .schedule-matrix-officers { display: grid; gap: 8px; color: #0f172a; font-size: 17px; font-weight: 950; line-height: 1.45; }
-                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; }
+                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; vertical-align: middle !important; }
                 .schedule-matrix-table th:nth-child(4n+2) { background: #bfdbfe; }
                 .schedule-matrix-table th:nth-child(4n+3) { background: #d9f99d; }
                 .schedule-matrix-table th:nth-child(4n+4) { background: #fde68a; }
