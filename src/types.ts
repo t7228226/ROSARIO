@@ -25,6 +25,12 @@ export interface Person {
   systemPermission?: UserRole | string;
   permissionLevel?: UserRole | string;
   isSuperAdmin?: boolean;
+  account?: string;
+  loginPassword?: string;
+  password?: string;
+  accountEnabled?: string;
+  accountStatus?: string;
+  enabled?: string;
 }
 
 export interface Station {
