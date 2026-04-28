@@ -687,11 +687,40 @@ export default function App() {
       const isInactive = employment.includes("離職") || employment.includes("停用") || employment.toUpperCase() === "N";
       return !isInactive && getTeamOfPerson(person) === manualShift;
     });
-    const officerNamesByRole = (role: OfficerRole) => uniqueNames(
-      activeTeamPeople
-        .filter((person) => normalizeOfficerRole(person.role) === role)
-        .map((person) => person.name)
-    );
+    const normalizeTeamText = (value?: string) => String(value || "").replace(/班$/, "").trim();
+    const manualShiftToken = normalizeTeamText(manualShift);
+    const isActivePerson = (person: Person) => {
+      const employment = String(person.employmentStatus || "").trim();
+      return !(employment.includes("離職") || employment.includes("停用") || employment.toUpperCase() === "N");
+    };
+    const isSameDisplayTeam = (person: Person) => {
+      const personTeam = String(getTeamOfPerson(person) || "");
+      const rawShift = String(person.shift || "");
+      const name = String(person.name || "");
+      return (
+        personTeam === manualShift ||
+        rawShift === manualShift ||
+        normalizeTeamText(rawShift) === manualShiftToken ||
+        Boolean(manualShiftToken && name.includes(manualShiftToken))
+      );
+    };
+    const officerNamesByRole = (role: OfficerRole) => {
+      const strictNames = uniqueNames(
+        activeTeamPeople
+          .filter((person) => normalizeOfficerRole(person.role) === role)
+          .map((person) => person.name)
+      );
+      if (strictNames.length > 0) return strictNames;
+
+      // 主任只作為班表標頭顯示，不列入待排/已排計算；若出勤池排除了主任，改由主檔補抓同班主任。
+      return uniqueNames(
+        data.people
+          .filter((person) => isActivePerson(person))
+          .filter((person) => normalizeOfficerRole(person.role) === role)
+          .filter((person) => isSameDisplayTeam(person))
+          .map((person) => person.name)
+      );
+    };
     const stationOrder = new Map<string, number>(data.stations.map((station, index) => [station.id, index]));
     const orderedManualRules = [...manualRules].sort((a, b) => {
       const orderA = stationOrder.get(a.stationId) ?? 9999;
