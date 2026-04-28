@@ -406,6 +406,7 @@ export default function App() {
   const [permissionItemStates, setPermissionItemStates] = useState<PermissionItemDefinition[]>(() => databasePermissionItems.map((item) => ({ ...item })));
   const [rolePermissionMapStates, setRolePermissionMapStates] = useState<RolePermissionMapDefinition[]>(() => databaseRolePermissionMaps.map((item) => ({ ...item })));
   const [accountStatusById, setAccountStatusById] = useState<Record<string, string>>({});
+  const [accountPasswordById, setAccountPasswordById] = useState<Record<string, string>>({});
   const [accountPasswordDrafts, setAccountPasswordDrafts] = useState<Record<string, string>>({});
   const [permissionExceptionKeyword, setPermissionExceptionKeyword] = useState("");
 
@@ -1535,7 +1536,8 @@ export default function App() {
     const getAccountStatus = (person: Person) =>
       accountStatusById[person.id] || (String((person as Person & Record<string, unknown>).accountStatus || (person as Person & Record<string, unknown>).enabled || "啟用").includes("停") ? "停用" : "啟用");
     const getAccountPassword = (person: Person) => String(
-      (person as Person & Record<string, unknown>).password ??
+      accountPasswordById[person.id] ??
+        (person as Person & Record<string, unknown>).password ??
         (person as Person & Record<string, unknown>).loginPassword ??
         (person as Person & Record<string, unknown>)["登入密碼"] ??
         ""
@@ -1635,8 +1637,9 @@ export default function App() {
       try {
         const payload = { ...person, password: nextPassword, loginPassword: nextPassword } as Person & Record<string, unknown>;
         await updatePerson(payload as Person);
+        setAccountPasswordById((current) => ({ ...current, [person.id]: nextPassword }));
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));
-        setFlashMessage(`已送出 ${person.name} 的密碼更新。`);
+        setFlashMessage(`已更新 ${person.name} 的密碼，畫面已同步顯示。`);
       } catch {
         setFlashMessage("密碼更新未完成：請確認 GAS updatePerson 是否支援 password/loginPassword 欄位。");
       }
@@ -1804,7 +1807,7 @@ export default function App() {
                 );
               })}
             </div>
-            <p className="muted">目前密碼只有在 GAS/bootstrap 有回傳 password、loginPassword 或「登入密碼」欄位時才會顯示。若顯示未讀取，代表資料源尚未提供密碼欄位。</p>
+            <p className="muted">目前密碼會讀取 07_帳號管理；若剛修改成功，畫面會立即顯示新密碼。若仍顯示未讀取，請同步更新 GAS 與 api.ts。</p>
           </div>
         ) : null}
 
