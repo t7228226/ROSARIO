@@ -2324,39 +2324,13 @@ export default function App() {
           width: 100%;
           box-sizing: border-box;
         }
-        .home-flat-info,
-        .home-flat-info h3,
-        .home-flat-info p,
-        .home-flat-settings,
-        .home-flat-settings h3,
-        .home-flat-settings p,
-        .home-flat-settings .theme-selector-heading,
-        .home-flat-settings .compact-selector-header,
-        .home-flat-settings .compact-selector-card,
-        .home-flat-settings .compact-selector-title,
-        .home-flat-settings small,
-        .home-flat-settings .chip {
-          text-align: center !important;
-        }
         .home-flat-info p {
           line-height: 1.65;
           margin-left: auto;
           margin-right: auto;
         }
-        .home-flat-settings .theme-selector-heading,
-        .home-flat-settings .compact-selector-header {
-          justify-content: center !important;
-          justify-items: center !important;
-          align-items: center !important;
-        }
-        .home-flat-settings .chip {
-          justify-content: center !important;
-          margin-left: auto !important;
-          margin-right: auto !important;
-        }
         .home-flat-settings .compact-selector-grid {
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          justify-items: center;
         }
         /* 全站水平置中與可讀性修正 */
         .brand-card, .control-card, .layout-title, .content > section, .panel, .stat-card {
@@ -3154,9 +3128,8 @@ export default function App() {
  .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
                 .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
-                .manual-schedule-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-height: none; overflow: visible; align-items: stretch; }
-                .manual-schedule-list .list-row { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border-radius: 999px; justify-content: center; align-items: center; text-align: center; touch-action: manipulation; box-sizing: border-box; }
-                .manual-schedule-list .list-row strong { width: 100%; font-size: 13px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                .manual-schedule-list { display: flex; flex-wrap: wrap; gap: 10px; max-height: none; overflow: visible; }
+                .manual-schedule-list .list-row { width: auto; min-width: 88px; min-height: 48px; justify-content: center; touch-action: manipulation; }
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
@@ -3262,17 +3235,17 @@ export default function App() {
                 .schedule-matrix-paper { background: #f8fafc; border-color: #cbd5e1; padding: 12px; }
                 .schedule-matrix-scroll { overflow-x: auto; border-radius: 18px; border: 1px solid #94a3b8; background: #fff; }
                 .schedule-matrix-table { border-collapse: collapse; min-width: 1080px; width: max-content; table-layout: fixed; }
-                .schedule-matrix-table th, .schedule-matrix-table td { border: 1px solid #94a3b8; vertical-align: middle; }
+                .schedule-matrix-table th, .schedule-matrix-table td { border: 1px solid #94a3b8; vertical-align: top; }
                 .schedule-matrix-meta { width: 260px; min-width: 260px; background: linear-gradient(180deg, #fef08a 0%, #dcfce7 100%); padding: 14px; text-align: left; }
                 .schedule-matrix-team { color: #b91c1c; font-size: 28px; font-weight: 950; margin-bottom: 12px; }
                 .schedule-matrix-officers { display: grid; gap: 8px; color: #0f172a; font-size: 17px; font-weight: 950; line-height: 1.45; }
-                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; vertical-align: middle !important; }
+                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; }
                 .schedule-matrix-table th:nth-child(4n+2) { background: #bfdbfe; }
                 .schedule-matrix-table th:nth-child(4n+3) { background: #d9f99d; }
                 .schedule-matrix-table th:nth-child(4n+4) { background: #fde68a; }
                 .schedule-matrix-table th:nth-child(4n+5) { background: #bae6fd; }
-                .schedule-matrix-station-name { display: block; width: 100%; font-size: 18px; font-weight: 950; line-height: 1.25; word-break: keep-all; text-align: center; }
-                .schedule-matrix-station-code { display: block; width: 100%; margin-top: 8px; font-size: 17px; font-weight: 950; color: #1e3a8a; text-align: center; }
+                .schedule-matrix-station-name { display: block; font-size: 18px; font-weight: 950; line-height: 1.25; word-break: keep-all; }
+                .schedule-matrix-station-code { display: block; margin-top: 8px; font-size: 17px; font-weight: 950; color: #1e3a8a; }
                 .schedule-matrix-row-label { width: 260px; min-width: 260px; background: #f1f5f9; color: #475569; font-size: 15px; font-weight: 950; text-align: center; padding: 8px; }
                 .schedule-matrix-person-cell { width: 126px; min-width: 126px; height: 42px; padding: 5px; background: #fff; text-align: center; }
                 .schedule-matrix-table tr:nth-child(even) .schedule-matrix-person-cell { background: #f8fafc; }
@@ -3288,9 +3261,6 @@ export default function App() {
                   .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
                   .manual-officer-title { font-size: 20px; padding-top: 0; }
                   .manual-officer-chip { min-height: 46px; font-size: 17px; }
-                  .manual-schedule-list { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
-                  .manual-schedule-list .list-row { min-height: 32px; padding: 5px 6px; }
-                  .manual-schedule-list .list-row strong { font-size: 12px; }
                   .manual-officer-list.station-leader-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
                   .manual-officer-station { width: 100%; justify-content: space-between; box-sizing: border-box; }
                   .manual-officer-station:not(.leader-card) select { flex: 1; min-width: 0; }
