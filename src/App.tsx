@@ -2246,32 +2246,6 @@ export default function App() {
         }
 
 
-        /* 首頁標題軸線修正：標題、副標、內容全部使用同一個容器置中 */
-        .content:has(.home-flat-page) .layout-title {
-          display: none !important;
-        }
-        .home-flat-title {
-          display: grid;
-          justify-items: center;
-          text-align: center;
-          width: 100%;
-          margin: 0 auto 18px;
-        }
-        .home-flat-title h1 {
-          margin: 0 0 8px;
-          color: var(--theme-text) !important;
-          font-size: clamp(34px, 5vw, 52px);
-          line-height: 1.1;
-          text-align: center !important;
-        }
-        .home-flat-title p {
-          margin: 0;
-          width: 100%;
-          color: var(--theme-muted) !important;
-          font-size: clamp(17px, 2.5vw, 24px);
-          line-height: 1.45;
-          text-align: center !important;
-        }
         /* 極簡首頁：單一主軸，不再使用大摘要卡，避免右側大片空白 */
         .content:has(.home-flat-page) {
           display: block;
@@ -2455,21 +2429,6 @@ export default function App() {
         .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
         .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
 
-        .home-flat-page {
-          margin-left: auto !important;
-          margin-right: auto !important;
-          justify-items: stretch !important;
-        }
-        .home-flat-page > * {
-          width: 100%;
-        }
-        .home-flat-title,
-        .home-flat-title h1,
-        .home-flat-title p {
-          justify-self: center;
-          text-align: center !important;
-        }
-
         @media (max-width: 700px) {
           .content:has(.home-flat-page) > section {
             width: 100%;
@@ -2525,140 +2484,144 @@ export default function App() {
           }
         }
 
-        /* 選單 UI 隔離修正：避免首頁/全站置中樣式污染登入區與功能選單 */
-        .sidebar {
-          background: #0f172a !important;
-          color: #f8fafc !important;
+        /* === 版面復原：停止把所有功能頁壓成窄直立卡片 === */
+        .content:not(:has(.home-flat-page)) {
+          display: block !important;
+        }
+        .content:not(:has(.home-flat-page)) > section {
+          width: min(100%, 1280px) !important;
+          max-width: 1280px !important;
+          margin: 0 auto !important;
+          padding-inline: clamp(14px, 2.6vw, 28px) !important;
+          box-sizing: border-box !important;
+        }
+        .content:not(:has(.home-flat-page)) .layout-title {
+          width: 100% !important;
+          max-width: none !important;
+          margin: 0 0 18px !important;
+          text-align: center !important;
           display: grid !important;
-          gap: 14px !important;
-          align-content: start !important;
+          justify-items: center !important;
+        }
+        .content:not(:has(.home-flat-page)) .layout-title h1,
+        .content:not(:has(.home-flat-page)) .layout-title p {
+          width: 100% !important;
+          max-width: 980px !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
+          text-align: center !important;
+        }
+        .content:not(:has(.home-flat-page)) .grid {
+          width: 100% !important;
+          justify-items: stretch !important;
+          align-items: start !important;
+        }
+        .content:not(:has(.home-flat-page)) .grid.two {
+          grid-template-columns: minmax(320px, .9fr) minmax(420px, 1.1fr) !important;
+        }
+        .content:not(:has(.home-flat-page)) .grid.three {
+          grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        }
+        .content:not(:has(.home-flat-page)) .panel,
+        .content:not(:has(.home-flat-page)) .list-scroll,
+        .content:not(:has(.home-flat-page)) .toolbar {
+          width: 100% !important;
+          max-width: none !important;
+          box-sizing: border-box !important;
+        }
+        .content:not(:has(.home-flat-page)) .panel {
+          text-align: initial !important;
+        }
+        .content:not(:has(.home-flat-page)) .toolbar {
+          justify-content: stretch !important;
+          justify-items: stretch !important;
+        }
+        .content:not(:has(.home-flat-page)) .toolbar > * {
+          width: 100% !important;
+          max-width: none !important;
+        }
+        .content:not(:has(.home-flat-page)) .list-row {
+          width: 100% !important;
+          max-width: none !important;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+          text-align: left !important;
+          justify-content: space-between !important;
+          justify-items: stretch !important;
+          display: grid !important;
+          grid-template-columns: minmax(0, 1fr) auto !important;
+          gap: 8px !important;
+        }
+        .content:not(:has(.home-flat-page)) .list-row strong,
+        .content:not(:has(.home-flat-page)) .list-row span {
+          width: auto !important;
           text-align: left !important;
         }
-        .sidebar * {
-          box-sizing: border-box;
-        }
-        .sidebar .brand-card,
-        .sidebar .control-card {
-          width: 100% !important;
-          background: rgba(255, 255, 255, .94) !important;
-          color: #0f172a !important;
-          border: 1px solid rgba(203, 213, 225, .75) !important;
-          box-shadow: 0 14px 34px rgba(15, 23, 42, .16) !important;
-          border-radius: 24px !important;
-          text-align: center !important;
-        }
-        .sidebar .brand-card {
-          padding: 18px 16px !important;
-        }
-        .sidebar .control-card {
-          padding: 16px !important;
-          display: grid !important;
-          gap: 10px !important;
-        }
-        .sidebar .brand-kicker,
-        .sidebar .brand-card h1,
-        .sidebar .brand-card p,
-        .sidebar .control-card label,
-        .sidebar .logged-user,
-        .sidebar .logged-user strong,
-        .sidebar .logged-user span {
-          text-align: center !important;
-          color: inherit !important;
-        }
-        .sidebar .brand-kicker {
-          color: #64748b !important;
-          font-weight: 800 !important;
-          font-size: 13px !important;
-        }
-        .sidebar .brand-card h1 {
-          color: #0f172a !important;
-          margin: 6px 0 8px !important;
-          line-height: 1.15 !important;
-        }
-        .sidebar .brand-card p {
-          color: #475569 !important;
-          margin: 0 !important;
-          line-height: 1.5 !important;
-        }
-        .sidebar .control-card label {
-          color: #475569 !important;
-          font-weight: 900 !important;
-          letter-spacing: .03em !important;
-        }
-        .sidebar .control-card input,
-        .sidebar .control-card select {
-          width: 100% !important;
-          min-height: 46px !important;
-          border-radius: 14px !important;
-          border: 1px solid #cbd5e1 !important;
-          background: #ffffff !important;
-          color: #0f172a !important;
-          text-align: center !important;
-          box-shadow: none !important;
-        }
-        .sidebar .control-card input::placeholder {
-          color: #94a3b8 !important;
-        }
-        .sidebar .control-card .primary,
-        .sidebar .control-card button.primary {
-          width: 100% !important;
-          min-height: 46px !important;
-          border-radius: 14px !important;
-          background: #2563eb !important;
-          color: #ffffff !important;
-          border: 1px solid #2563eb !important;
-          font-weight: 900 !important;
+
+        /* 站點試排：幹部站位全部置中，不要標籤偏左 */
+        .manual-officer-section,
+        .manual-officer-group,
+        .manual-officer-row,
+        .manual-officer-list,
+        .manual-officer-chip-wrap,
+        .manual-officer-chip-list {
           text-align: center !important;
           justify-content: center !important;
+          justify-items: center !important;
+          align-items: center !important;
         }
-        .sidebar .control-card .ghost,
-        .sidebar .control-card button.ghost {
-          background: #eff6ff !important;
-          color: #1d4ed8 !important;
-          border: 1px solid #bfdbfe !important;
-        }
-        .sidebar .nav-list {
-          display: grid !important;
-          gap: 10px !important;
+        .manual-officer-section h3,
+        .manual-officer-section h4,
+        .manual-officer-group h3,
+        .manual-officer-group h4,
+        .manual-officer-title,
+        .manual-officer-role {
+          text-align: center !important;
           width: 100% !important;
-          align-items: stretch !important;
-          margin: 0 !important;
-          padding: 0 !important;
         }
-        .sidebar .nav-item {
-          width: 100% !important;
-          min-height: 48px !important;
-          display: flex !important;
+        .manual-officer-chip,
+        .officer-chip,
+        .manual-officer-name,
+        .officer-name-chip {
+          display: inline-flex !important;
           align-items: center !important;
           justify-content: center !important;
           text-align: center !important;
-          border-radius: 14px !important;
-          border: 1px solid rgba(148, 163, 184, .25) !important;
-          background: rgba(255, 255, 255, .10) !important;
-          color: #e2e8f0 !important;
-          box-shadow: none !important;
-          font-weight: 900 !important;
-        }
-        .sidebar .nav-item.active {
-          background: #2563eb !important;
-          color: #ffffff !important;
-          border-color: #2563eb !important;
-        }
-        .sidebar .nav-item:hover {
-          background: rgba(59, 130, 246, .22) !important;
+          margin-left: auto !important;
+          margin-right: auto !important;
         }
 
+        /* 若幹部站位沒有上述 class，保底鎖定站點試排區常見結構 */
+        .content section:has(.manual-officer-chip) .panel,
+        .content section:has(.manual-officer-chip) div {
+          box-sizing: border-box;
+        }
+        .content section:has(.manual-officer-chip) .manual-officer-chip {
+          min-width: fit-content;
+        }
+
+        /* 手機版：功能頁不要再變成極窄卡片，維持舒服寬度 */
         @media (max-width: 900px) {
-          .sidebar {
-            padding: 14px !important;
-            gap: 12px !important;
+          .content:not(:has(.home-flat-page)) > section {
+            width: 100% !important;
+            max-width: 100% !important;
+            padding-inline: 14px !important;
           }
-          .sidebar .brand-card,
-          .sidebar .control-card {
+          .content:not(:has(.home-flat-page)) .grid.two,
+          .content:not(:has(.home-flat-page)) .grid.three {
+            grid-template-columns: 1fr !important;
+          }
+          .content:not(:has(.home-flat-page)) .panel {
             border-radius: 22px !important;
           }
-          .sidebar .nav-list {
+          .content:not(:has(.home-flat-page)) .list-row {
             grid-template-columns: 1fr !important;
+            text-align: center !important;
+            justify-items: center !important;
+          }
+          .content:not(:has(.home-flat-page)) .list-row strong,
+          .content:not(:has(.home-flat-page)) .list-row span {
+            text-align: center !important;
           }
         }
 
@@ -2714,12 +2677,8 @@ export default function App() {
         ) : null}
         <main className="content" ref={contentRef}>
           {page === "home" ? (
-            <Layout title="" subtitle="">
+            <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
               <section className="home-flat-page">
-                <div className="home-flat-title">
-                  <h1>首頁</h1>
-                  <p>全站入口、系統摘要與個人外觀設定。</p>
-                </div>
                 <div className="home-flat-stats">
                   <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
                   <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
