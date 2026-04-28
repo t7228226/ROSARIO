@@ -2241,174 +2241,96 @@ export default function App() {
         }
         .compact-home-stats .stat-card {
           width: 100%;
-          max-width: none;
-          margin: 0;
+          max-width: 220px;
+          margin: 0 auto;
         }
 
 
-        /* 首頁獨立置中修正：避免全站樣式把標題、說明、卡片推歪 */
-        .content:has(.home-dashboard) {
+        /* 極簡首頁：單一主軸，不再使用大摘要卡，避免右側大片空白 */
+        .content:has(.home-flat-page) {
           display: block;
         }
-        .content:has(.home-dashboard) > section {
-          width: 100%;
-          max-width: 1180px;
-          margin: 0 auto;
-          padding-inline: clamp(16px, 3vw, 32px);
+        .content:has(.home-flat-page) > section {
+          width: min(100%, 980px);
+          margin-inline: auto;
+          padding-inline: clamp(14px, 3vw, 24px);
           box-sizing: border-box;
         }
-        .content:has(.home-dashboard) .layout-title {
-          width: 100%;
-          max-width: 1180px;
-          margin: 0 auto 18px;
+        .content:has(.home-flat-page) .layout-title {
+          width: min(100%, 980px);
+          margin: 0 auto 14px;
           display: grid;
           justify-items: center;
           text-align: center;
         }
-        .content:has(.home-dashboard) .layout-title h1,
-        .content:has(.home-dashboard) .layout-title p {
-          width: 100%;
-          max-width: 760px;
-          margin-left: auto;
-          margin-right: auto;
+        .content:has(.home-flat-page) .layout-title h1 {
+          margin: 0 0 4px;
           text-align: center !important;
         }
-        .home-dashboard {
-          width: min(100%, 1180px);
+        .content:has(.home-flat-page) .layout-title p {
+          width: 100%;
+          max-width: 680px;
           margin: 0 auto;
-          justify-items: stretch;
+          text-align: center !important;
+          line-height: 1.5;
         }
-        /* 首頁儀表板版型：摘要卡橫向並排，避免直立堆疊 */
-        .home-dashboard {
+        .home-flat-page {
           display: grid;
-          gap: 18px;
-          width: 100%;
-        }
-        .home-hero-panel {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) auto;
-          align-items: center;
-          gap: 16px;
-          padding: 22px;
-          border: 1px solid var(--theme-border);
-          border-radius: 28px;
-          background:
-            radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--theme-accent) 16%, transparent), transparent 34%),
-            var(--theme-panel);
-          box-shadow: var(--theme-shadow);
-          text-align: center;
-          width: 100%;
-          box-sizing: border-box;
-        }
-        .home-hero-copy {
-          display: grid;
-          gap: 8px;
-          text-align: center;
-          justify-items: center;
-        }
-        .home-eyebrow {
-          display: inline-flex;
-          width: fit-content;
-          padding: 6px 11px;
-          border-radius: 999px;
-          background: var(--theme-soft);
-          color: var(--theme-primary);
-          font-size: 13px;
-          font-weight: 950;
-          letter-spacing: .04em;
-        }
-        .home-hero-copy h2 {
-          margin: 0;
-          color: var(--theme-text);
-          font-size: clamp(24px, 3vw, 36px);
-          line-height: 1.15;
-          text-align: center;
-        }
-        .home-hero-copy p {
-          margin: 0;
-          color: var(--theme-muted) !important;
-          line-height: 1.55;
-          text-align: center;
-        }
-        .home-status-pill {
-          display: grid;
-          justify-items: center;
-          gap: 4px;
-          min-width: 128px;
-          padding: 14px 16px;
-          border-radius: 22px;
-          background: color-mix(in srgb, var(--theme-soft) 72%, white);
-          border: 1px solid color-mix(in srgb, var(--theme-primary) 26%, var(--theme-border));
-          color: var(--theme-text);
-        }
-        .home-status-pill span {
-          color: var(--theme-muted) !important;
-          font-size: 13px;
-          font-weight: 800;
-        }
-        .home-status-pill strong {
-          color: var(--theme-primary) !important;
-          font-size: 18px;
-          font-weight: 950;
-        }
-        .home-stat-row {
-          display: grid;
-          grid-template-columns: repeat(3, minmax(0, 1fr));
           gap: 14px;
-          align-items: stretch;
           width: 100%;
           max-width: 980px;
           margin: 0 auto;
         }
-        .home-stat-row .stat-card {
+        .home-flat-stats {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+          width: 100%;
+          align-items: stretch;
+        }
+        .home-flat-stats .stat-card {
           width: 100%;
           max-width: none !important;
-          min-height: 138px;
+          min-height: 112px;
           margin: 0 !important;
           display: grid;
-          align-content: center;
           justify-items: center;
-          gap: 8px;
-          padding: 20px 14px;
-          border-radius: 26px;
-          background: var(--theme-panel);
-          border: 1px solid var(--theme-border);
-          box-shadow: var(--theme-shadow);
-        }
-        .home-stat-row .stat-card span {
-          color: var(--theme-muted) !important;
-          font-weight: 900;
-        }
-        .home-stat-row .stat-card strong {
-          color: var(--theme-text) !important;
-          font-size: clamp(34px, 5vw, 48px);
-          line-height: 1;
-          letter-spacing: .03em;
-        }
-        .home-stat-row .stat-card small {
-          color: var(--theme-muted) !important;
-          font-weight: 800;
-        }
-        .home-lower-grid {
-          display: grid;
-          grid-template-columns: minmax(0, .95fr) minmax(360px, 1.05fr);
-          gap: 16px;
-          align-items: stretch;
-          width: 100%;
-          max-width: 1180px;
-          margin: 0 auto;
-        }
-        .home-info-panel,
-        .home-preference-panel {
-          margin: 0;
-          height: 100%;
           align-content: center;
+          gap: 6px;
+          padding: 16px 10px;
+          border-radius: 22px;
+          box-sizing: border-box;
         }
-        .home-info-panel p {
-          max-width: 760px;
+        .home-flat-stats .stat-card span,
+        .home-flat-stats .stat-card small {
+          color: var(--theme-muted) !important;
+          font-weight: 850;
+        }
+        .home-flat-stats .stat-card strong {
+          color: var(--theme-text) !important;
+          font-size: clamp(30px, 6vw, 42px);
+          line-height: 1;
+        }
+        .home-flat-grid {
+          display: grid;
+          grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+          gap: 14px;
+          width: 100%;
+          align-items: stretch;
+        }
+        .home-flat-info,
+        .home-flat-settings {
+          margin: 0 !important;
+          width: 100%;
+          box-sizing: border-box;
+        }
+        .home-flat-info p {
+          line-height: 1.65;
           margin-left: auto;
           margin-right: auto;
-          line-height: 1.75;
+        }
+        .home-flat-settings .compact-selector-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
         }
         /* 全站水平置中與可讀性修正 */
         .brand-card, .control-card, .layout-title, .content > section, .panel, .stat-card {
@@ -2460,10 +2382,6 @@ export default function App() {
         .grid, .toolbar {
           justify-items: center;
         }
-        .home-stat-row,
-        .home-lower-grid {
-          justify-items: stretch;
-        }
         .toolbar {
           justify-content: center;
         }
@@ -2511,54 +2429,49 @@ export default function App() {
         .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
         .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
 
-        @media (max-width: 980px) {
-          .home-hero-panel,
-          .home-lower-grid {
-            grid-template-columns: 1fr;
-          }
-          .home-hero-panel,
-          .home-hero-copy,
-          .home-hero-copy h2,
-          .home-hero-copy p {
-            text-align: center;
-          }
-          .home-eyebrow {
-            margin: 0 auto;
-          }
-          .home-status-pill {
+        @media (max-width: 700px) {
+          .content:has(.home-flat-page) > section {
             width: 100%;
+            padding-inline: 14px;
           }
-        }
-        @media (max-width: 760px) {
-          .home-stat-row {
+          .content:has(.home-flat-page) .layout-title {
+            margin-bottom: 12px;
+          }
+          .content:has(.home-flat-page) .layout-title h1 {
+            font-size: 34px;
+          }
+          .content:has(.home-flat-page) .layout-title p {
+            font-size: 16px;
+          }
+          .home-flat-page {
+            gap: 12px;
+          }
+          .home-flat-stats {
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 8px;
           }
-          .home-stat-row .stat-card {
-            min-height: 112px;
-            padding: 14px 8px;
-            border-radius: 20px;
+          .home-flat-stats .stat-card {
+            min-height: 90px;
+            padding: 10px 6px;
+            border-radius: 18px;
           }
-          .home-stat-row .stat-card strong {
-            font-size: clamp(26px, 9vw, 34px);
+          .home-flat-stats .stat-card strong {
+            font-size: clamp(24px, 8vw, 32px);
           }
-          .home-stat-row .stat-card span,
-          .home-stat-row .stat-card small {
+          .home-flat-stats .stat-card span,
+          .home-flat-stats .stat-card small {
             font-size: 12px;
           }
-        }
-        @media (max-width: 700px) {
-          .content:has(.home-dashboard) > section {
-            padding-inline: 14px;
+          .home-flat-grid {
+            grid-template-columns: 1fr;
+            gap: 12px;
           }
-          .home-dashboard,
-          .home-stat-row,
-          .home-lower-grid,
-          .home-hero-panel {
-            width: 100%;
-            max-width: 100%;
-            margin-left: auto;
-            margin-right: auto;
+          .home-flat-info,
+          .home-flat-settings {
+            padding: 16px 14px;
+          }
+          .home-flat-settings .compact-selector-grid {
+            grid-template-columns: 1fr;
           }
 
           .app-toast {
@@ -2623,33 +2536,21 @@ export default function App() {
         <main className="content" ref={contentRef}>
           {page === "home" ? (
             <Layout title="首頁" subtitle="全站入口、系統摘要與個人外觀設定。">
-              <section className="home-dashboard">
-                <div className="home-hero-panel">
-                  <div className="home-hero-copy">
-                    <span className="home-eyebrow">站點資格管理系統</span>
-                    <h2>快速查看目前系統資料狀態</h2>
-                    <p>首頁只保留最重要的摘要、系統說明與個人外觀設定，避免資訊過度堆疊。</p>
-                  </div>
-                  <div className="home-status-pill">
-                    <span>目前登入</span>
-                    <strong>{currentUser ? currentUser.name : "尚未登入"}</strong>
-                  </div>
-                </div>
-
-                <div className="home-stat-row">
+              <section className="home-flat-page">
+                <div className="home-flat-stats">
                   <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
                   <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
                   <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
                 </div>
 
-                <div className="home-lower-grid">
-                  <div className="panel intro-panel home-info-panel">
+                <div className="home-flat-grid">
+                  <div className="panel intro-panel home-flat-info">
                     <h3>系統說明</h3>
                     <p>提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p>
                     <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
                   </div>
 
-                  <div className="panel compact-preference-panel home-preference-panel">
+                  <div className="panel compact-preference-panel home-flat-settings">
                     <div className="theme-selector-heading compact-selector-header">
                       <div>
                         <h3>外觀設定</h3>
