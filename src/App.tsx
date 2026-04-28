@@ -649,11 +649,46 @@ export default function App() {
     });
     return groups;
   }, [manualOfficerPeople]);
+
+  const manualOfficerDisplayGroups = useMemo(() => {
+    const groups: Record<OfficerRole, Person[]> = {
+      主任: [...manualOfficerGroups.主任],
+      組長: [...manualOfficerGroups.組長],
+      領班: [...manualOfficerGroups.領班],
+      站長: [...manualOfficerGroups.站長],
+    };
+    if (groups.主任.length > 0) return groups;
+
+    const normalizeTeamText = (value?: string) => String(value || "").replace(/班$/, "").trim();
+    const manualShiftToken = normalizeTeamText(manualShift);
+    const isActivePerson = (person: Person) => {
+      const employment = String(person.employmentStatus || "").trim();
+      return !(employment.includes("離職") || employment.includes("停用") || employment.toUpperCase() === "N");
+    };
+    const matchDirectorTeam = (person: Person) => {
+      const personTeam = String(getTeamOfPerson(person) || "");
+      const rawShift = String(person.shift || "");
+      return (
+        personTeam === manualShift ||
+        rawShift === manualShift ||
+        normalizeTeamText(rawShift) === manualShiftToken
+      );
+    };
+    const directors = data.people
+      .filter((person) => isActivePerson(person))
+      .filter((person) => normalizeOfficerRole(person.role) === "主任")
+      .filter((person) => matchDirectorTeam(person));
+    groups.主任 = directors.length
+      ? directors
+      : data.people.filter((person) => isActivePerson(person) && normalizeOfficerRole(person.role) === "主任");
+    return groups;
+  }, [data.people, manualOfficerGroups, manualShift]);
+
   const manualOfficerIds = useMemo(() => new Set(manualOfficerPeople.map((person) => person.id)), [manualOfficerPeople]);
   const manualCountedOfficerCount = useMemo(() => {
     return manualOfficerPeople.filter((person) => normalizeOfficerRole(person.role) !== "主任").length;
   }, [manualOfficerPeople]);
-  const manualDirectorCount = manualOfficerGroups.主任.length;
+  const manualDirectorCount = manualOfficerDisplayGroups.主任.length;
 
   const smartAttendance = useMemo(() => getAttendanceForTeam(data.people, smartShift, smartDay), [data.people, smartShift, smartDay]);
   const smartRules = useMemo(() => getApplicableRules(smartShift, smartDay, data.stationRules || []), [data.stationRules, smartShift, smartDay]);
@@ -731,9 +766,9 @@ export default function App() {
     return {
       team: manualShift,
       officers: {
-        主任: officerNamesByRole("主任"),
-        組長: officerNamesByRole("組長"),
-        領班: officerNamesByRole("領班"),
+        主任: uniqueNames(manualOfficerDisplayGroups.主任.map((person) => person.name)).length ? uniqueNames(manualOfficerDisplayGroups.主任.map((person) => person.name)) : officerNamesByRole("主任"),
+        組長: uniqueNames(manualOfficerDisplayGroups.組長.map((person) => person.name)).length ? uniqueNames(manualOfficerDisplayGroups.組長.map((person) => person.name)) : officerNamesByRole("組長"),
+        領班: uniqueNames(manualOfficerDisplayGroups.領班.map((person) => person.name)).length ? uniqueNames(manualOfficerDisplayGroups.領班.map((person) => person.name)) : officerNamesByRole("領班"),
       },
       rows: [
         ...orderedManualRules.map((rule) => {
@@ -766,7 +801,7 @@ export default function App() {
           .filter((row) => row.stationName || row.people.length > 0),
       ],
     };
-  }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks]);
+  }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
 
   function hasAccess(minRole?: UserRole) {
@@ -2211,7 +2246,7 @@ export default function App() {
                 <h3>幹部站位</h3>
                 <div className="manual-officer-board">
                   {officerRoleOrder.map((role) => {
-                    const people = manualOfficerGroups[role];
+                    const people = manualOfficerDisplayGroups[role];
                     return (
                       <div className="manual-officer-row" key={role}>
                         <div className="manual-officer-title">{role}</div>
