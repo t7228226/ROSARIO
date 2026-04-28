@@ -46,70 +46,6 @@ type PageKey =
   | "manual-schedule"
   | "smart-schedule";
 
-type EntranceKey = PageKey | "login-required";
-
-type EntranceMeta = {
-  title: string;
-  subtitle: string;
-};
-
-const entranceMeta: Record<EntranceKey, EntranceMeta> = {
-  home: {
-    title: "首頁",
-    subtitle: "全站入口、系統摘要與個人外觀設定。",
-  },
-  "person-query": {
-    title: "查詢人員資格",
-    subtitle: "可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。",
-  },
-  "station-query": {
-    title: "查詢站點人選",
-    subtitle: "新增班別選項與日別選項，可快速檢視當班與對班支援人力。",
-  },
-  "qualification-review": {
-    title: "站點考核",
-    subtitle: "(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。",
-  },
-  "gap-analysis": {
-    title: "站點缺口分析",
-    subtitle: "切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。",
-  },
-  "manual-schedule": {
-    title: "站點試排",
-    subtitle: "正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。",
-  },
-  "station-rules": {
-    title: "站點規則設定",
-    subtitle: "此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。",
-  },
-  "people-management": {
-    title: "人員名單管理",
-    subtitle: "職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。",
-  },
-  "permission-admin": {
-    title: "權限管理",
-    subtitle: "最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。",
-  },
-  "smart-schedule": {
-    title: "智能試排",
-    subtitle: "此入口目前保留停用，避免干涉站點試排。",
-  },
-  "login-required": {
-    title: "尚未登入",
-    subtitle: "請先登入後開啟對應功能。",
-  },
-};
-
-function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children: ReactNode }) {
-  const meta = entranceMeta[pageKey];
-  return (
-    <Layout title={meta.title} subtitle={meta.subtitle}>
-      <span className="entrance-layout-marker" data-entrance-key={pageKey} aria-hidden="true" />
-      {children}
-    </Layout>
-  );
-}
-
 type MobileDetailModal =
   | { type: "person"; personId: string }
   | { type: "station"; stationId: string }
@@ -422,6 +358,41 @@ function getAssignmentSummary(assignments: Record<string, string[]>, rules: Stat
 function getViewportMode(): ViewMode {
   if (typeof window === "undefined") return "desktop";
   return window.innerWidth <= 900 ? "mobile" : "desktop";
+}
+
+type EntranceKey = PageKey | "login-required";
+
+const entranceMeta: Record<EntranceKey, { title: string; subtitle: string }> = {
+  home: { title: "首頁", subtitle: "全站入口、系統摘要與個人外觀設定。" },
+  "person-query": { title: "查詢人員資格", subtitle: "可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。" },
+  "station-query": { title: "查詢站點人選", subtitle: "新增班別選項與日別選項，可快速檢視當班與對班支援人力。" },
+  "qualification-review": { title: "站點考核", subtitle: "(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。" },
+  "gap-analysis": { title: "站點缺口分析", subtitle: "切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。" },
+  "manual-schedule": { title: "站點試排", subtitle: "正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。" },
+  "smart-schedule": { title: "智能試排", subtitle: "智能試排目前停用，避免干涉站點試排。" },
+  "station-rules": { title: "站點規則設定", subtitle: "此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。" },
+  "people-management": { title: "人員名單管理", subtitle: "職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。" },
+  "permission-admin": { title: "權限管理", subtitle: "最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。" },
+  "login-required": { title: "尚未登入", subtitle: "請先登入後開啟對應功能。" },
+};
+
+function EntranceHeader({ pageKey }: { pageKey: EntranceKey }) {
+  const meta = entranceMeta[pageKey];
+  return (
+    <div className="entrance-header entrance-layout-marker" data-entrance-key={pageKey}>
+      <h1>{meta.title}</h1>
+      <p>{meta.subtitle}</p>
+    </div>
+  );
+}
+
+function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children: ReactNode }) {
+  return (
+    <Layout title="" subtitle="">
+      <EntranceHeader pageKey={pageKey} />
+      {children}
+    </Layout>
+  );
 }
 
 export default function App() {
@@ -1472,26 +1443,14 @@ export default function App() {
       ctx.stroke();
 
       const label = splitScheduleStationLabel(row.stationName);
-      const headerTop = y0 + 44;
-      const headerBodyHeight = headerHeight - 44;
-      const stationCenterX = x + colWidth / 2;
-      const stationLineHeight = 25;
-      const codeGap = label.code ? 12 : 0;
-      const codeLineHeight = label.code ? 24 : 0;
       ctx.fillStyle = "#0f172a";
       ctx.font = "900 20px 'Noto Sans TC', 'PingFang TC', sans-serif";
       const nameLines = wrapCanvasText(ctx, label.name, colWidth - 18).slice(0, 3);
-      const stationTextHeight = nameLines.length * stationLineHeight + codeGap + codeLineHeight;
-      const stationStartY = headerTop + (headerBodyHeight - stationTextHeight) / 2 + 20;
-      ctx.textAlign = "center";
-      nameLines.forEach((line, idx) => ctx.fillText(line, stationCenterX, stationStartY + idx * stationLineHeight));
+      nameLines.forEach((line, idx) => ctx.fillText(line, x + 9, y0 + 82 + idx * 25));
       if (label.code) {
         ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
-        ctx.fillStyle = "#1e3a8a";
-        ctx.fillText(label.code, stationCenterX, stationStartY + nameLines.length * stationLineHeight + codeGap);
-        ctx.fillStyle = "#0f172a";
+        ctx.fillText(label.code, x + 9, y0 + 160);
       }
-      ctx.textAlign = "start";
     });
 
     ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
@@ -2322,6 +2281,44 @@ export default function App() {
         }
 
 
+        /* 獨立入口說明框架：不再依賴 Layout subtitle 排版，入口標題與說明固定水平置中 */
+        .content section:has(.entrance-layout-marker) > .layout-title {
+          display: none !important;
+        }
+        .entrance-header {
+          width: min(100%, 980px);
+          margin: 0 auto 18px;
+          padding: clamp(10px, 2vw, 18px) clamp(12px, 3vw, 24px);
+          box-sizing: border-box;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center !important;
+        }
+        .entrance-header h1 {
+          width: 100%;
+          max-width: 900px;
+          margin: 0 0 6px;
+          color: var(--theme-text) !important;
+          text-align: center !important;
+          line-height: 1.18;
+          letter-spacing: var(--theme-title-spacing);
+        }
+        .entrance-header p {
+          width: 100%;
+          max-width: 760px;
+          margin: 0 auto;
+          color: var(--theme-muted) !important;
+          text-align: center !important;
+          line-height: 1.55;
+          font-weight: 750;
+        }
+        .entrance-header * {
+          text-align: center !important;
+        }
+
+
         /* 極簡首頁：單一主軸，不再使用大摘要卡，避免右側大片空白 */
         .content:has(.home-flat-page) {
           display: block;
@@ -2835,23 +2832,6 @@ export default function App() {
           text-align: center !important;
         }
 
-        /* 獨立入口說明系統：只鎖定 EntranceLayout 產生的入口標題與入口說明水平置中 */
-        .entrance-layout-marker {
-          display: none !important;
-        }
-        .content:has(.entrance-layout-marker) .layout-title,
-        .content:has(.entrance-layout-marker) .layout-title h1,
-        .content:has(.entrance-layout-marker) .layout-title p {
-          width: 100% !important;
-          max-width: 980px !important;
-          margin-left: auto !important;
-          margin-right: auto !important;
-          text-align: center !important;
-          justify-content: center !important;
-          justify-items: center !important;
-          align-items: center !important;
-        }
-
         /* 手機上避免文字看似偏移：常用標題一律同寬置中 */
         @media (max-width: 900px) {
           .layout-title,
@@ -3186,7 +3166,7 @@ export default function App() {
                 .schedule-matrix-meta { width: 260px; min-width: 260px; background: linear-gradient(180deg, #fef08a 0%, #dcfce7 100%); padding: 14px; text-align: left; }
                 .schedule-matrix-team { color: #b91c1c; font-size: 28px; font-weight: 950; margin-bottom: 12px; }
                 .schedule-matrix-officers { display: grid; gap: 8px; color: #0f172a; font-size: 17px; font-weight: 950; line-height: 1.45; }
-                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; vertical-align: middle !important; }
+                .schedule-matrix-station { width: 126px; min-width: 126px; height: 132px; padding: 8px; background: #bfdbfe; color: #0f172a; text-align: center; }
                 .schedule-matrix-table th:nth-child(4n+2) { background: #bfdbfe; }
                 .schedule-matrix-table th:nth-child(4n+3) { background: #d9f99d; }
                 .schedule-matrix-table th:nth-child(4n+4) { background: #fde68a; }
