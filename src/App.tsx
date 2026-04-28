@@ -2845,6 +2845,35 @@ export default function App() {
           }
         }
 
+      
+/* 測試：只鎖定首頁外觀設定卡片，排除左右 flex */
+.home-flat-settings .theme-selector-heading.compact-selector-header {
+  display: grid !important;
+  grid-template-columns: 1fr !important;
+  justify-items: center !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 10px !important;
+}
+.home-flat-settings .theme-selector-heading.compact-selector-header > div {
+  width: 100% !important;
+  display: grid !important;
+  justify-items: center !important;
+  text-align: center !important;
+}
+.home-flat-settings .theme-selector-heading.compact-selector-header h3,
+.home-flat-settings .theme-selector-heading.compact-selector-header p {
+  width: 100% !important;
+  text-align: center !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+.home-flat-settings .theme-selector-heading.compact-selector-header .chip {
+  justify-self: center !important;
+  margin: 4px auto 0 !important;
+}
+
       `}</style>
       <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
         <aside className="sidebar">
