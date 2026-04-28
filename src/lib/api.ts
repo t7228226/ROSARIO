@@ -46,6 +46,11 @@ function normalizePerson(item: Record<string, unknown>): Person {
     systemPermission: permission,
     permissionLevel: permission,
     isSuperAdmin: toBool(item.isSuperAdmin ?? item["是否最高權限"]),
+    account: String(item.account ?? item["登入帳號"] ?? "").trim(),
+    loginPassword: String(item.loginPassword ?? item.password ?? item["登入密碼"] ?? "").trim(),
+    password: String(item.password ?? item.loginPassword ?? item["登入密碼"] ?? "").trim(),
+    accountEnabled: String(item.accountEnabled ?? item.accountStatus ?? item.enabled ?? item["啟用狀態"] ?? "").trim(),
+    accountStatus: String(item.accountStatus ?? item.accountEnabled ?? item.enabled ?? item["啟用狀態"] ?? "").trim(),
   } as Person;
 }
 
