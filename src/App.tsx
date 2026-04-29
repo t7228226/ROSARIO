@@ -212,79 +212,94 @@ const databasePermissionItems: PermissionItemDefinition[] = [
   { id: "PERM_016", name: "權限管理修改", category: "權限", page: "權限管理", action: "修改", mobileFirst: "N", enabled: "啟用" },
 ];
 
-const defaultRoleAllowedPermissionIds: Record<UserRole, string[]> = {
-  技術員: ["PERM_001", "PERM_002", "PERM_003"],
-  領班: ["PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_006", "PERM_007"],
-  主任: ["PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_006", "PERM_007"],
-  組長: [
-    "PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_005", "PERM_006", "PERM_007", "PERM_008",
-    "PERM_011", "PERM_012", "PERM_013", "PERM_014"
-  ],
-  站長: [
-    "PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_005", "PERM_006", "PERM_007", "PERM_008",
-    "PERM_011", "PERM_013"
-  ],
-  最高權限: databasePermissionItems.map((item) => item.id),
+const pagePermissionIdMap: Partial<Record<PageKey, string>> = {
+  home: "PERM_001",
+  "person-query": "PERM_002",
+  "station-query": "PERM_003",
+  "qualification-review": "PERM_004",
+  "gap-analysis": "PERM_006",
+  "manual-schedule": "PERM_007",
+  "smart-schedule": "PERM_009",
+  "station-rules": "PERM_011",
+  "people-management": "PERM_013",
+  "permission-admin": "PERM_015",
 };
 
-function buildDefaultRolePermissionMaps(): RolePermissionMapDefinition[] {
+// 角色權限不再使用內建預設清單；實際可用權限一律以 09_角色權限設定最後存檔紀錄為準。
+
+function normalizePermissionEnabled(value?: string) {
+  return String(value || "啟用").includes("停") ? "停用" : "啟用";
+}
+
+function normalizePermissionAllowed(value?: string) {
+  return String(value || "").toUpperCase() === "Y" ? "Y" : "N";
+}
+
+function mergePermissionItemsWithSaved(remoteItems?: PermissionItemDefinition[]): PermissionItemDefinition[] {
+  const remoteList = remoteItems || [];
+  const remoteMap = new Map(remoteList.map((item) => [item.id, item]));
+  const hasSavedPermissionItems = remoteList.length > 0;
+  const result = databasePermissionItems.map((base) => {
+    const saved = remoteMap.get(base.id);
+    if (!hasSavedPermissionItems) return { ...base };
+    return {
+      ...base,
+      ...(saved || {}),
+      id: base.id,
+      name: saved?.name || base.name,
+      category: saved?.category || base.category,
+      page: saved?.page || base.page,
+      action: saved?.action || base.action,
+      mobileFirst: saved?.mobileFirst || base.mobileFirst,
+      enabled: saved ? normalizePermissionEnabled(saved.enabled) : "停用",
+      note: saved?.note || (saved ? base.note : "尚未由試算表存檔，預設不開放"),
+    };
+  });
+
+  remoteList.forEach((item) => {
+    if (!item.id || result.some((base) => base.id === item.id)) return;
+    result.push({
+      id: item.id,
+      name: item.name || item.id,
+      category: item.category || "自訂",
+      page: item.page || "",
+      action: item.action || "查看",
+      mobileFirst: item.mobileFirst || "Y",
+      enabled: normalizePermissionEnabled(item.enabled),
+      note: item.note || "後端自訂權限項目",
+    });
+  });
+
+  return result;
+}
+
+function buildRolePermissionMapsFromSaved(
+  remoteMaps: RolePermissionMapDefinition[] | undefined,
+  permissionItems: PermissionItemDefinition[] = databasePermissionItems
+): RolePermissionMapDefinition[] {
+  const savedMap = new Map<string, RolePermissionMapDefinition>();
+  (remoteMaps || []).forEach((item) => {
+    if (!item.role || !item.permissionId) return;
+    savedMap.set(`${item.role}||${item.permissionId}`, item);
+  });
+
   return permissionOptions.flatMap((role) =>
-    databasePermissionItems.map((permission) => {
-      const allowed = role === "最高權限" || defaultRoleAllowedPermissionIds[role]?.includes(permission.id);
+    permissionItems.map((permission) => {
+      const saved = savedMap.get(`${role}||${permission.id}`);
+      const isSuperAdmin = role === "最高權限";
       return {
-        id: `ROLEMAP_${role}_${permission.id}`,
+        id: saved?.id || `ROLEMAP_${role}_${permission.id}`,
         role,
         permissionId: permission.id,
-        allowed: allowed ? "Y" : "N",
-        enabled: "啟用",
-        note: allowed ? "角色預設開放" : "角色預設未開放",
+        allowed: isSuperAdmin ? "Y" : normalizePermissionAllowed(saved?.allowed),
+        enabled: isSuperAdmin ? "啟用" : normalizePermissionEnabled(saved?.enabled),
+        note: saved?.note || (isSuperAdmin ? "最高權限固定開放" : "未存檔，預設不開放"),
       };
     })
   );
 }
 
-function mergeRolePermissionMapsWithDefaults(remoteMaps?: RolePermissionMapDefinition[]): RolePermissionMapDefinition[] {
-  const merged = new Map<string, RolePermissionMapDefinition>();
-  buildDefaultRolePermissionMaps().forEach((item) => {
-    merged.set(`${item.role}||${item.permissionId}`, item);
-  });
-
-  (remoteMaps || []).forEach((item) => {
-    if (!item.role || !item.permissionId) return;
-    const key = `${item.role}||${item.permissionId}`;
-    const base = merged.get(key);
-    merged.set(key, {
-      ...(base || {
-        id: item.id || `ROLEMAP_${item.role}_${item.permissionId}`,
-        role: item.role,
-        permissionId: item.permissionId,
-        allowed: "N",
-        enabled: "啟用",
-      }),
-      ...item,
-      id: item.id || base?.id || `ROLEMAP_${item.role}_${item.permissionId}`,
-      enabled: item.enabled || base?.enabled || "啟用",
-      allowed: item.role === "最高權限" ? "Y" : (item.allowed === "Y" ? "Y" : "N"),
-    });
-  });
-
-  databasePermissionItems.forEach((permission) => {
-    const key = `最高權限||${permission.id}`;
-    const item = merged.get(key) || {
-      id: `ROLEMAP_最高權限_${permission.id}`,
-      role: "最高權限" as UserRole,
-      permissionId: permission.id,
-      allowed: "Y",
-      enabled: "啟用",
-      note: "最高權限固定開放",
-    };
-    merged.set(key, { ...item, role: "最高權限", allowed: "Y", enabled: "啟用", note: item.note || "最高權限固定開放" });
-  });
-
-  return Array.from(merged.values());
-}
-
-const databaseRolePermissionMaps: RolePermissionMapDefinition[] = mergeRolePermissionMapsWithDefaults();
+const databaseRolePermissionMaps: RolePermissionMapDefinition[] = buildRolePermissionMapsFromSaved(undefined, databasePermissionItems);
 
 function permissionSearchMatches(parts: unknown[], keyword: string) {
   return searchText(parts.map((item) => String(item ?? "")), keyword);
@@ -672,12 +687,9 @@ export default function App() {
           rolePermissionMaps?: RolePermissionMapDefinition[];
           personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
         };
-        if (Array.isArray(permissionConfig.permissionItems) && permissionConfig.permissionItems.length > 0) {
-          setPermissionItemStates(permissionConfig.permissionItems);
-        }
-        if (Array.isArray(permissionConfig.rolePermissionMaps) && permissionConfig.rolePermissionMaps.length > 0) {
-          setRolePermissionMapStates(mergeRolePermissionMapsWithDefaults(permissionConfig.rolePermissionMaps));
-        }
+        const nextPermissionItems = mergePermissionItemsWithSaved(permissionConfig.permissionItems);
+        setPermissionItemStates(nextPermissionItems);
+        setRolePermissionMapStates(buildRolePermissionMapsFromSaved(permissionConfig.rolePermissionMaps, nextPermissionItems));
         if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
           setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
         }
@@ -1040,16 +1052,44 @@ export default function App() {
   }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
 
-  function hasAccess(minRole?: UserRole) {
-    if (!minRole) return true;
-    if (!currentRole) return false;
-    return roleRank[currentRole] >= roleRank[minRole];
+  function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
+    if (role === "最高權限") return true;
+    const match = rolePermissionMapStates.find((item) =>
+      item.role === role &&
+      item.permissionId === permissionId &&
+      item.enabled === "啟用"
+    );
+    return match?.allowed === "Y";
   }
 
-  function canEditRulesForTeam(team: TeamName) {
-    if (!currentUser || !currentRole) return false;
-    if (currentRole === "最高權限" || currentRole === "站長") return true;
-    return currentRole === "主任" && getTeamOfPerson(currentUser) === team;
+  function canUsePermission(permissionId: string, person: Person | null = currentUser) {
+    if (!person) return false;
+    const role = getSystemPermission(person) || "技術員";
+    if (role === "最高權限") return true;
+    const permissionItem = permissionItemStates.find((item) => item.id === permissionId);
+    if (!permissionItem || permissionItem.enabled === "停用") return false;
+    const exception = personalPermissionExceptions.find((item) =>
+      item.employeeId === person.id &&
+      item.permissionId === permissionId &&
+      item.enabled !== "停用"
+    );
+    if (exception?.effect === "deny") return false;
+    if (exception?.effect === "allow") return true;
+    return getRoleAllowedFromSaved(role, permissionId);
+  }
+
+  function canUsePage(pageKey: PageKey) {
+    if (!currentUser) return pageKey === "home";
+    const role = getSystemPermission(currentUser);
+    if (role === "最高權限") return true;
+    if (pageKey === "permission-admin") return false;
+    const permissionId = pagePermissionIdMap[pageKey];
+    if (!permissionId) return false;
+    return canUsePermission(permissionId, currentUser);
+  }
+
+  function canEditRulesForTeam(_team: TeamName) {
+    return canUsePermission("PERM_012");
   }
 
   function confirmAction(message: string) {
@@ -2288,19 +2328,19 @@ export default function App() {
     );
   }
 
-  const navItems: Array<{ key: PageKey; label: string; minRole?: UserRole }> = [
+  const navItems: Array<{ key: PageKey; label: string }> = [
     { key: "home", label: "首頁" },
-    { key: "person-query", label: "查詢人員資格", minRole: "技術員" },
-    { key: "station-query", label: "查詢站點人選", minRole: "技術員" },
-    { key: "qualification-review", label: "站點考核", minRole: "領班" },
-    { key: "gap-analysis", label: "站點缺口分析", minRole: "組長" },
-    { key: "manual-schedule", label: "站點試排", minRole: "組長" },
-    { key: "station-rules", label: "站點規則設定", minRole: "主任" },
-    { key: "people-management", label: "人員名單管理", minRole: "主任" },
-    { key: "permission-admin", label: "權限管理", minRole: "最高權限" },
+    { key: "person-query", label: "查詢人員資格" },
+    { key: "station-query", label: "查詢站點人選" },
+    { key: "qualification-review", label: "站點考核" },
+    { key: "gap-analysis", label: "站點缺口分析" },
+    { key: "manual-schedule", label: "站點試排" },
+    { key: "station-rules", label: "站點規則設定" },
+    { key: "people-management", label: "人員名單管理" },
+    { key: "permission-admin", label: "權限管理" },
   ];
 
-  const allowedNav = currentRole ? navItems.filter((item) => hasAccess(item.minRole)) : navItems.filter((item) => item.key === "home");
+  const allowedNav = navItems.filter((item) => canUsePage(item.key));
 
   if (loading) return <div className="app-shell loading" translate="no">資料載入中...</div>;
 
@@ -3185,7 +3225,7 @@ export default function App() {
           ) : null}
           {!currentRole && page !== "home" ? <EntranceLayout pageKey="login-required"><Empty text="請先登入。" /></EntranceLayout> : null}
 
-          {currentRole && page === "person-query" ? (
+          {currentRole && page === "person-query" && canUsePage("person-query") ? (
             <EntranceLayout pageKey="person-query">
               <div className="grid two">
                 <div className="panel">
@@ -3212,7 +3252,7 @@ export default function App() {
             </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "station-query" ? (
+          {currentRole && page === "station-query" && canUsePage("station-query") ? (
             <EntranceLayout pageKey="station-query">
               <div className="grid two">
                 <div className="panel">
@@ -3237,7 +3277,7 @@ export default function App() {
             </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "qualification-review" && hasAccess("領班") ? (
+          {currentRole && page === "qualification-review" && canUsePage("qualification-review") ? (
             <EntranceLayout pageKey="qualification-review">
               <div className="grid two">
                 <div className="panel">
@@ -3278,8 +3318,8 @@ export default function App() {
             </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "gap-analysis" && hasAccess("組長") ? <EntranceLayout pageKey="gap-analysis"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></EntranceLayout> : null}
-          {currentRole && page === "manual-schedule" && hasAccess("組長") ? (
+          {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? <EntranceLayout pageKey="gap-analysis"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></EntranceLayout> : null}
+          {currentRole && page === "manual-schedule" && canUsePage("manual-schedule") ? (
             <EntranceLayout pageKey="manual-schedule">
               <div translate="no">
               <style>{`
@@ -3896,9 +3936,9 @@ export default function App() {
               </div>
             </EntranceLayout>
           ) : null}
-          {currentRole && page === "station-rules" && hasAccess("主任") ? <EntranceLayout pageKey="station-rules"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></EntranceLayout> : null}
-          {currentRole && page === "people-management" && hasAccess("主任") ? <EntranceLayout pageKey="people-management"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></EntranceLayout> : null}
-                    {currentRole && page === "permission-admin" && hasAccess("最高權限") ? renderPermissionAdmin() : null}
+          {currentRole && page === "station-rules" && canUsePage("station-rules") ? <EntranceLayout pageKey="station-rules"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></EntranceLayout> : null}
+          {currentRole && page === "people-management" && canUsePage("people-management") ? <EntranceLayout pageKey="people-management"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></EntranceLayout> : null}
+                    {currentRole && page === "permission-admin" && canUsePage("permission-admin") ? renderPermissionAdmin() : null}
           {false && page === "smart-schedule" ? null : null}
           {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
         </main>
