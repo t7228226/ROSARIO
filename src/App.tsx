@@ -212,24 +212,79 @@ const databasePermissionItems: PermissionItemDefinition[] = [
   { id: "PERM_016", name: "權限管理修改", category: "權限", page: "權限管理", action: "修改", mobileFirst: "N", enabled: "啟用" },
 ];
 
-const databaseRolePermissionMaps: RolePermissionMapDefinition[] = [
-  { id: "ROLEMAP_001", role: "技術員", permissionId: "PERM_001", allowed: "Y", enabled: "啟用", note: "首頁" },
-  { id: "ROLEMAP_002", role: "技術員", permissionId: "PERM_002", allowed: "Y", enabled: "啟用", note: "查人員" },
-  { id: "ROLEMAP_003", role: "技術員", permissionId: "PERM_003", allowed: "Y", enabled: "啟用", note: "查站點" },
-  { id: "ROLEMAP_004", role: "領班", permissionId: "PERM_004", allowed: "Y", enabled: "啟用", note: "可看考核" },
-  { id: "ROLEMAP_005", role: "領班", permissionId: "PERM_005", allowed: "Y", enabled: "啟用", note: "可維護考核" },
-  { id: "ROLEMAP_006", role: "組長", permissionId: "PERM_006", allowed: "Y", enabled: "啟用", note: "可看缺口" },
-  { id: "ROLEMAP_007", role: "組長", permissionId: "PERM_007", allowed: "Y", enabled: "啟用", note: "可看試排" },
-  { id: "ROLEMAP_008", role: "組長", permissionId: "PERM_008", allowed: "Y", enabled: "啟用", note: "可手動試排" },
-  { id: "ROLEMAP_009", role: "主任", permissionId: "PERM_009", allowed: "N", enabled: "停用", note: "智能試排已關閉" },
-  { id: "ROLEMAP_010", role: "主任", permissionId: "PERM_010", allowed: "N", enabled: "停用", note: "智能試排已關閉" },
-  { id: "ROLEMAP_011", role: "主任", permissionId: "PERM_011", allowed: "Y", enabled: "啟用", note: "可看規則" },
-  { id: "ROLEMAP_012", role: "主任", permissionId: "PERM_012", allowed: "Y", enabled: "啟用", note: "可改規則" },
-  { id: "ROLEMAP_013", role: "主任", permissionId: "PERM_013", allowed: "Y", enabled: "啟用", note: "可看人員名單" },
-  { id: "ROLEMAP_014", role: "主任", permissionId: "PERM_014", allowed: "Y", enabled: "啟用", note: "可改人員名單" },
-  { id: "ROLEMAP_015", role: "最高權限", permissionId: "PERM_015", allowed: "Y", enabled: "啟用", note: "可看權限管理" },
-  { id: "ROLEMAP_016", role: "最高權限", permissionId: "PERM_016", allowed: "Y", enabled: "啟用", note: "可改權限管理" },
-];
+const defaultRoleAllowedPermissionIds: Record<UserRole, string[]> = {
+  技術員: ["PERM_001", "PERM_002", "PERM_003"],
+  領班: ["PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_006", "PERM_007"],
+  主任: ["PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_006", "PERM_007"],
+  組長: [
+    "PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_005", "PERM_006", "PERM_007", "PERM_008",
+    "PERM_011", "PERM_012", "PERM_013", "PERM_014"
+  ],
+  站長: [
+    "PERM_001", "PERM_002", "PERM_003", "PERM_004", "PERM_005", "PERM_006", "PERM_007", "PERM_008",
+    "PERM_011", "PERM_013"
+  ],
+  最高權限: databasePermissionItems.map((item) => item.id),
+};
+
+function buildDefaultRolePermissionMaps(): RolePermissionMapDefinition[] {
+  return permissionOptions.flatMap((role) =>
+    databasePermissionItems.map((permission) => {
+      const allowed = role === "最高權限" || defaultRoleAllowedPermissionIds[role]?.includes(permission.id);
+      return {
+        id: `ROLEMAP_${role}_${permission.id}`,
+        role,
+        permissionId: permission.id,
+        allowed: allowed ? "Y" : "N",
+        enabled: "啟用",
+        note: allowed ? "角色預設開放" : "角色預設未開放",
+      };
+    })
+  );
+}
+
+function mergeRolePermissionMapsWithDefaults(remoteMaps?: RolePermissionMapDefinition[]): RolePermissionMapDefinition[] {
+  const merged = new Map<string, RolePermissionMapDefinition>();
+  buildDefaultRolePermissionMaps().forEach((item) => {
+    merged.set(`${item.role}||${item.permissionId}`, item);
+  });
+
+  (remoteMaps || []).forEach((item) => {
+    if (!item.role || !item.permissionId) return;
+    const key = `${item.role}||${item.permissionId}`;
+    const base = merged.get(key);
+    merged.set(key, {
+      ...(base || {
+        id: item.id || `ROLEMAP_${item.role}_${item.permissionId}`,
+        role: item.role,
+        permissionId: item.permissionId,
+        allowed: "N",
+        enabled: "啟用",
+      }),
+      ...item,
+      id: item.id || base?.id || `ROLEMAP_${item.role}_${item.permissionId}`,
+      enabled: item.enabled || base?.enabled || "啟用",
+      allowed: item.role === "最高權限" ? "Y" : (item.allowed === "Y" ? "Y" : "N"),
+    });
+  });
+
+  databasePermissionItems.forEach((permission) => {
+    const key = `最高權限||${permission.id}`;
+    const item = merged.get(key) || {
+      id: `ROLEMAP_最高權限_${permission.id}`,
+      role: "最高權限" as UserRole,
+      permissionId: permission.id,
+      allowed: "Y",
+      enabled: "啟用",
+      note: "最高權限固定開放",
+    };
+    merged.set(key, { ...item, role: "最高權限", allowed: "Y", enabled: "啟用", note: item.note || "最高權限固定開放" });
+  });
+
+  return Array.from(merged.values());
+}
+
+const databaseRolePermissionMaps: RolePermissionMapDefinition[] = mergeRolePermissionMapsWithDefaults();
 
 function permissionSearchMatches(parts: unknown[], keyword: string) {
   return searchText(parts.map((item) => String(item ?? "")), keyword);
@@ -621,7 +676,7 @@ export default function App() {
           setPermissionItemStates(permissionConfig.permissionItems);
         }
         if (Array.isArray(permissionConfig.rolePermissionMaps) && permissionConfig.rolePermissionMaps.length > 0) {
-          setRolePermissionMapStates(permissionConfig.rolePermissionMaps);
+          setRolePermissionMapStates(mergeRolePermissionMapsWithDefaults(permissionConfig.rolePermissionMaps));
         }
         if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
           setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
@@ -1805,6 +1860,7 @@ export default function App() {
     const enabledAccountCount = permissionRows.filter((person) => getAccountStatus(person) === "啟用").length;
     const visiblePermissions = permissionItemStates.filter((item) => permissionSearchMatches([item.id, item.name, item.category, item.page, item.action, item.enabled, item.note], permissionSearchKeyword));
     const availablePermissions = permissionItemStates.filter((item) => item.enabled !== "停用");
+    const canEditPermissions = currentRole === "最高權限";
     const selectedPermissionPerson = permissionRows.find((person) => person.id === permissionSelectedPersonId) || permissionRows[0] || null;
     const selectedPersonExceptions = selectedPermissionPerson
       ? personalPermissionExceptions.filter((item) => item.employeeId === selectedPermissionPerson.id && item.enabled !== "停用")
@@ -1879,7 +1935,10 @@ export default function App() {
     }
 
     async function togglePermissionItemEnabled(permissionId: string) {
-      if (currentRole !== "最高權限") return;
+      if (!canEditPermissions) {
+        setFlashMessage("只有最高權限可調整全站功能啟用狀態。");
+        return;
+      }
       const before = permissionItemStates;
       const target = before.find((item) => item.id === permissionId);
       if (!target) return;
@@ -1898,10 +1957,17 @@ export default function App() {
     }
 
     async function toggleRolePermission(role: UserRole, permissionId: string) {
-      if (currentRole !== "最高權限") return;
+      if (!canEditPermissions) {
+        setFlashMessage("只有最高權限可調整角色開放項目。");
+        return;
+      }
       const before = rolePermissionMapStates;
       const mapId = `ROLEMAP_${role}_${permissionId}`;
       const exists = before.find((item) => item.role === role && item.permissionId === permissionId);
+      if (role === "最高權限") {
+        setFlashMessage("最高權限角色固定全功能開放，避免誤關後無法維護系統。");
+        return;
+      }
       const nextAllowed = exists?.allowed === "Y" && exists.enabled === "啟用" ? "N" : "Y";
       const nextItem: RolePermissionMapDefinition = exists
         ? { ...exists, allowed: nextAllowed, enabled: "啟用", note: nextAllowed === "Y" ? "角色已開放" : "角色已關閉" }
@@ -2013,13 +2079,13 @@ export default function App() {
           <div className="toolbar">
             <input placeholder="搜尋工號、姓名、權限項目、角色、功能頁面" value={permissionSearchKeyword} onChange={(e) => setPermissionSearchKeyword(e.target.value)} />
           </div>
-          <p className="muted">判斷順序：個人單獨禁止 ＞ 個人額外開放 ＞ 角色預設權限。智能試排保留停用紀錄，不開放操作入口。</p>
+          <p className="muted">判斷順序：個人單獨禁止 ＞ 個人額外開放 ＞ 角色預設權限。只有最高權限可調整角色開放項目與全站功能啟用狀態，變更會寫入試算表保存。</p>
         </div>
 
         {permissionAdminTab === "role" ? (
           <>
             <div className="panel">
-              <div className="panel-header"><h3>角色權限</h3><span>最高權限可直接點擊切換該角色是否開放功能；每個角色獨立設定，不再被低階角色繼承卡住</span></div>
+              <div className="panel-header"><h3>角色權限</h3><span>此頁管理「目前選取角色可以使用哪些功能」；只有最高權限可調整，並會寫入 09_角色權限設定。</span></div>
               <div className="toolbar" style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 {permissionOptions.map(roleButton)}
               </div>
@@ -2038,7 +2104,7 @@ export default function App() {
                         {enabledToggleButton(enabled, () => {
                           if (disabled) togglePermissionItemEnabled(item.id);
                           else toggleRolePermission(permissionSelectedRole, item.id);
-                        }, disabled ? "功能停用" : enabled ? "啟用" : "停用")}
+                        }, disabled ? "全站功能停用" : enabled ? "此角色可用" : "此角色不可用")}
                       </div>
                       <p className="muted" style={{ margin: "8px 0 0" }}>{item.category}｜{item.action}{item.note ? `｜${item.note}` : ""}</p>
                     </div>
