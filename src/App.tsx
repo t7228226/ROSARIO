@@ -3,9 +3,6 @@ import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
   deleteQualification,
-  fetchBootstrapData,
-  loginWithAccount,
-  updatePerson,
   updateStationRule,
   upsertQualification,
 } from "./lib/api";
@@ -83,6 +80,15 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
   const result = (await response.json()) as GasWriteResponse;
   if (!response.ok || result.ok === false) {
     throw new Error(String(result.message || `GAS ${action} 儲存失敗`));
+  }
+  return result;
+}
+
+async function fetchGasBootstrapData(): Promise<AppBootstrap> {
+  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=bootstrap`);
+  const result = (await response.json()) as AppBootstrap & GasWriteResponse;
+  if (!response.ok || result.ok === false) {
+    throw new Error(String(result.message || "GAS bootstrap 讀取失敗"));
   }
   return result;
 }
@@ -679,7 +685,7 @@ export default function App() {
     let active = true;
     async function loadBootstrap() {
       try {
-        const next = await fetchBootstrapData();
+        const next = await fetchGasBootstrapData();
         if (!active) return;
         setData(next);
         const permissionConfig = next as AppBootstrap & {
@@ -697,7 +703,7 @@ export default function App() {
         if (!active) return;
         setData(emptyBootstrap);
         setPage("home");
-        setFlashMessage("系統資料載入失敗，請確認 GAS bootstrap 與試算表資料。");
+        setFlashMessage("系統資料載入失敗：APP 已改由同一個 GAS 端點讀取 bootstrap，請確認 GAS 已重新部署且可回傳權限/帳號資料。");
       } finally {
         if (active) setLoading(false);
       }
@@ -1131,7 +1137,7 @@ export default function App() {
     }
 
     try {
-      const result = await loginWithAccount({ account, password });
+      const result = await postGasAction("login", { account, password }) as GasWriteResponse & { user?: Person };
       if (!result.ok || !result.user) {
         setFlashMessage(result.message || "登入失敗。");
         return;
@@ -1211,10 +1217,10 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await updatePerson(next);
+    await postGasAction("updatePerson", next as unknown as Record<string, unknown>);
     setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
     if (currentUser?.id === person.id) setCurrentUser(next);
-    setFlashMessage(`人員 ${person.name} 已確認更新。`);
+    setFlashMessage(`人員 ${person.name} 已寫入試算表。`);
   }
 
   async function handleUpdatePermission(person: Person, permission: UserRole) {
@@ -2032,13 +2038,25 @@ export default function App() {
     async function toggleAccountEnabled(person: Person) {
       if (currentRole !== "最高權限") return;
       const nextStatus = getAccountStatus(person) === "啟用" ? "停用" : "啟用";
+      const beforeStatus = getAccountStatus(person);
       setAccountStatusById((current) => ({ ...current, [person.id]: nextStatus }));
       try {
-        const payload = { ...person, accountStatus: nextStatus, enabled: nextStatus === "啟用" ? "Y" : "N" } as Person & Record<string, unknown>;
-        await updatePerson(payload as Person);
-        setFlashMessage(`帳號 ${person.name} 已${nextStatus}。`);
-      } catch {
-        setFlashMessage("帳號狀態已在本頁切換；若未寫回試算表，請確認 GAS updatePerson 是否支援 accountStatus/enabled 欄位。");
+        const payload = {
+          ...person,
+          accountStatus: nextStatus,
+          accountEnabled: nextStatus,
+          enabled: nextStatus === "啟用" ? "Y" : "N",
+        } as Person & Record<string, unknown>;
+        await postGasAction("updatePerson", payload);
+        setData((current) => ({
+          ...current,
+          people: current.people.map((item) => item.id === person.id ? { ...item, ...payload } as Person : item),
+        }));
+        if (currentUser?.id === person.id) setCurrentUser((current) => current ? ({ ...current, ...payload } as Person) : current);
+        setFlashMessage(`帳號 ${person.name} 已${nextStatus}並寫入試算表。`);
+      } catch (error) {
+        setAccountStatusById((current) => ({ ...current, [person.id]: beforeStatus }));
+        setFlashMessage(`帳號狀態儲存失敗：${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -2050,13 +2068,23 @@ export default function App() {
         return;
       }
       try {
-        const payload = { ...person, password: nextPassword, loginPassword: nextPassword } as Person & Record<string, unknown>;
-        await updatePerson(payload as Person);
+        const payload = {
+          ...person,
+          password: nextPassword,
+          loginPassword: nextPassword,
+          accountPassword: nextPassword,
+        } as Person & Record<string, unknown>;
+        await postGasAction("updatePerson", payload);
         setAccountPasswordById((current) => ({ ...current, [person.id]: nextPassword }));
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));
-        setFlashMessage(`已更新 ${person.name} 的密碼，畫面已同步顯示。`);
-      } catch {
-        setFlashMessage("密碼更新未完成：請確認 GAS updatePerson 是否支援 password/loginPassword 欄位。");
+        setData((current) => ({
+          ...current,
+          people: current.people.map((item) => item.id === person.id ? { ...item, ...payload } as Person : item),
+        }));
+        if (currentUser?.id === person.id) setCurrentUser((current) => current ? ({ ...current, ...payload } as Person) : current);
+        setFlashMessage(`已更新 ${person.name} 的密碼並寫入試算表；重新整理後應維持新密碼。`);
+      } catch (error) {
+        setFlashMessage(`密碼儲存失敗：${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
