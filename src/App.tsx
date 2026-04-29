@@ -144,6 +144,68 @@ const emptyBootstrap: AppBootstrap = {
   stationRules: [],
 };
 
+function normalizeCellText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function containsTemplateMarker(value: unknown) {
+  const text = normalizeCellText(value);
+  if (!text) return false;
+  return [
+    "唯一主鍵",
+    "不可重複",
+    "不可重覆",
+    "下拉選單",
+    "正式姓名",
+    "範例",
+    "例如",
+    "說明",
+    "對應",
+    "自由填寫",
+    "可用值",
+  ].some((marker) => text.includes(marker));
+}
+
+function isRealPersonRecord(person: Person) {
+  const id = normalizeCellText(person.id);
+  const name = normalizeCellText(person.name);
+  if (!id || !name) return false;
+  if ([id, name, person.shift, person.role, person.nationality, person.note].some(containsTemplateMarker)) return false;
+  if (id === "工號" || id === "姓名" || name === "姓名") return false;
+  return true;
+}
+
+function isRealStationRecord(station: AppBootstrap["stations"][number]) {
+  const id = normalizeCellText(station.id);
+  const name = normalizeCellText(station.name);
+  if (!id || !name) return false;
+  if ([id, name, station.description, station.note].some(containsTemplateMarker)) return false;
+  if (id === "站點代碼" || name === "站點名稱") return false;
+  return true;
+}
+
+function sanitizeBootstrapData(source: AppBootstrap): AppBootstrap {
+  const people = (source.people || []).filter(isRealPersonRecord);
+  const personIds = new Set(people.map((person) => person.id));
+  const stations = (source.stations || []).filter(isRealStationRecord);
+  const stationIds = new Set(stations.map((station) => station.id));
+  const qualifications = (source.qualifications || []).filter((item) => {
+    const employeeId = normalizeCellText(item.employeeId);
+    const stationId = normalizeCellText(item.stationId);
+    if (!employeeId || !stationId) return false;
+    if ([employeeId, item.employeeName, stationId, item.status, item.rawStatus].some(containsTemplateMarker)) return false;
+    return personIds.has(employeeId) && stationIds.has(stationId);
+  });
+  const stationRules = (source.stationRules || []).filter((rule) => {
+    const team = normalizeCellText(rule.team);
+    const stationId = normalizeCellText(rule.stationId);
+    if (!team || !stationId) return false;
+    if ([team, rule.dayKey, stationId, rule.note].some(containsTemplateMarker)) return false;
+    return stationIds.has(stationId);
+  });
+  return { ...source, people, stations, qualifications, stationRules };
+}
+
 const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不可排", ""];
 const dayOptions: ShiftMode[] = DAY_OPTIONS;
 const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任", "站長", "最高權限"];
@@ -685,7 +747,7 @@ export default function App() {
     let active = true;
     async function loadBootstrap() {
       try {
-        const next = await fetchGasBootstrapData();
+        const next = sanitizeBootstrapData(await fetchGasBootstrapData());
         if (!active) return;
         setData(next);
         const permissionConfig = next as AppBootstrap & {
