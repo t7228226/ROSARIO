@@ -59,7 +59,7 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-04-30-mobile-rules-people-v1";
+const APP_VERSION = "2026-04-30-001";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -1010,6 +1010,17 @@ export default function App() {
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
+  // 站點試排畫面排列順序：依照 02_站點主表 / 原本站點清單順序顯示。
+  // 規則 priority 只給排人員演算法參考，不可拿來改變畫面站點排列。
+  const manualDisplayRules = useMemo(() => {
+    const stationOrder = new Map<string, number>(data.stations.map((station, index) => [station.id, index]));
+    return [...manualRules].sort((a, b) => {
+      const orderA = stationOrder.get(a.stationId) ?? 9999;
+      const orderB = stationOrder.get(b.stationId) ?? 9999;
+      if (orderA !== orderB) return orderA - orderB;
+      return String(a.stationId).localeCompare(String(b.stationId), "zh-Hant", { numeric: true });
+    });
+  }, [manualRules, data.stations]);
   const manualOfficerPeople = useMemo(() => {
     return manualAttendance.all
       .filter(isOfficerPerson)
@@ -1137,13 +1148,7 @@ export default function App() {
           .map((person) => person.name)
       );
     };
-    const stationOrder = new Map<string, number>(data.stations.map((station, index) => [station.id, index]));
-    const orderedManualRules = [...manualRules].sort((a, b) => {
-      const orderA = stationOrder.get(a.stationId) ?? 9999;
-      const orderB = stationOrder.get(b.stationId) ?? 9999;
-      if (orderA !== orderB) return orderA - orderB;
-      return String(a.stationId).localeCompare(String(b.stationId), "zh-Hant", { numeric: true });
-    });
+    const orderedManualRules = manualDisplayRules;
     return {
       team: manualShift,
       officers: {
@@ -1314,7 +1319,7 @@ export default function App() {
     return true;
   }
 
-  async function handleSaveQualification(statusOverride?: QualificationStatus) {
+  async function handleSaveQualification(statusOverride?: QualificationStatus, confirmBeforeSave = true) {
     const employee = reviewSelectedPerson || mobileReviewPerson;
     const nextStatus = statusOverride ?? reviewStatus;
     if (!employee || !reviewStationId) {
@@ -1323,7 +1328,7 @@ export default function App() {
     }
 
     try {
-      const ok = await persistQualification(employee, reviewStationId, nextStatus);
+      const ok = await persistQualification(employee, reviewStationId, nextStatus, confirmBeforeSave);
       if (ok) {
         setFlashMessage("站點考核已確認並儲存。");
         return true;
@@ -1498,7 +1503,13 @@ export default function App() {
     }
 
     setManualTrainingDialog(null);
-    const ok = await persistQualification(person, stationId, "訓練中", false);
+    let ok = false;
+    try {
+      ok = await persistQualification(person, stationId, "訓練中", false);
+    } catch (error) {
+      setFlashMessage("訓練中考核資料儲存失敗：" + (error instanceof Error ? error.message : String(error)));
+      return;
+    }
     if (!ok) return;
 
     setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
@@ -4217,7 +4228,7 @@ export default function App() {
                                 onChange={(event) => setManualOfficerStations((current) => ({ ...current, [person.id]: event.target.value }))}
                               >
                                 <option value="">站點選單</option>
-                                {manualRules.map((rule) => {
+                                {manualDisplayRules.map((rule) => {
                                   const station = data.stations.find((item) => item.id === rule.stationId);
                                   return <option key={rule.stationId} value={rule.stationId}>{station?.name || rule.stationId}</option>;
                                 })}
@@ -4264,9 +4275,9 @@ export default function App() {
                 </div>
               </div>
 
-              {manualRules.length ? (
+              {manualDisplayRules.length ? (
                 <div className="grid two">
-                  {manualRules.map((rule) => {
+                  {manualDisplayRules.map((rule) => {
                     const station = data.stations.find((item) => item.id === rule.stationId);
                     const selectedIds = manualAssignments[rule.stationId] || [];
                     const assignableAttendance = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
@@ -4680,7 +4691,7 @@ export default function App() {
                       type="button"
                       className="primary review-save-button"
                       onClick={async () => {
-                        const ok = await handleSaveQualification();
+                        const ok = await handleSaveQualification(undefined, false);
                         if (ok) setMobileDetailModal(null);
                       }}
                     >
