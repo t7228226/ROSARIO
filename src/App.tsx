@@ -2,11 +2,6 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
-  deleteQualification,
-  updateStationRule,
-  upsertQualification,
-} from "./lib/api";
-import {
   buildSmartAssignments,
   DAY_OPTIONS,
   getApplicableRules,
@@ -64,6 +59,18 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
+const APP_VERSION = "2026-04-30-mobile-rules-people-v1";
+const FRONT_WRITE_ACTIONS = new Set([
+  "upsertQualification",
+  "deleteQualification",
+  "updateStationRule",
+  "updatePerson",
+  "updatePermissionItem",
+  "updateRolePermission",
+  "upsertPersonalPermissionException",
+  "deletePersonalPermissionException",
+  "saveScheduleDraft",
+]);
 
 type GasWriteResponse = {
   ok?: boolean;
@@ -72,9 +79,16 @@ type GasWriteResponse = {
 };
 
 async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
+  if (FRONT_WRITE_ACTIONS.has(action)) {
+    const status = await fetchGasVersionStatus();
+    if (status.outdated || status.writeBlocked) {
+      throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
+    }
+  }
+
   const response = await fetch(GAS_WRITE_ENDPOINT, {
     method: "POST",
-    body: JSON.stringify({ action, payload }),
+    body: JSON.stringify({ action, appVersion: APP_VERSION, payload }),
   });
 
   const result = (await response.json()) as GasWriteResponse;
@@ -85,12 +99,27 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
 }
 
 async function fetchGasBootstrapData(): Promise<AppBootstrap> {
-  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=bootstrap`);
+  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`);
   const result = (await response.json()) as AppBootstrap & GasWriteResponse;
   if (!response.ok || result.ok === false) {
     throw new Error(String(result.message || "GAS bootstrap 讀取失敗"));
   }
   return result;
+}
+
+async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWriteVersion: string; outdated: boolean; writeBlocked: boolean; message?: string }> {
+  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store" });
+  const result = (await response.json()) as GasWriteResponse & { latestVersion?: string; minWriteVersion?: string; outdated?: boolean; writeBlocked?: boolean; message?: string };
+  if (!response.ok || result.ok === false) {
+    throw new Error(String(result.message || "版本檢查失敗"));
+  }
+  return {
+    latestVersion: String(result.latestVersion || APP_VERSION),
+    minWriteVersion: String(result.minWriteVersion || result.latestVersion || APP_VERSION),
+    outdated: !!result.outdated,
+    writeBlocked: !!result.writeBlocked,
+    message: result.message,
+  };
 }
 
 function getStoredLoginKeep(): LoginKeepKey {
@@ -568,6 +597,8 @@ export default function App() {
     return option === "random" ? pickRandomItem(concreteFontKeys) : option;
   });
   const [flash, setFlash] = useState("");
+  const [appVersionBlocked, setAppVersionBlocked] = useState(false);
+  const [appVersionMessage, setAppVersionMessage] = useState("");
   const toastDurationMs = 5000;
   const toastStyleMode: "floating" | "banner" = "floating";
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -659,8 +690,11 @@ export default function App() {
   }
 
   const [rulesTeam, setRulesTeam] = useState<TeamName>("婷芬班");
+  const [rulesPreviewOpen, setRulesPreviewOpen] = useState(false);
+  const [editingRuleKey, setEditingRuleKey] = useState("");
 
   const [peopleSearchKeyword, setPeopleSearchKeyword] = useState("");
+  const [editingPersonId, setEditingPersonId] = useState("");
   const [permissionSearchKeyword, setPermissionSearchKeyword] = useState("");
   const [permissionAdminTab, setPermissionAdminTab] = useState<PermissionAdminTab>("role");
   const [permissionSelectedRole, setPermissionSelectedRole] = useState<UserRole>("組長");
@@ -690,6 +724,37 @@ export default function App() {
     const timer = window.setTimeout(() => setFlash(""), toastDurationMs);
     return () => window.clearTimeout(timer);
   }, [flash, toastDurationMs]);
+
+  async function checkAppVersionBeforeWrite() {
+    const status = await fetchGasVersionStatus();
+    if (status.outdated || status.writeBlocked) {
+      setAppVersionBlocked(true);
+      setAppVersionMessage(status.message || "系統已有新版，請重新整理後繼續操作。");
+      throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    async function checkVersion() {
+      try {
+        const status = await fetchGasVersionStatus();
+        if (!active) return;
+        if (status.outdated) {
+          setAppVersionBlocked(true);
+          setAppVersionMessage(status.message || "系統已有新版，請重新整理後繼續使用。");
+        }
+      } catch {
+        // 版本檢查失敗時不阻斷讀取，存檔前仍會再檢查。
+      }
+    }
+    checkVersion();
+    const timer = window.setInterval(checkVersion, 3 * 60 * 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   function updateGlobalTheme(option: GlobalThemeKey) {
     setGlobalThemeOption(option);
@@ -1235,7 +1300,8 @@ export default function App() {
       return false;
     }
     const payload: Qualification = { employeeId: employee.id, employeeName: employee.name, stationId, status };
-    await upsertQualification(payload);
+    await checkAppVersionBeforeWrite();
+    await postGasAction("upsertQualification", payload as unknown as Record<string, unknown>);
     setData((current) => {
       const exists = current.qualifications.some((item) => item.employeeId === payload.employeeId && item.stationId === payload.stationId);
       return {
@@ -1268,7 +1334,8 @@ export default function App() {
       setFlashMessage("已取消刪除。");
       return;
     }
-    await deleteQualification({ employeeId, stationId });
+    await checkAppVersionBeforeWrite();
+    await postGasAction("deleteQualification", { employeeId, stationId });
     setData((current) => ({ ...current, qualifications: current.qualifications.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId)) }));
     setFlashMessage("站點考核已刪除。");
   }
@@ -1279,6 +1346,7 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
+    await checkAppVersionBeforeWrite();
     await postGasAction("updatePerson", next as unknown as Record<string, unknown>);
     setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
     if (currentUser?.id === person.id) setCurrentUser(next);
@@ -1309,7 +1377,8 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await updateStationRule(next);
+    await checkAppVersionBeforeWrite();
+    await postGasAction("updateStationRule", next as unknown as Record<string, unknown>);
     setData((current) => {
       const rules = current.stationRules || [];
       const exists = rules.some((item) => item.id === rule.id || (item.team === rule.team && item.stationId === rule.stationId));
@@ -2109,6 +2178,7 @@ export default function App() {
           accountEnabled: nextStatus,
           enabled: nextStatus === "啟用" ? "Y" : "N",
         } as Person & Record<string, unknown>;
+        await checkAppVersionBeforeWrite();
         await postGasAction("updatePerson", payload);
         setData((current) => ({
           ...current,
@@ -2136,6 +2206,7 @@ export default function App() {
           loginPassword: nextPassword,
           accountPassword: nextPassword,
         } as Person & Record<string, unknown>;
+        await checkAppVersionBeforeWrite();
         await postGasAction("updatePerson", payload);
         setAccountPasswordById((current) => ({ ...current, [person.id]: nextPassword }));
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));
@@ -2433,6 +2504,143 @@ export default function App() {
   const allowedNav = navItems.filter((item) => canUsePage(item.key));
 
   if (loading) return <div className="app-shell loading" translate="no">資料載入中...</div>;
+
+  function renderStationRulesPage() {
+    const disabled = !canEditRulesForTeam(rulesTeam);
+    const editingRule = stationRuleRows.find((rule) => `${rule.team}-${rule.stationId}` === editingRuleKey) || null;
+    const mandatoryCount = stationRuleRows.filter((rule) => rule.isMandatory).length;
+    const trainingCount = stationRuleRows.filter((rule) => rule.trainingCanFill).length;
+    const shareCount = stationRuleRows.filter((rule) => rule.canShare).length;
+    const totalMin = stationRuleRows.reduce((sum, rule) => sum + Number(rule.minRequired || 0), 0);
+
+    return (
+      <EntranceLayout pageKey="station-rules">
+        <div className="panel mobile-management-panel">
+          <div className="mobile-management-toolbar">
+            <select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>
+              {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <button type="button" className="ghost" onClick={() => setRulesPreviewOpen(true)}>總預覽</button>
+          </div>
+          <button type="button" className="rules-summary-card" onClick={() => setRulesPreviewOpen(true)}>
+            <strong>{rulesTeam} 規則總預覽</strong>
+            <span>站點 {stationRuleRows.length}｜最低需求 {totalMin}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
+            <small>點擊查看全部設定</small>
+          </button>
+          {stationRuleRows.length ? (
+            <div className="mobile-rule-card-list">
+              {stationRuleRows.map((rule) => {
+                const station = data.stations.find((item) => item.id === rule.stationId);
+                const key = `${rule.team}-${rule.stationId}`;
+                return (
+                  <article className="mobile-rule-card" key={key}>
+                    <div className="mobile-card-header">
+                      <div>
+                        <h3>{station?.name || rule.stationId}</h3>
+                        <p>{rule.stationId}｜{rule.team}</p>
+                      </div>
+                      <span className={`status-pill ${disabled ? "muted-pill" : "green-pill"}`}>{disabled ? "唯讀" : "可編輯"}</span>
+                    </div>
+                    <div className="rule-metric-grid">
+                      <div><span>最低需求</span><strong>{rule.minRequired ?? 0}</strong></div>
+                      <div><span>輪休需求</span><strong>{rule.reliefMinPerBatch ?? 0}</strong></div>
+                      <div><span>備援目標</span><strong>{rule.backupTarget ?? 0}</strong></div>
+                      <div><span>優先順序</span><strong>{rule.priority ?? 0}</strong></div>
+                    </div>
+                    <div className="rule-chip-row">
+                      <span className={rule.isMandatory ? "chip-on" : "chip-off"}>必站：{rule.isMandatory ? "Y" : "N"}</span>
+                      <span className={rule.trainingCanFill ? "chip-on" : "chip-off"}>訓練中：{rule.trainingCanFill ? "Y" : "N"}</span>
+                      <span className={rule.canShare ? "chip-on" : "chip-off"}>支援補位：{rule.canShare ? "Y" : "N"}</span>
+                    </div>
+                    <button type="button" className="primary full-width" disabled={disabled} onClick={() => setEditingRuleKey(key)}>編輯規則</button>
+                  </article>
+                );
+              })}
+            </div>
+          ) : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}
+        </div>
+        {rulesPreviewOpen ? (
+          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setRulesPreviewOpen(false)}>
+            <div className="mobile-modal compact-preview-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="mobile-modal-header"><strong>{rulesTeam} 全部站點規則</strong><button type="button" className="mobile-modal-close" onClick={() => setRulesPreviewOpen(false)}>×</button></div>
+              <div className="rule-preview-list">
+                {stationRuleRows.map((rule) => {
+                  const station = data.stations.find((item) => item.id === rule.stationId);
+                  return <div className="rule-preview-row" key={`${rule.team}-${rule.stationId}`}><strong>{station?.name || rule.stationId}</strong><span>最低 {rule.minRequired ?? 0}｜輪休 {rule.reliefMinPerBatch ?? 0}｜備援 {rule.backupTarget ?? 0}｜序 {rule.priority ?? 0}</span><small>必站 {rule.isMandatory ? "Y" : "N"}｜訓練 {rule.trainingCanFill ? "Y" : "N"}｜支援 {rule.canShare ? "Y" : "N"}</small></div>;
+                })}
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {editingRule ? (
+          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingRuleKey("")}>
+            <div className="mobile-modal mobile-edit-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="mobile-modal-header"><strong>編輯站點規則</strong><button type="button" className="mobile-modal-close" onClick={() => setEditingRuleKey("")}>×</button></div>
+              <div className="mobile-edit-grid">
+                <label>最低需求<ConfirmNumberInput value={editingRule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { minRequired: value })} /></label>
+                <label>輪休需求<ConfirmNumberInput value={editingRule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { reliefMinPerBatch: value })} /></label>
+                <label>備援目標<ConfirmNumberInput value={editingRule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { backupTarget: value })} /></label>
+                <label>優先順序<ConfirmNumberInput value={editingRule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { priority: value })} /></label>
+                <label>必站<ConfirmSelect value={editingRule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { isMandatory: value === "Y" })} /></label>
+                <label>訓練中可補位<ConfirmSelect value={editingRule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { trainingCanFill: value === "Y" })} /></label>
+                <label>支援補位<ConfirmSelect value={editingRule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { canShare: value === "Y" })} /></label>
+              </div>
+              <button type="button" className="primary full-width" onClick={() => setEditingRuleKey("")}>完成</button>
+            </div>
+          </div>
+        ) : null}
+      </EntranceLayout>
+    );
+  }
+
+  function renderPeopleManagementPage() {
+    const peopleRows = data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, person.nationality, person.aDay1 || "", person.aDay2 || "", person.bDay1 || "", person.bDay2 || ""], peopleSearchKeyword));
+    const editingPerson = data.people.find((person) => person.id === editingPersonId) || null;
+    return (
+      <EntranceLayout pageKey="people-management">
+        <div className="panel mobile-management-panel">
+          <div className="mobile-management-toolbar single-search"><input placeholder="快速搜尋工號、姓名、班別、職務、國籍" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div>
+          <div className="mobile-person-card-list">
+            {peopleRows.map((person) => (
+              <article className="mobile-person-card" key={person.id}>
+                <div className="mobile-card-header">
+                  <div><h3>{person.name || "未命名"}</h3><p>{person.id}</p></div>
+                  <button type="button" className="primary" onClick={() => setEditingPersonId(person.id)}>編輯</button>
+                </div>
+                <div className="person-summary-grid">
+                  <div><span>班別</span><strong>{String(getTeamOfPerson(person)) || "-"}</strong></div>
+                  <div><span>職務</span><strong>{person.role || "-"}</strong></div>
+                  <div><span>國籍</span><strong>{person.nationality || "-"}</strong></div>
+                  <div><span>在職</span><strong>{person.employmentStatus || "-"}</strong></div>
+                </div>
+                <p className="muted compact-line">A1 {person.aDay1 || "-"}｜A2 {person.aDay2 || "-"}｜B1 {person.bDay1 || "-"}｜B2 {person.bDay2 || "-"}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+        {editingPerson ? (
+          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingPersonId("")}>
+            <div className="mobile-modal mobile-edit-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="mobile-modal-header"><strong>編輯人員資料</strong><button type="button" className="mobile-modal-close" onClick={() => setEditingPersonId("")}>×</button></div>
+              <p className="muted">{editingPerson.id}</p>
+              <div className="mobile-edit-grid">
+                <label>姓名<ConfirmTextInput value={editingPerson.name} onCommit={(value) => handleUpdatePerson(editingPerson, { name: value })} /></label>
+                <label>班別<ConfirmSelect value={String(getTeamOfPerson(editingPerson))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(editingPerson, { shift: value })} /></label>
+                <label>職務<ConfirmTextInput value={editingPerson.role} onCommit={(value) => handleUpdatePerson(editingPerson, { role: value })} /></label>
+                <label>國籍<ConfirmTextInput value={editingPerson.nationality} onCommit={(value) => handleUpdatePerson(editingPerson, { nationality: value })} /></label>
+                <label>A1<ConfirmTextInput value={editingPerson.aDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay1: value })} /></label>
+                <label>A2<ConfirmTextInput value={editingPerson.aDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay2: value })} /></label>
+                <label>B1<ConfirmTextInput value={editingPerson.bDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay1: value })} /></label>
+                <label>B2<ConfirmTextInput value={editingPerson.bDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay2: value })} /></label>
+                <label>在職<ConfirmTextInput value={editingPerson.employmentStatus} onCommit={(value) => handleUpdatePerson(editingPerson, { employmentStatus: value })} /></label>
+              </div>
+              <button type="button" className="primary full-width" onClick={() => setEditingPersonId("")}>完成</button>
+            </div>
+          </div>
+        ) : null}
+      </EntranceLayout>
+    );
+  }
 
   return (
     <>
@@ -3214,6 +3422,61 @@ export default function App() {
         .home-flat-settings .theme-selector-heading.compact-selector-header .chip {
           justify-self: center !important;
           margin: 4px auto 0 !important;
+        }
+
+
+        .mobile-management-panel { display: grid; gap: 18px; }
+        .mobile-management-toolbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+        .mobile-management-toolbar select,
+        .mobile-management-toolbar input { min-height: 44px; border-radius: 18px; }
+        .mobile-management-toolbar.single-search input { width: 100%; }
+        .rules-summary-card { width: 100%; border: 2px solid var(--line); border-radius: 24px; background: linear-gradient(135deg, rgba(255,250,220,.95), rgba(255,255,255,.95)); padding: 18px; display: grid; gap: 6px; text-align: center; box-shadow: 10px 10px 0 rgba(15, 23, 42, .12); color: var(--text); }
+        .rules-summary-card strong { font-size: 1.25rem; }
+        .rules-summary-card span { color: var(--muted); }
+        .rules-summary-card small { color: var(--accent); font-weight: 800; }
+        .mobile-rule-card-list,
+        .mobile-person-card-list { display: grid; gap: 14px; }
+        .mobile-rule-card,
+        .mobile-person-card { border: 2px solid var(--line); border-radius: 24px; background: rgba(255,255,255,.95); padding: 18px; box-shadow: 8px 8px 0 rgba(15, 23, 42, .10); display: grid; gap: 14px; }
+        .mobile-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .mobile-card-header h3 { margin: 0; font-size: 1.25rem; }
+        .mobile-card-header p { margin: 4px 0 0; color: var(--muted); }
+        .rule-metric-grid,
+        .person-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+        .rule-metric-grid div,
+        .person-summary-grid div { border-left: 1px solid rgba(100,116,139,.28); padding-left: 10px; display: grid; gap: 4px; }
+        .rule-metric-grid span,
+        .person-summary-grid span { color: var(--muted); font-size: .86rem; }
+        .rule-metric-grid strong,
+        .person-summary-grid strong { font-size: 1.25rem; }
+        .rule-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+        .chip-on,
+        .chip-off,
+        .status-pill { border-radius: 999px; padding: 8px 12px; font-weight: 800; font-size: .92rem; }
+        .chip-on, .green-pill { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+        .chip-off, .muted-pill { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+        .full-width { width: 100%; }
+        .compact-line { margin: 0; }
+        .compact-preview-modal { max-height: 80vh; overflow: auto; }
+        .rule-preview-list { display: grid; gap: 10px; }
+        .rule-preview-row { border: 1px solid rgba(100,116,139,.35); border-radius: 16px; padding: 12px; display: grid; gap: 4px; }
+        .rule-preview-row span,
+        .rule-preview-row small { color: var(--muted); }
+        .mobile-edit-sheet { max-height: 86vh; overflow: auto; }
+        .mobile-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+        .mobile-edit-grid label { display: grid; gap: 6px; color: var(--muted); font-weight: 800; }
+        .mobile-edit-grid input,
+        .mobile-edit-grid select { width: 100%; min-height: 44px; }
+        .version-blocker { position: fixed; inset: 0; z-index: 999999; background: rgba(15, 23, 42, .72); display: grid; place-items: center; padding: 24px; }
+        .version-blocker-card { width: min(430px, 100%); background: #fff; color: #0f172a; border-radius: 26px; padding: 28px; text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,.35); display: grid; gap: 16px; }
+        .version-blocker-card h2 { margin: 0; font-size: 1.6rem; }
+        .version-blocker-card p { margin: 0; color: #475569; line-height: 1.7; }
+
+        @media (max-width: 760px) {
+          .rule-metric-grid,
+          .person-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+          .mobile-edit-grid { grid-template-columns: 1fr; }
+          .mobile-card-header { align-items: flex-start; }
         }
 
       `}</style>
@@ -4026,13 +4289,23 @@ export default function App() {
               </div>
             </EntranceLayout>
           ) : null}
-          {currentRole && page === "station-rules" && canUsePage("station-rules") ? <EntranceLayout pageKey="station-rules"><div className="panel"><div className="toolbar"><select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select></div>{stationRuleRows.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>輪休需求(單批)</th><th>優先序</th><th>必站</th><th>訓練中</th><th>備援目標</th><th>支援補位</th></tr></thead><tbody>{stationRuleRows.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const disabled = !canEditRulesForTeam(rulesTeam); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td><ConfirmNumberInput value={rule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /></td><td><ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /></td><td><ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /></td><td><ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /></td><td><ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /></td><td><ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /></td><td><ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /></td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}</div></EntranceLayout> : null}
-          {currentRole && page === "people-management" && canUsePage("people-management") ? <EntranceLayout pageKey="people-management"><div className="panel"><div className="toolbar"><input placeholder="快速搜尋工號、姓名、班別、職務、權限" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div><table className="table"><thead><tr><th>工號</th><th>姓名</th><th>班別</th><th>職務</th><th>系統權限</th><th>國籍</th><th>A1</th><th>A2</th><th>B1</th><th>B2</th><th>在職</th></tr></thead><tbody>{data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, String(getSystemPermission(person) || "")], peopleSearchKeyword)).map((person) => <tr key={person.id}><td>{person.id}</td><td><ConfirmTextInput value={person.name} onCommit={(value) => handleUpdatePerson(person, { name: value })} /></td><td><ConfirmSelect value={String(getTeamOfPerson(person))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(person, { shift: value })} /></td><td><ConfirmTextInput value={person.role} onCommit={(value) => handleUpdatePerson(person, { role: value })} /></td><td>{String(getSystemPermission(person) || "技術員")}{person.id === "P0033" ? "（鎖定）" : ""}</td><td><ConfirmTextInput value={person.nationality} onCommit={(value) => handleUpdatePerson(person, { nationality: value })} /></td><td><ConfirmTextInput value={person.aDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay1: value })} /></td><td><ConfirmTextInput value={person.aDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { aDay2: value })} /></td><td><ConfirmTextInput value={person.bDay1 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay1: value })} /></td><td><ConfirmTextInput value={person.bDay2 || ""} onCommit={(value) => handleUpdatePerson(person, { bDay2: value })} /></td><td><ConfirmTextInput value={person.employmentStatus} onCommit={(value) => handleUpdatePerson(person, { employmentStatus: value })} /></td></tr>)}</tbody></table></div></EntranceLayout> : null}
+          {currentRole && page === "station-rules" && canUsePage("station-rules") ? renderStationRulesPage() : null}
+          {currentRole && page === "people-management" && canUsePage("people-management") ? renderPeopleManagementPage() : null}
                     {currentRole && page === "permission-admin" && canUsePage("permission-admin") ? renderPermissionAdmin() : null}
           {false && page === "smart-schedule" ? null : null}
           {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
         </main>
       </div>
+
+      {appVersionBlocked ? (
+        <div className="version-blocker" role="dialog" aria-modal="true">
+          <div className="version-blocker-card">
+            <h2>系統已更新</h2>
+            <p>{appVersionMessage || "為避免舊版資料覆蓋或權限判斷錯誤，請重新整理後繼續使用。"}</p>
+            <button type="button" className="primary" onClick={() => window.location.reload()}>重新整理</button>
+          </div>
+        </div>
+      ) : null}
 
       {mobileDetailModal ? (
         <div className="mobile-modal-backdrop" onClick={() => setMobileDetailModal(null)}>
