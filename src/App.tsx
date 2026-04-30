@@ -78,24 +78,76 @@ type GasWriteResponse = {
   [key: string]: unknown;
 };
 
+type GlobalProcessingKind = "save" | "delete";
+
+function showGlobalProcessingOverlay(kind: GlobalProcessingKind) {
+  if (typeof document === "undefined") return;
+
+  const title = kind === "delete" ? "資料刪除中" : "資料處理中";
+  const detail = kind === "delete"
+    ? "正在更新系統資料，請勿關閉頁面或重複操作。"
+    : "正在寫入系統，請勿關閉頁面或重複操作。";
+
+  let overlay = document.getElementById("global-processing-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "global-processing-overlay";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-live", "assertive");
+    overlay.innerHTML = `
+      <div class="global-processing-card">
+        <div class="global-processing-spinner" aria-hidden="true"></div>
+        <h2 class="global-processing-title"></h2>
+        <p class="global-processing-detail"></p>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  }
+
+  overlay.className = `global-processing-overlay ${kind === "delete" ? "is-delete" : "is-save"}`;
+  const titleEl = overlay.querySelector(".global-processing-title");
+  const detailEl = overlay.querySelector(".global-processing-detail");
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail;
+}
+
+function hideGlobalProcessingOverlay() {
+  if (typeof document === "undefined") return;
+  const overlay = document.getElementById("global-processing-overlay");
+  if (overlay) overlay.remove();
+}
+
 async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
-  if (FRONT_WRITE_ACTIONS.has(action)) {
-    const status = await fetchGasVersionStatus();
-    if (status.outdated || status.writeBlocked) {
-      throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
+  const isWriteAction = FRONT_WRITE_ACTIONS.has(action);
+  const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
+
+  if (isWriteAction) {
+    showGlobalProcessingOverlay(processingKind);
+  }
+
+  try {
+    if (isWriteAction) {
+      const status = await fetchGasVersionStatus();
+      if (status.outdated || status.writeBlocked) {
+        throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
+      }
+    }
+
+    const response = await fetch(GAS_WRITE_ENDPOINT, {
+      method: "POST",
+      body: JSON.stringify({ action, appVersion: APP_VERSION, payload }),
+    });
+
+    const result = (await response.json()) as GasWriteResponse;
+    if (!response.ok || result.ok === false) {
+      throw new Error(String(result.message || `GAS ${action} 儲存失敗`));
+    }
+    return result;
+  } finally {
+    if (isWriteAction) {
+      hideGlobalProcessingOverlay();
     }
   }
-
-  const response = await fetch(GAS_WRITE_ENDPOINT, {
-    method: "POST",
-    body: JSON.stringify({ action, appVersion: APP_VERSION, payload }),
-  });
-
-  const result = (await response.json()) as GasWriteResponse;
-  if (!response.ok || result.ok === false) {
-    throw new Error(String(result.message || `GAS ${action} 儲存失敗`));
-  }
-  return result;
 }
 
 async function fetchGasBootstrapData(): Promise<AppBootstrap> {
@@ -2730,6 +2782,67 @@ export default function App() {
   return (
     <>
       <style>{`
+
+        .global-processing-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 2147483000;
+          display: grid;
+          place-items: center;
+          padding: 22px;
+          background: rgba(15, 23, 42, 0.58);
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+          pointer-events: auto;
+        }
+
+        .global-processing-card {
+          width: min(380px, 100%);
+          border-radius: 28px;
+          border: 1px solid rgba(255, 255, 255, 0.78);
+          background: linear-gradient(180deg, rgba(255,255,255,.98), rgba(241,245,249,.96));
+          box-shadow: 0 24px 72px rgba(15, 23, 42, 0.34);
+          padding: 28px 22px 24px;
+          display: grid;
+          justify-items: center;
+          gap: 12px;
+          text-align: center;
+          color: #0f172a;
+        }
+
+        .global-processing-spinner {
+          width: 54px;
+          height: 54px;
+          border-radius: 999px;
+          border: 6px solid #dbeafe;
+          border-top-color: #2563eb;
+          animation: global-processing-spin 0.82s linear infinite;
+        }
+
+        .global-processing-overlay.is-delete .global-processing-spinner {
+          border-color: #fee2e2;
+          border-top-color: #dc2626;
+        }
+
+        .global-processing-title {
+          margin: 4px 0 0;
+          font-size: 24px;
+          font-weight: 950;
+          letter-spacing: .02em;
+        }
+
+        .global-processing-detail {
+          margin: 0;
+          color: #475569;
+          font-size: 15px;
+          line-height: 1.65;
+          font-weight: 700;
+        }
+
+        @keyframes global-processing-spin {
+          to { transform: rotate(360deg); }
+        }
+
         .app-shell {
           --theme-bg: #f5f7fb;
           --theme-surface: rgba(255,255,255,.92);
