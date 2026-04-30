@@ -1319,11 +1319,19 @@ export default function App() {
     const nextStatus = statusOverride ?? reviewStatus;
     if (!employee || !reviewStationId) {
       setFlashMessage("請先選擇人員與站點。");
-      return;
+      return false;
     }
-    const ok = await persistQualification(employee, reviewStationId, nextStatus);
-    if (ok) {
-      setFlashMessage("站點考核已確認並儲存。");
+
+    try {
+      const ok = await persistQualification(employee, reviewStationId, nextStatus);
+      if (ok) {
+        setFlashMessage("站點考核已確認並儲存。");
+        return true;
+      }
+      return false;
+    } catch (error) {
+      setFlashMessage(`站點考核儲存失敗：${error instanceof Error ? error.message : String(error)}`);
+      return false;
     }
   }
 
@@ -2521,7 +2529,6 @@ export default function App() {
             <select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>
               {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
-            <button type="button" className="ghost" onClick={() => setRulesPreviewOpen(true)}>總預覽</button>
           </div>
           <button type="button" className="rules-summary-card" onClick={() => setRulesPreviewOpen(true)}>
             <strong>{rulesTeam} 規則總預覽</strong>
@@ -3734,6 +3741,59 @@ export default function App() {
           .mobile-form-section { padding: 12px !important; }
         }
 
+
+        /* Qualification review modal: clearer layers and visible primary action */
+        .review-edit-modal {
+          background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%) !important;
+        }
+        .review-edit-modal .upgraded-modal-body,
+        .review-edit-modal .mobile-modal-body {
+          background: linear-gradient(180deg, #f8fbff 0%, #eef4ff 100%) !important;
+        }
+        .review-modal-content { display: grid !important; gap: 14px !important; }
+        .review-person-summary,
+        .review-edit-section,
+        .review-existing-section {
+          border-radius: 24px !important;
+          border: 1px solid rgba(148, 163, 184, .32) !important;
+          background: rgba(255, 255, 255, .92) !important;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, .08) !important;
+          padding: 14px !important;
+          display: grid !important;
+          gap: 12px !important;
+        }
+        .review-edit-section {
+          border-color: rgba(37, 99, 235, .34) !important;
+          background: linear-gradient(180deg, #ffffff 0%, #eff6ff 100%) !important;
+        }
+        .review-summary-title { display: flex !important; align-items: baseline !important; justify-content: space-between !important; gap: 10px !important; }
+        .review-summary-title strong { color: #0f172a !important; font-size: 1.25rem !important; font-weight: 950 !important; }
+        .review-summary-title span { color: #64748b !important; font-weight: 850 !important; }
+        .review-info-grid { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 10px !important; }
+        .review-info-grid div { border-radius: 18px !important; background: #f1f5f9 !important; padding: 10px 12px !important; display: grid !important; gap: 5px !important; }
+        .review-info-grid span,
+        .review-field,
+        .review-record-row span { color: #64748b !important; font-weight: 850 !important; }
+        .review-info-grid strong { color: #0f172a !important; font-weight: 950 !important; }
+        .review-section-heading { width: fit-content !important; border-radius: 999px !important; padding: 6px 12px !important; background: #dbeafe !important; color: #1e3a8a !important; font-weight: 950 !important; }
+        .review-field { display: grid !important; gap: 7px !important; }
+        .review-field select { width: 100% !important; max-width: none !important; min-height: 52px !important; border-radius: 18px !important; border: 1.6px solid rgba(37, 99, 235, .36) !important; background: #fff !important; color: #0f172a !important; font-size: 1.05rem !important; font-weight: 900 !important; padding: 10px 13px !important; }
+        .review-save-button { width: 100% !important; min-height: 56px !important; border-radius: 18px !important; background: linear-gradient(135deg, #2563eb, #1d4ed8) !important; color: #ffffff !important; font-weight: 950 !important; font-size: 1.12rem !important; box-shadow: 0 14px 28px rgba(37, 99, 235, .28) !important; }
+        .review-record-list { display: grid !important; gap: 8px !important; }
+        .review-record-row { display: grid !important; grid-template-columns: minmax(0, 1fr) auto auto !important; align-items: center !important; gap: 10px !important; border-radius: 18px !important; border: 1px solid rgba(148, 163, 184, .26) !important; background: #ffffff !important; padding: 10px !important; }
+        .review-record-row strong { display: block !important; color: #0f172a !important; font-weight: 950 !important; }
+        .review-record-row span { display: block !important; font-size: .9rem !important; }
+        .review-status-badge { border-radius: 999px !important; padding: 7px 11px !important; font-weight: 950 !important; white-space: nowrap !important; }
+        .review-status-badge.status-合格 { background: #dcfce7 !important; color: #166534 !important; }
+        .review-status-badge.status-訓練中 { background: #fef3c7 !important; color: #92400e !important; }
+        .review-status-badge.status-不可排 { background: #fee2e2 !important; color: #991b1b !important; }
+        .review-status-badge.status-empty { background: #e2e8f0 !important; color: #475569 !important; }
+        .review-delete-button { min-height: 42px !important; border-radius: 14px !important; font-weight: 950 !important; }
+        @media (max-width: 760px) {
+          .review-record-row { grid-template-columns: minmax(0, 1fr) auto !important; }
+          .review-delete-button { grid-column: 1 / -1 !important; width: 100% !important; }
+        }
+
         .version-blocker { position: fixed; inset: 0; z-index: 999999; background: rgba(15, 23, 42, .72); display: grid; place-items: center; padding: 24px; }
         .version-blocker-card { width: min(430px, 100%); background: #fff; color: #0f172a; border-radius: 26px; padding: 28px; text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,.35); display: grid; gap: 16px; }
         .version-blocker-card h2 { margin: 0; font-size: 1.6rem; }
@@ -3925,7 +3985,7 @@ export default function App() {
                       setStationId={setReviewStationId}
                       setReviewStatus={setReviewStatus}
                       stations={data.stations}
-                      onSave={() => handleSaveQualification()}
+                      onSave={() => { void handleSaveQualification(); }}
                       onDelete={handleDeleteQualification}
                     />
                   ) : <Empty text="請先選取人員。" />}
@@ -4576,7 +4636,7 @@ export default function App() {
 
       {mobileDetailModal ? (
         <div className="mobile-modal-backdrop upgraded-modal-backdrop" onClick={() => setMobileDetailModal(null)}>
-          <div className="mobile-modal upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+          <div className={`mobile-modal upgraded-modal-card ${mobileDetailModal.type === "review" ? "review-edit-modal" : ""}`} onClick={(e) => e.stopPropagation()}>
             <button type="button" className="mobile-modal-floating-close" aria-label="關閉資訊視窗" onClick={() => setMobileDetailModal(null)}>×</button>
             <div className="mobile-modal-header upgraded-modal-header">
               <strong>{mobileDetailModal.type === "person" ? "人員資訊" : mobileDetailModal.type === "station" ? "站點資訊" : "站點考核"}</strong>
@@ -4586,19 +4646,69 @@ export default function App() {
               {mobileDetailModal.type === "person" && mobilePerson ? <PersonDetailView person={mobilePerson} qualifications={mobilePersonQualifications} compact /> : null}
               {mobileDetailModal.type === "station" && mobileStation ? <StationDetailView station={mobileStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={mobileStationQualifications} people={data.people} compact /> : null}
               {mobileDetailModal.type === "review" && mobileReviewPerson ? (
-                <ReviewDetailView
-                  person={mobileReviewPerson}
-                  permission={String(getSystemPermission(mobileReviewPerson) || "-")}
-                  qualifications={mobileReviewQualifications}
-                  stationId={reviewStationId}
-                  reviewStatus={reviewStatus}
-                  setStationId={setReviewStationId}
-                  setReviewStatus={setReviewStatus}
-                  stations={data.stations}
-                  onSave={() => handleSaveQualification()}
-                  onDelete={handleDeleteQualification}
-                  compact
-                />
+                <div className="review-modal-content">
+                  <section className="review-person-summary">
+                    <div className="review-summary-title">
+                      <strong>{mobileReviewPerson.name || "未命名"}</strong>
+                      <span>{mobileReviewPerson.id}</span>
+                    </div>
+                    <div className="review-info-grid">
+                      <div><span>班別</span><strong>{String(getTeamOfPerson(mobileReviewPerson)) || "-"}</strong></div>
+                      <div><span>職務</span><strong>{mobileReviewPerson.role || "-"}</strong></div>
+                      <div><span>國籍</span><strong>{mobileReviewPerson.nationality || "-"}</strong></div>
+                      <div><span>資格數</span><strong>{mobileReviewQualifications.length}</strong></div>
+                    </div>
+                  </section>
+
+                  <section className="review-edit-section">
+                    <div className="review-section-heading">考核登記</div>
+                    <label className="review-field">站點
+                      <select value={reviewStationId} onChange={(event) => setReviewStationId(event.target.value)}>
+                        {data.stations.map((station) => (
+                          <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="review-field">狀態
+                      <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as QualificationStatus)}>
+                        {qualificationOptions.map((status) => (
+                          <option key={status || "empty"} value={status}>{status || "空白"}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      className="primary review-save-button"
+                      onClick={async () => {
+                        const ok = await handleSaveQualification();
+                        if (ok) setMobileDetailModal(null);
+                      }}
+                    >
+                      確認並儲存
+                    </button>
+                  </section>
+
+                  <section className="review-existing-section">
+                    <div className="review-section-heading">既有考核紀錄</div>
+                    {mobileReviewQualifications.length ? (
+                      <div className="review-record-list">
+                        {mobileReviewQualifications.map((item) => {
+                          const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                          return (
+                            <div className="review-record-row" key={`${item.employeeId}-${item.stationId}`}>
+                              <div>
+                                <strong>{station?.name || item.stationId}</strong>
+                                <span>{item.stationId}</span>
+                              </div>
+                              <span className={`review-status-badge status-${item.status || "empty"}`}>{item.status || "空白"}</span>
+                              <button type="button" className="danger review-delete-button" onClick={() => handleDeleteQualification(item.employeeId, item.stationId)}>刪除</button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : <p className="muted">目前沒有既有考核紀錄。</p>}
+                  </section>
+                </div>
               ) : null}
             </div>
             <button type="button" className="mobile-modal-fab-close" onClick={() => setMobileDetailModal(null)}>關閉</button>
