@@ -2508,6 +2508,7 @@ export default function App() {
   function renderStationRulesPage() {
     const disabled = !canEditRulesForTeam(rulesTeam);
     const editingRule = stationRuleRows.find((rule) => `${rule.team}-${rule.stationId}` === editingRuleKey) || null;
+    const editingRuleStation = editingRule ? data.stations.find((item) => item.id === editingRule.stationId) : null;
     const mandatoryCount = stationRuleRows.filter((rule) => rule.isMandatory).length;
     const trainingCount = stationRuleRows.filter((rule) => rule.trainingCanFill).length;
     const shareCount = stationRuleRows.filter((rule) => rule.canShare).length;
@@ -2560,32 +2561,76 @@ export default function App() {
           ) : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}
         </div>
         {rulesPreviewOpen ? (
-          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setRulesPreviewOpen(false)}>
-            <div className="mobile-modal compact-preview-modal" onClick={(e) => e.stopPropagation()}>
-              <div className="mobile-modal-header"><strong>{rulesTeam} 全部站點規則</strong><button type="button" className="mobile-modal-close" onClick={() => setRulesPreviewOpen(false)}>×</button></div>
-              <div className="rule-preview-list">
-                {stationRuleRows.map((rule) => {
-                  const station = data.stations.find((item) => item.id === rule.stationId);
-                  return <div className="rule-preview-row" key={`${rule.team}-${rule.stationId}`}><strong>{station?.name || rule.stationId}</strong><span>最低 {rule.minRequired ?? 0}｜輪休 {rule.reliefMinPerBatch ?? 0}｜備援 {rule.backupTarget ?? 0}｜序 {rule.priority ?? 0}</span><small>必站 {rule.isMandatory ? "Y" : "N"}｜訓練 {rule.trainingCanFill ? "Y" : "N"}｜支援 {rule.canShare ? "Y" : "N"}</small></div>;
-                })}
+          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setRulesPreviewOpen(false)}>
+            <div className="mobile-modal compact-preview-modal upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+              <button type="button" className="mobile-modal-floating-close" aria-label="關閉總預覽" onClick={() => setRulesPreviewOpen(false)}>×</button>
+              <div className="mobile-modal-header upgraded-modal-header">
+                <div>
+                  <strong>{rulesTeam} 規則總預覽</strong>
+                  <small>共 {stationRuleRows.length} 個站點｜點選外側或右上角可關閉</small>
+                </div>
+              </div>
+              <div className="mobile-modal-body upgraded-modal-body">
+                <div className="rule-preview-list upgraded-preview-list">
+                  {stationRuleRows.map((rule) => {
+                    const station = data.stations.find((item) => item.id === rule.stationId);
+                    return (
+                      <div className="rule-preview-row upgraded-preview-row" key={`${rule.team}-${rule.stationId}`}>
+                        <div className="preview-row-title">
+                          <strong>{station?.name || rule.stationId}</strong>
+                          <span>{rule.stationId}</span>
+                        </div>
+                        <div className="preview-metric-badges">
+                          <span>最低 <b>{rule.minRequired ?? 0}</b></span>
+                          <span>輪休 <b>{rule.reliefMinPerBatch ?? 0}</b></span>
+                          <span>備援 <b>{rule.backupTarget ?? 0}</b></span>
+                          <span>序 <b>{rule.priority ?? 0}</b></span>
+                        </div>
+                        <div className="preview-state-badges">
+                          <span className={rule.isMandatory ? "chip-on" : "chip-off"}>必站 {rule.isMandatory ? "Y" : "N"}</span>
+                          <span className={rule.trainingCanFill ? "chip-on" : "chip-off"}>訓練 {rule.trainingCanFill ? "Y" : "N"}</span>
+                          <span className={rule.canShare ? "chip-on" : "chip-off"}>支援 {rule.canShare ? "Y" : "N"}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           </div>
         ) : null}
         {editingRule ? (
-          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingRuleKey("")}>
-            <div className="mobile-modal mobile-edit-sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="mobile-modal-header"><strong>編輯站點規則</strong><button type="button" className="mobile-modal-close" onClick={() => setEditingRuleKey("")}>×</button></div>
-              <div className="mobile-edit-grid">
-                <label>最低需求<ConfirmNumberInput value={editingRule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { minRequired: value })} /></label>
-                <label>輪休需求<ConfirmNumberInput value={editingRule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { reliefMinPerBatch: value })} /></label>
-                <label>備援目標<ConfirmNumberInput value={editingRule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { backupTarget: value })} /></label>
-                <label>優先順序<ConfirmNumberInput value={editingRule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { priority: value })} /></label>
-                <label>必站<ConfirmSelect value={editingRule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { isMandatory: value === "Y" })} /></label>
-                <label>訓練中可補位<ConfirmSelect value={editingRule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { trainingCanFill: value === "Y" })} /></label>
-                <label>支援補位<ConfirmSelect value={editingRule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { canShare: value === "Y" })} /></label>
+          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingRuleKey("")}>
+            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+              <button type="button" className="mobile-modal-floating-close" aria-label="關閉編輯視窗" onClick={() => setEditingRuleKey("")}>×</button>
+              <div className="mobile-modal-header upgraded-modal-header">
+                <div>
+                  <strong>編輯站點規則</strong>
+                  <small>{editingRuleStation?.name || editingRule.stationId}｜{editingRule.stationId}</small>
+                </div>
               </div>
-              <button type="button" className="primary full-width" onClick={() => setEditingRuleKey("")}>完成</button>
+              <div className="mobile-modal-body upgraded-modal-body">
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">人數與排序</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>最低需求<ConfirmNumberInput value={editingRule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { minRequired: value })} /></label>
+                    <label>輪休需求<ConfirmNumberInput value={editingRule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { reliefMinPerBatch: value })} /></label>
+                    <label>備援目標<ConfirmNumberInput value={editingRule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { backupTarget: value })} /></label>
+                    <label>優先順序<ConfirmNumberInput value={editingRule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { priority: value })} /></label>
+                  </div>
+                </section>
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">站點屬性</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>必站<ConfirmSelect value={editingRule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { isMandatory: value === "Y" })} /></label>
+                    <label>訓練中可補位<ConfirmSelect value={editingRule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { trainingCanFill: value === "Y" })} /></label>
+                    <label>支援補位<ConfirmSelect value={editingRule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(editingRule, { canShare: value === "Y" })} /></label>
+                  </div>
+                </section>
+              </div>
+              <div className="mobile-modal-footer upgraded-modal-footer">
+                <button type="button" className="ghost full-width" onClick={() => setEditingRuleKey("")}>關閉</button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -2619,22 +2664,44 @@ export default function App() {
           </div>
         </div>
         {editingPerson ? (
-          <div className="mobile-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingPersonId("")}>
-            <div className="mobile-modal mobile-edit-sheet" onClick={(e) => e.stopPropagation()}>
-              <div className="mobile-modal-header"><strong>編輯人員資料</strong><button type="button" className="mobile-modal-close" onClick={() => setEditingPersonId("")}>×</button></div>
-              <p className="muted">{editingPerson.id}</p>
-              <div className="mobile-edit-grid">
-                <label>姓名<ConfirmTextInput value={editingPerson.name} onCommit={(value) => handleUpdatePerson(editingPerson, { name: value })} /></label>
-                <label>班別<ConfirmSelect value={String(getTeamOfPerson(editingPerson))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(editingPerson, { shift: value })} /></label>
-                <label>職務<ConfirmTextInput value={editingPerson.role} onCommit={(value) => handleUpdatePerson(editingPerson, { role: value })} /></label>
-                <label>國籍<ConfirmTextInput value={editingPerson.nationality} onCommit={(value) => handleUpdatePerson(editingPerson, { nationality: value })} /></label>
-                <label>A1<ConfirmTextInput value={editingPerson.aDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay1: value })} /></label>
-                <label>A2<ConfirmTextInput value={editingPerson.aDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay2: value })} /></label>
-                <label>B1<ConfirmTextInput value={editingPerson.bDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay1: value })} /></label>
-                <label>B2<ConfirmTextInput value={editingPerson.bDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay2: value })} /></label>
-                <label>在職<ConfirmTextInput value={editingPerson.employmentStatus} onCommit={(value) => handleUpdatePerson(editingPerson, { employmentStatus: value })} /></label>
+          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingPersonId("")}>
+            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal" onClick={(e) => e.stopPropagation()}>
+              <button type="button" className="mobile-modal-floating-close" aria-label="關閉編輯視窗" onClick={() => setEditingPersonId("")}>×</button>
+              <div className="mobile-modal-header upgraded-modal-header">
+                <div>
+                  <strong>編輯人員資料</strong>
+                  <small>{editingPerson.name || "未命名"}｜{editingPerson.id}</small>
+                </div>
               </div>
-              <button type="button" className="primary full-width" onClick={() => setEditingPersonId("")}>完成</button>
+              <div className="mobile-modal-body upgraded-modal-body">
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">基本資料</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>姓名<ConfirmTextInput value={editingPerson.name} onCommit={(value) => handleUpdatePerson(editingPerson, { name: value })} /></label>
+                    <label>班別<ConfirmSelect value={String(getTeamOfPerson(editingPerson))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(editingPerson, { shift: value })} /></label>
+                    <label>職務<ConfirmTextInput value={editingPerson.role} onCommit={(value) => handleUpdatePerson(editingPerson, { role: value })} /></label>
+                    <label>國籍<ConfirmTextInput value={editingPerson.nationality} onCommit={(value) => handleUpdatePerson(editingPerson, { nationality: value })} /></label>
+                  </div>
+                </section>
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">班組出勤欄位</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>A1<ConfirmTextInput value={editingPerson.aDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay1: value })} /></label>
+                    <label>A2<ConfirmTextInput value={editingPerson.aDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { aDay2: value })} /></label>
+                    <label>B1<ConfirmTextInput value={editingPerson.bDay1 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay1: value })} /></label>
+                    <label>B2<ConfirmTextInput value={editingPerson.bDay2 || ""} onCommit={(value) => handleUpdatePerson(editingPerson, { bDay2: value })} /></label>
+                  </div>
+                </section>
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">在職狀態</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid single-row">
+                    <label>在職<ConfirmTextInput value={editingPerson.employmentStatus} onCommit={(value) => handleUpdatePerson(editingPerson, { employmentStatus: value })} /></label>
+                  </div>
+                </section>
+              </div>
+              <div className="mobile-modal-footer upgraded-modal-footer">
+                <button type="button" className="ghost full-width" onClick={() => setEditingPersonId("")}>關閉</button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -3467,6 +3534,206 @@ export default function App() {
         .mobile-edit-grid label { display: grid; gap: 6px; color: var(--muted); font-weight: 800; }
         .mobile-edit-grid input,
         .mobile-edit-grid select { width: 100%; min-height: 44px; }
+
+        /* Mobile modal UI upgrade: real floating card, fixed close button, clearer editable sections */
+        .upgraded-modal-backdrop,
+        .mobile-modal-backdrop {
+          position: fixed !important;
+          inset: 0 !important;
+          z-index: 99990 !important;
+          background: rgba(15, 23, 42, .58) !important;
+          backdrop-filter: blur(8px) !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          padding: 18px !important;
+          box-sizing: border-box !important;
+        }
+        .upgraded-modal-card,
+        .mobile-modal {
+          position: relative !important;
+          width: min(680px, calc(100vw - 26px)) !important;
+          max-height: min(84vh, 760px) !important;
+          overflow: hidden !important;
+          border: 1px solid rgba(148, 163, 184, .55) !important;
+          border-radius: 28px !important;
+          background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+          box-shadow: 0 26px 70px rgba(15, 23, 42, .34) !important;
+          display: grid !important;
+          grid-template-rows: auto minmax(0, 1fr) auto !important;
+          text-align: left !important;
+        }
+        .mobile-modal-floating-close {
+          position: absolute !important;
+          top: 12px !important;
+          right: 12px !important;
+          z-index: 30 !important;
+          width: 46px !important;
+          height: 46px !important;
+          border-radius: 999px !important;
+          border: 1px solid rgba(15, 23, 42, .18) !important;
+          background: rgba(255, 255, 255, .94) !important;
+          color: #0f172a !important;
+          font-size: 30px !important;
+          line-height: 1 !important;
+          font-weight: 900 !important;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, .20) !important;
+          display: inline-grid !important;
+          place-items: center !important;
+        }
+        .mobile-modal-floating-close:active { transform: scale(.96); }
+        .upgraded-modal-header,
+        .mobile-modal-header {
+          position: relative !important;
+          z-index: 10 !important;
+          background: linear-gradient(135deg, #eff6ff 0%, #ffffff 72%) !important;
+          border-bottom: 1px solid rgba(148, 163, 184, .32) !important;
+          padding: 18px 68px 16px 20px !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: space-between !important;
+          gap: 12px !important;
+          text-align: left !important;
+        }
+        .upgraded-modal-header strong,
+        .mobile-modal-header strong {
+          display: block !important;
+          color: #0f172a !important;
+          font-size: clamp(1.15rem, 4.8vw, 1.55rem) !important;
+          font-weight: 950 !important;
+          line-height: 1.2 !important;
+        }
+        .upgraded-modal-header small,
+        .mobile-modal-header small {
+          display: block !important;
+          margin-top: 5px !important;
+          color: #64748b !important;
+          font-size: .92rem !important;
+          font-weight: 800 !important;
+          line-height: 1.35 !important;
+        }
+        .mobile-modal-close { display: none !important; }
+        .upgraded-modal-body,
+        .mobile-modal-body {
+          min-height: 0 !important;
+          overflow: auto !important;
+          padding: 16px !important;
+          display: grid !important;
+          gap: 14px !important;
+          -webkit-overflow-scrolling: touch !important;
+        }
+        .upgraded-modal-footer,
+        .mobile-modal-footer {
+          position: relative !important;
+          z-index: 12 !important;
+          background: rgba(248, 250, 252, .96) !important;
+          border-top: 1px solid rgba(148, 163, 184, .30) !important;
+          padding: 12px 16px calc(12px + env(safe-area-inset-bottom)) !important;
+          display: grid !important;
+          gap: 10px !important;
+        }
+        .mobile-form-section {
+          border: 1px solid rgba(148, 163, 184, .34) !important;
+          border-radius: 22px !important;
+          background: rgba(255, 255, 255, .82) !important;
+          padding: 14px !important;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.9) !important;
+          display: grid !important;
+          gap: 12px !important;
+        }
+        .mobile-form-section-title {
+          display: inline-flex !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+          width: fit-content !important;
+          border-radius: 999px !important;
+          padding: 6px 12px !important;
+          background: #dbeafe !important;
+          color: #1e3a8a !important;
+          font-weight: 950 !important;
+          font-size: .95rem !important;
+        }
+        .upgraded-edit-grid label {
+          border-radius: 18px !important;
+          border: 1px solid rgba(148, 163, 184, .40) !important;
+          background: #f8fafc !important;
+          padding: 10px !important;
+          color: #475569 !important;
+          font-size: .92rem !important;
+          font-weight: 950 !important;
+          text-align: left !important;
+        }
+        .upgraded-edit-grid input,
+        .upgraded-edit-grid select {
+          margin-top: 4px !important;
+          border-radius: 16px !important;
+          border: 1.5px solid rgba(37, 99, 235, .28) !important;
+          background: #fff !important;
+          color: #0f172a !important;
+          font-weight: 900 !important;
+          text-align: center !important;
+          box-shadow: 0 1px 0 rgba(15, 23, 42, .04) !important;
+        }
+        .upgraded-edit-grid input:focus,
+        .upgraded-edit-grid select:focus {
+          outline: 3px solid rgba(37, 99, 235, .18) !important;
+          border-color: #2563eb !important;
+        }
+        .upgraded-edit-grid.single-row { grid-template-columns: minmax(0, 1fr) !important; }
+        .upgraded-preview-list { gap: 12px !important; }
+        .upgraded-preview-row {
+          border-radius: 22px !important;
+          border: 1px solid rgba(148, 163, 184, .38) !important;
+          background: #fff !important;
+          padding: 14px !important;
+          box-shadow: 0 8px 22px rgba(15, 23, 42, .06) !important;
+          display: grid !important;
+          gap: 10px !important;
+          text-align: left !important;
+        }
+        .preview-row-title {
+          display: flex !important;
+          align-items: baseline !important;
+          justify-content: space-between !important;
+          gap: 10px !important;
+        }
+        .preview-row-title strong { font-size: 1.12rem !important; color: #0f172a !important; }
+        .preview-row-title span { color: #64748b !important; font-weight: 850 !important; }
+        .preview-metric-badges,
+        .preview-state-badges {
+          display: flex !important;
+          flex-wrap: wrap !important;
+          gap: 8px !important;
+        }
+        .preview-metric-badges span {
+          flex: 1 1 86px !important;
+          min-width: 82px !important;
+          border-radius: 14px !important;
+          background: #f1f5f9 !important;
+          border: 1px solid rgba(148,163,184,.32) !important;
+          padding: 8px 10px !important;
+          color: #475569 !important;
+          font-weight: 850 !important;
+          text-align: center !important;
+        }
+        .preview-metric-badges b { color: #0f172a !important; font-size: 1.12rem !important; }
+        @media (max-width: 760px) {
+          .upgraded-modal-backdrop,
+          .mobile-modal-backdrop {
+            align-items: flex-end !important;
+            padding: 12px !important;
+          }
+          .upgraded-modal-card,
+          .mobile-modal {
+            width: calc(100vw - 18px) !important;
+            max-height: 82vh !important;
+            border-radius: 26px 26px 18px 18px !important;
+          }
+          .upgraded-modal-body,
+          .mobile-modal-body { padding: 13px !important; gap: 12px !important; }
+          .mobile-form-section { padding: 12px !important; }
+        }
+
         .version-blocker { position: fixed; inset: 0; z-index: 999999; background: rgba(15, 23, 42, .72); display: grid; place-items: center; padding: 24px; }
         .version-blocker-card { width: min(430px, 100%); background: #fff; color: #0f172a; border-radius: 26px; padding: 28px; text-align: center; box-shadow: 0 24px 80px rgba(0,0,0,.35); display: grid; gap: 16px; }
         .version-blocker-card h2 { margin: 0; font-size: 1.6rem; }
@@ -4308,13 +4575,14 @@ export default function App() {
       ) : null}
 
       {mobileDetailModal ? (
-        <div className="mobile-modal-backdrop" onClick={() => setMobileDetailModal(null)}>
-          <div className="mobile-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mobile-modal-header">
+        <div className="mobile-modal-backdrop upgraded-modal-backdrop" onClick={() => setMobileDetailModal(null)}>
+          <div className="mobile-modal upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="mobile-modal-floating-close" aria-label="關閉資訊視窗" onClick={() => setMobileDetailModal(null)}>×</button>
+            <div className="mobile-modal-header upgraded-modal-header">
               <strong>{mobileDetailModal.type === "person" ? "人員資訊" : mobileDetailModal.type === "station" ? "站點資訊" : "站點考核"}</strong>
               <button type="button" className="mobile-modal-close" onClick={() => setMobileDetailModal(null)}>×</button>
             </div>
-            <div className="mobile-modal-body">
+            <div className="mobile-modal-body upgraded-modal-body">
               {mobileDetailModal.type === "person" && mobilePerson ? <PersonDetailView person={mobilePerson} qualifications={mobilePersonQualifications} compact /> : null}
               {mobileDetailModal.type === "station" && mobileStation ? <StationDetailView station={mobileStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={mobileStationQualifications} people={data.people} compact /> : null}
               {mobileDetailModal.type === "review" && mobileReviewPerson ? (
