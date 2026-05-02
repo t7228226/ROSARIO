@@ -111,6 +111,7 @@ function normalizeRules(rows: unknown[]): StationRule[] {
         stationId: String(item.stationId ?? item["站點代碼"] ?? "").trim(),
         minRequired: Number(item.minRequired ?? item["最低需求"] ?? 0),
         reliefMinPerBatch: Number(item.reliefMinPerBatch ?? item["輪休需求(單批)"] ?? item["輪休需求"] ?? item["輪休單批最低"] ?? 0),
+        maxAssignable: Number(item.maxAssignable ?? item["可排滿"] ?? item["可排滿人數"] ?? item["排滿人數"] ?? 0),
         backupTarget: Number(item.backupTarget ?? item["備援目標"] ?? 0),
         priority: Number(item.priority ?? item["排班優先順序"] ?? 999),
         isMandatory: toBool(item.isMandatory ?? item["必站"] ?? item["是否必站"]),

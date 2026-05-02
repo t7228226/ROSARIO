@@ -52,6 +52,7 @@ export interface StationRule {
   stationId: string;
   minRequired: number;
   reliefMinPerBatch?: number | null;
+  maxAssignable?: number | null;
   backupTarget?: number | null;
   priority?: number | null;
   isMandatory?: boolean | null;
