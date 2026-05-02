@@ -2,11 +2,13 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import {
+  analyzeStationCoverage,
   buildSmartAssignments,
   DAY_OPTIONS,
   getApplicableRules,
   getAttendanceForTeam,
   getQualifiedPeopleForStation,
+  getRuleNeed,
   getStationCoverage,
   getTeamOfPerson,
   REVIEW_TEAM_OPTIONS,
@@ -683,6 +685,16 @@ export default function App() {
 
   const [gapShift, setGapShift] = useState<TeamName>("婷芬班");
   const [gapDay, setGapDay] = useState<ShiftMode>("當班");
+  const [gapHelpOpen, setGapHelpOpen] = useState(false);
+  const [gapAbsentIds, setGapAbsentIds] = useState<string[]>([]);
+  const [gapAbsentDialogOpen, setGapAbsentDialogOpen] = useState(false);
+  const [gapAbsentKeyword, setGapAbsentKeyword] = useState("");
+  const [gapTrainingHelpOpen, setGapTrainingHelpOpen] = useState(false);
+  const [gapTrainingDialogOpen, setGapTrainingDialogOpen] = useState(false);
+  const [gapTrainingKeyword, setGapTrainingKeyword] = useState("");
+  const [gapTrainingPicker, setGapTrainingPicker] = useState<null | { employeeId: string; recommendedStationId?: string; source: "recommendation" | "custom" }>(null);
+  const [gapTrainingPickerStationId, setGapTrainingPickerStationId] = useState("");
+  const [gapTrainingSimulations, setGapTrainingSimulations] = useState<Array<{ employeeId: string; stationId: string }>>([]);
 
   const [manualShift, setManualShift] = useState<TeamName>("婷芬班");
   const [manualDay, setManualDay] = useState<ShiftMode>("當班");
@@ -743,6 +755,7 @@ export default function App() {
 
   const [rulesTeam, setRulesTeam] = useState<TeamName>("婷芬班");
   const [rulesPreviewOpen, setRulesPreviewOpen] = useState(false);
+  const [rulesOverviewEditing, setRulesOverviewEditing] = useState(false);
   const [editingRuleKey, setEditingRuleKey] = useState("");
 
   const [peopleSearchKeyword, setPeopleSearchKeyword] = useState("");
@@ -1059,6 +1072,105 @@ export default function App() {
 
   const gapAttendance = useMemo(() => getAttendanceForTeam(data.people, gapShift, gapDay), [data.people, gapShift, gapDay]);
   const gapRules = useMemo(() => getApplicableRules(gapShift, gapDay, data.stationRules || []), [data.stationRules, gapShift, gapDay]);
+  const gapCoverageAnalysis = useMemo(
+    () => analyzeStationCoverage(gapShift, gapDay, data.stationRules || [], data.people, data.qualifications),
+    [data.people, data.qualifications, data.stationRules, gapShift, gapDay]
+  );
+  const gapAbsentAnalysis = useMemo(
+    () => analyzeStationCoverage(gapShift, gapDay, data.stationRules || [], data.people, data.qualifications, new Set(gapAbsentIds)),
+    [data.people, data.qualifications, data.stationRules, gapShift, gapDay, gapAbsentIds]
+  );
+  const gapActiveCoverageAnalysis = gapAbsentIds.length ? gapAbsentAnalysis : gapCoverageAnalysis;
+  const gapCombinedTrainingSuggestions = useMemo(() => {
+    const source = gapAbsentIds.length
+      ? [
+          ...gapAbsentAnalysis.trainingSuggestions,
+          ...gapCoverageAnalysis.trainingSuggestions.filter((item) => !gapAbsentIds.includes(item.employeeId)),
+        ]
+      : gapCoverageAnalysis.trainingSuggestions;
+    const used = new Set<string>();
+    return source.filter((item) => {
+      if (used.has(item.employeeId)) return false;
+      used.add(item.employeeId);
+      return true;
+    }).slice(0, 10);
+  }, [gapAbsentAnalysis.trainingSuggestions, gapCoverageAnalysis.trainingSuggestions, gapAbsentIds]);
+  const gapAbsentCandidates = useMemo(() => {
+    const keyword = gapAbsentKeyword.trim().toLowerCase();
+    return gapAttendance.all
+      .filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => {
+        if (!keyword) return true;
+        return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }))
+      .slice(0, 40);
+  }, [gapAbsentIds, gapAbsentKeyword, gapAttendance.all]);
+  const gapTrainingCustomCandidates = useMemo(() => {
+    const keyword = gapTrainingKeyword.trim().toLowerCase();
+    return gapAttendance.all
+      .filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => {
+        if (!keyword) return true;
+        return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }))
+      .slice(0, 50);
+  }, [gapAbsentIds, gapAttendance.all, gapTrainingKeyword]);
+  const gapTrainingPickerPerson = gapTrainingPicker ? data.people.find((person) => person.id === gapTrainingPicker.employeeId) || null : null;
+  const gapTrainingPickerQualifiedStations = useMemo(() => {
+    if (!gapTrainingPickerPerson) return [];
+    const stationIds = new Set(
+      data.qualifications
+        .filter((item) => item.employeeId === gapTrainingPickerPerson.id && (item.status === "合格" || item.status === "訓練中"))
+        .map((item) => item.stationId)
+    );
+    return gapRules.filter((rule) => stationIds.has(rule.stationId));
+  }, [data.qualifications, gapRules, gapTrainingPickerPerson]);
+  const gapTrainingPickerSelectedStationId = gapTrainingPickerStationId || gapTrainingPicker?.recommendedStationId || gapRules[0]?.stationId || "";
+  const gapTrainingPickerSelectedQualification = gapTrainingPickerPerson && gapTrainingPickerSelectedStationId
+    ? data.qualifications.find((item) => item.employeeId === gapTrainingPickerPerson.id && item.stationId === gapTrainingPickerSelectedStationId)
+    : undefined;
+  const gapTrainingPickerSelectedIsQualified = gapTrainingPickerSelectedQualification?.status === "合格";
+  const gapTrainingSimulationModel = useMemo(() => {
+    if (!gapTrainingSimulations.length) return null;
+    const simulatedQualifications: Qualification[] = [...data.qualifications];
+    const forcedAssignments = new Map<string, string>();
+    gapTrainingSimulations.forEach((item) => {
+      const person = data.people.find((personItem) => personItem.id === item.employeeId);
+      if (!person) return;
+      simulatedQualifications.push({
+        employeeId: person.id,
+        employeeName: person.name,
+        stationId: item.stationId,
+        status: "合格",
+      });
+      forcedAssignments.set(person.id, item.stationId);
+    });
+    return { qualifications: simulatedQualifications, forcedAssignments };
+  }, [data.people, data.qualifications, gapTrainingSimulations]);
+  const gapTrainingSimulationAnalysis = useMemo(() => {
+    if (!gapTrainingSimulationModel) return null;
+    return analyzeStationCoverage(
+      gapShift,
+      gapDay,
+      data.stationRules || [],
+      data.people,
+      gapTrainingSimulationModel.qualifications,
+      new Set(gapAbsentIds),
+      gapTrainingSimulationModel.forcedAssignments
+    );
+  }, [data.people, data.stationRules, gapShift, gapDay, gapAbsentIds, gapTrainingSimulationModel]);
+  const gapDisplayCoverageAnalysis = gapTrainingSimulationAnalysis || gapActiveCoverageAnalysis;
+  const gapDisplayQualifications = gapTrainingSimulationModel?.qualifications || data.qualifications;
+  const gapDisplayAttendanceAll = useMemo(
+    () => gapAbsentIds.length ? gapAttendance.all.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.all,
+    [gapAbsentIds, gapAttendance.all]
+  );
+  const gapDisplayAttendanceSupport = useMemo(
+    () => gapAbsentIds.length ? gapAttendance.support.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.support,
+    [gapAbsentIds, gapAttendance.support]
+  );
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
@@ -1282,6 +1394,57 @@ export default function App() {
     return canUsePermission("PERM_012");
   }
 
+  function toggleGapAbsentPerson(employeeId: string) {
+    setGapAbsentIds((current) =>
+      current.includes(employeeId)
+        ? current.filter((id) => id !== employeeId)
+        : [...current, employeeId]
+    );
+  }
+
+  function toggleGapTrainingSimulation(employeeId: string, stationId: string) {
+    setGapTrainingSimulations((current) => {
+      const exists = current.some((item) => item.employeeId === employeeId && item.stationId === stationId);
+      if (exists) return current.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId));
+      return [...current.filter((item) => item.employeeId !== employeeId), { employeeId, stationId }];
+    });
+  }
+
+  function openGapTrainingDialog() {
+    setGapTrainingKeyword("");
+    setGapTrainingDialogOpen(true);
+  }
+
+  function openGapTrainingPicker(employeeId: string, recommendedStationId?: string, source: "recommendation" | "custom" = "recommendation") {
+    setGapTrainingPicker({ employeeId, recommendedStationId, source });
+    setGapTrainingPickerStationId(recommendedStationId || gapRules.find((rule) => {
+      const row = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+      return row?.shortage;
+    })?.stationId || gapRules[0]?.stationId || "");
+    setGapTrainingDialogOpen(false);
+  }
+
+  function addGapTrainingSimulationFromPicker(stationId = gapTrainingPickerSelectedStationId) {
+    if (!gapTrainingPickerPerson || !stationId) return;
+    setGapTrainingSimulations((current) => [
+      ...current.filter((item) => item.employeeId !== gapTrainingPickerPerson.id),
+      { employeeId: gapTrainingPickerPerson.id, stationId },
+    ]);
+    setGapTrainingPicker(null);
+  }
+
+  function openQualificationReviewForTraining() {
+    if (!gapTrainingPickerPerson || !gapTrainingPickerSelectedStationId) return;
+    setReviewShift(getTeamOfPerson(gapTrainingPickerPerson) as TeamName);
+    setReviewEmployeeId(gapTrainingPickerPerson.id);
+    setReviewStationId(gapTrainingPickerSelectedStationId);
+    setReviewStatus("訓練中");
+    setGapTrainingPicker(null);
+    setGapTrainingDialogOpen(false);
+    setPage("qualification-review");
+    scrollToTop();
+  }
+
   function confirmAction(message: string) {
     return window.confirm(message);
   }
@@ -1438,6 +1601,10 @@ export default function App() {
   async function handleUpdateRule(rule: StationRule, patch: Partial<StationRule>) {
     const next = { ...rule, ...patch };
     const station = data.stations.find((item) => item.id === rule.stationId);
+    if (Number(next.maxAssignable || 0) > 0 && Number(next.maxAssignable || 0) < Number(next.minRequired || 0)) {
+      setFlashMessage("可排滿人數不可小於最低需求；若不補人請填 0。");
+      return;
+    }
     if (!confirmAction(`確認修改 ${rule.team} 的 ${station?.name || rule.stationId} 規則？`)) {
       setFlashMessage("已取消修改。");
       return;
@@ -1446,11 +1613,14 @@ export default function App() {
     await postGasAction("updateStationRule", next as unknown as Record<string, unknown>);
     setData((current) => {
       const rules = current.stationRules || [];
-      const exists = rules.some((item) => item.id === rule.id || (item.team === rule.team && item.stationId === rule.stationId));
+      const sameRule = (item: StationRule) =>
+        item.id === rule.id ||
+        (item.team === rule.team && item.stationId === rule.stationId && String(item.dayKey || "當班") === String(rule.dayKey || "當班"));
+      const exists = rules.some(sameRule);
       return {
         ...current,
         stationRules: exists
-          ? rules.map((item) => (item.id === rule.id || (item.team === rule.team && item.stationId === rule.stationId) ? next : item))
+          ? rules.map((item) => (sameRule(item) ? next : item))
           : [...rules, next],
       };
     });
@@ -1492,7 +1662,7 @@ export default function App() {
 
   function runManualPlan() {
     const assignablePeople = data.people.filter((person) => !isOfficerPerson(person));
-    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], assignablePeople, data.qualifications, manualMode);
+    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], assignablePeople, data.qualifications, manualMode, { useMinRequired: true, randomize: true });
     const next: Record<string, string[]> = {};
     rows.forEach((row) => {
       next[row.stationId] = row.assigned.filter((person) => !manualOfficerIds.has(person.id)).map((person) => person.id);
@@ -2584,6 +2754,7 @@ export default function App() {
     const trainingCount = stationRuleRows.filter((rule) => rule.trainingCanFill).length;
     const shareCount = stationRuleRows.filter((rule) => rule.canShare).length;
     const totalMin = stationRuleRows.reduce((sum, rule) => sum + Number(rule.minRequired || 0), 0);
+    const totalMaxAssignable = stationRuleRows.reduce((sum, rule) => sum + Number(rule.maxAssignable || 0), 0);
 
     return (
       <EntranceLayout pageKey="station-rules">
@@ -2595,8 +2766,8 @@ export default function App() {
           </div>
           <button type="button" className="rules-summary-card" onClick={() => setRulesPreviewOpen(true)}>
             <strong>{rulesTeam} 規則總預覽</strong>
-            <span>站點 {stationRuleRows.length}｜最低需求 {totalMin}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
-            <small>點擊查看全部設定</small>
+            <span>站點 {stationRuleRows.length}｜最低需求 {totalMin}｜可排滿 {totalMaxAssignable || "未設定"}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
+            <small>點擊查看總表，可切換編輯模式一次核對修正</small>
           </button>
           {stationRuleRows.length ? (
             <div className="mobile-rule-card-list">
@@ -2615,7 +2786,7 @@ export default function App() {
                     <div className="rule-metric-grid">
                       <div><span>最低需求</span><strong>{rule.minRequired ?? 0}</strong></div>
                       <div><span>輪休需求</span><strong>{rule.reliefMinPerBatch ?? 0}</strong></div>
-                      <div><span>備援目標</span><strong>{rule.backupTarget ?? 0}</strong></div>
+                      <div><span>可排滿</span><strong>{rule.maxAssignable || "-"}</strong></div>
                       <div><span>優先順序</span><strong>{rule.priority ?? 0}</strong></div>
                     </div>
                     <div className="rule-chip-row">
@@ -2632,39 +2803,55 @@ export default function App() {
         </div>
         {rulesPreviewOpen ? (
           <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setRulesPreviewOpen(false)}>
-            <div className="mobile-modal compact-preview-modal upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-modal compact-preview-modal upgraded-modal-card rules-overview-modal" onClick={(e) => e.stopPropagation()}>
               <button type="button" className="mobile-modal-floating-close" aria-label="關閉總預覽" onClick={() => setRulesPreviewOpen(false)}>×</button>
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
                   <strong>{rulesTeam} 規則總預覽</strong>
-                  <small>共 {stationRuleRows.length} 個站點｜點選外側或右上角可關閉</small>
+                  <small>共 {stationRuleRows.length} 個站點｜{rulesOverviewEditing ? "編輯模式：欄位失焦或切換會詢問儲存" : "檢查模式：一眼核對全部規則"}</small>
                 </div>
+                <button type="button" className={rulesOverviewEditing ? "ghost" : "primary"} disabled={disabled} onClick={() => setRulesOverviewEditing((current) => !current)}>
+                  {rulesOverviewEditing ? "完成編輯" : "編輯總攬"}
+                </button>
               </div>
               <div className="mobile-modal-body upgraded-modal-body">
-                <div className="rule-preview-list upgraded-preview-list">
-                  {stationRuleRows.map((rule) => {
-                    const station = data.stations.find((item) => item.id === rule.stationId);
-                    return (
-                      <div className="rule-preview-row upgraded-preview-row" key={`${rule.team}-${rule.stationId}`}>
-                        <div className="preview-row-title">
-                          <strong>{station?.name || rule.stationId}</strong>
-                          <span>{rule.stationId}</span>
-                        </div>
-                        <div className="preview-metric-badges">
-                          <span>最低 <b>{rule.minRequired ?? 0}</b></span>
-                          <span>輪休 <b>{rule.reliefMinPerBatch ?? 0}</b></span>
-                          <span>備援 <b>{rule.backupTarget ?? 0}</b></span>
-                          <span>序 <b>{rule.priority ?? 0}</b></span>
-                        </div>
-                        <div className="preview-state-badges">
-                          <span className={rule.isMandatory ? "chip-on" : "chip-off"}>必站 {rule.isMandatory ? "Y" : "N"}</span>
-                          <span className={rule.trainingCanFill ? "chip-on" : "chip-off"}>訓練 {rule.trainingCanFill ? "Y" : "N"}</span>
-                          <span className={rule.canShare ? "chip-on" : "chip-off"}>支援 {rule.canShare ? "Y" : "N"}</span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="rules-overview-scroll">
+                  <table className="rules-overview-table">
+                    <thead>
+                      <tr>
+                        <th>站點</th>
+                        <th>最低</th>
+                        <th>輪休</th>
+                        <th>可排滿</th>
+                        <th>備援</th>
+                        <th>序</th>
+                        <th>必站</th>
+                        <th>訓練</th>
+                        <th>支援</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stationRuleRows.map((rule) => {
+                        const station = data.stations.find((item) => item.id === rule.stationId);
+                        const maxAssignableInvalid = Number(rule.maxAssignable || 0) > 0 && Number(rule.maxAssignable || 0) < Number(rule.minRequired || 0);
+                        return (
+                          <tr key={`${rule.team}-${rule.stationId}`} className={maxAssignableInvalid ? "danger-row" : ""}>
+                            <td><strong>{station?.name || rule.stationId}</strong><span>{rule.stationId}</span></td>
+                            <td>{rulesOverviewEditing ? <ConfirmNumberInput value={rule.minRequired ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { minRequired: value })} /> : rule.minRequired ?? 0}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmNumberInput value={rule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { reliefMinPerBatch: value })} /> : rule.reliefMinPerBatch ?? 0}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmNumberInput value={rule.maxAssignable ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { maxAssignable: value })} /> : rule.maxAssignable || "-"}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmNumberInput value={rule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { backupTarget: value })} /> : rule.backupTarget ?? 0}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmNumberInput value={rule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(rule, { priority: value })} /> : rule.priority ?? 0}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmSelect value={rule.isMandatory ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { isMandatory: value === "Y" })} /> : rule.isMandatory ? "Y" : "N"}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmSelect value={rule.trainingCanFill ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { trainingCanFill: value === "Y" })} /> : rule.trainingCanFill ? "Y" : "N"}</td>
+                            <td>{rulesOverviewEditing ? <ConfirmSelect value={rule.canShare ? "Y" : "N"} disabled={disabled} options={[{ label: "Y", value: "Y" }, { label: "N", value: "N" }]} onCommit={(value) => handleUpdateRule(rule, { canShare: value === "Y" })} /> : rule.canShare ? "Y" : "N"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
+                <p className="muted compact-line">可排滿空白或 0 表示不補人；若小於最低需求，該列會反紅提醒。</p>
               </div>
             </div>
           </div>
@@ -2685,6 +2872,7 @@ export default function App() {
                   <div className="mobile-edit-grid upgraded-edit-grid">
                     <label>最低需求<ConfirmNumberInput value={editingRule.minRequired} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { minRequired: value })} /></label>
                     <label>輪休需求<ConfirmNumberInput value={editingRule.reliefMinPerBatch ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { reliefMinPerBatch: value })} /></label>
+                    <label>可排滿<ConfirmNumberInput value={editingRule.maxAssignable ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { maxAssignable: value })} /></label>
                     <label>備援目標<ConfirmNumberInput value={editingRule.backupTarget ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { backupTarget: value })} /></label>
                     <label>優先順序<ConfirmNumberInput value={editingRule.priority ?? 0} disabled={disabled} onCommit={(value) => handleUpdateRule(editingRule, { priority: value })} /></label>
                   </div>
@@ -3812,6 +4000,78 @@ export default function App() {
         }
         .upgraded-edit-grid.single-row { grid-template-columns: minmax(0, 1fr) !important; }
         .upgraded-preview-list { gap: 12px !important; }
+        .rules-overview-modal {
+          width: min(980px, calc(100vw - 24px)) !important;
+        }
+        .rules-overview-modal .upgraded-modal-header {
+          align-items: center !important;
+        }
+        .rules-overview-modal .upgraded-modal-header button {
+          border: 0 !important;
+          border-radius: 14px !important;
+          padding: 10px 14px !important;
+          font-weight: 950 !important;
+          cursor: pointer !important;
+          white-space: nowrap !important;
+        }
+        .rules-overview-scroll {
+          overflow: auto !important;
+          border-radius: 18px !important;
+          border: 1px solid rgba(148, 163, 184, .38) !important;
+          background: #fff !important;
+        }
+        .rules-overview-table {
+          width: 100% !important;
+          min-width: 850px !important;
+          border-collapse: collapse !important;
+        }
+        .rules-overview-table th {
+          position: sticky !important;
+          top: 0 !important;
+          z-index: 2 !important;
+          background: #eaf2ff !important;
+          color: #0f172a !important;
+          padding: 10px 8px !important;
+          font-size: .88rem !important;
+          text-align: center !important;
+          border-bottom: 1px solid rgba(148, 163, 184, .42) !important;
+        }
+        .rules-overview-table td {
+          padding: 8px !important;
+          border-bottom: 1px solid rgba(226, 232, 240, .95) !important;
+          text-align: center !important;
+          color: #0f172a !important;
+          font-weight: 850 !important;
+        }
+        .rules-overview-table td:first-child {
+          position: sticky !important;
+          left: 0 !important;
+          z-index: 1 !important;
+          min-width: 112px !important;
+          background: #fff !important;
+          text-align: left !important;
+          box-shadow: 8px 0 14px rgba(15, 23, 42, .05) !important;
+        }
+        .rules-overview-table td:first-child strong,
+        .rules-overview-table td:first-child span {
+          display: block !important;
+        }
+        .rules-overview-table td:first-child span {
+          color: #64748b !important;
+          font-size: .78rem !important;
+        }
+        .rules-overview-table .cell-input {
+          min-width: 68px !important;
+          max-width: 92px !important;
+          min-height: 36px !important;
+          padding: 5px 7px !important;
+          border-radius: 12px !important;
+          text-align: center !important;
+          font-size: .95rem !important;
+        }
+        .rules-overview-table tr.danger-row td {
+          background: #fff1f2 !important;
+        }
         .upgraded-preview-row {
           border-radius: 22px !important;
           border: 1px solid rgba(148, 163, 184, .38) !important;
@@ -4122,7 +4382,476 @@ export default function App() {
             </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? <EntranceLayout pageKey="gap-analysis"><div className="panel"><div className="toolbar"><select value={gapShift} onChange={(e) => setGapShift(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select><select value={gapDay} onChange={(e) => setGapDay(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></div><div className="detail-grid"><Info label="本籍出勤" value={String(gapAttendance.localCount)} /><Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} /><Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} /><Info label="總出勤" value={String(gapAttendance.totalCount)} /><Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} /><Info label="支援人力" value={String(gapAttendance.support.length)} /><Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} /></div>{gapRules.length ? <table className="table"><thead><tr><th>站點</th><th>最低需求</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>不可排</th><th>缺口</th><th>支援可補</th></tr></thead><tbody>{gapRules.map((rule) => { const station = data.stations.find((item) => item.id === rule.stationId); const coverage = getStationCoverage(rule.stationId, rule.minRequired, gapAttendance.all, gapAttendance.support, data.qualifications); const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`); return <tr key={`${rule.team}-${rule.stationId}`}><td>{station?.name || rule.stationId}</td><td>{rule.minRequired}</td><td>{coverage.ownQualified}</td><td>{coverage.supportQualified}</td><td>{coverage.qualified}</td><td>{coverage.training}</td><td>{coverage.blocked}</td><td>{coverage.shortage}</td><td>{supportNames.join("、") || "-"}</td></tr>; })}</tbody></table> : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}</div></EntranceLayout> : null}
+          {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? (
+            <EntranceLayout pageKey="gap-analysis">
+              <div className="panel">
+                <div className="toolbar">
+                  <select value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); setGapTrainingSimulations([]); }}>
+                    {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                  <select value={gapDay} onChange={(e) => { setGapDay(e.target.value as ShiftMode); setGapAbsentIds([]); setGapTrainingSimulations([]); }}>
+                    {dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}
+                  </select>
+                </div>
+                <div className="detail-grid">
+                  <Info label="本籍出勤" value={String(gapAttendance.localCount)} />
+                  <Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} />
+                  <Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} />
+                  <Info label="總出勤" value={String(gapAttendance.totalCount)} />
+                  <Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} />
+                  <Info label="支援人力" value={String(gapAttendance.support.length)} />
+                  <Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} />
+                </div>
+              </div>
+
+              {gapRules.length ? (
+                <>
+                  <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
+                    <div className="panel-header">
+                      <h3>全站覆蓋檢查</h3>
+                      <span>{gapCoverageAnalysis.fullyCovered ? "可全面覆蓋" : `仍缺 ${gapCoverageAnalysis.shortage} 人`}</span>
+                    </div>
+                    <div className="detail-grid">
+                      <Info label="全站需求" value={String(gapCoverageAnalysis.required)} />
+                      <Info label="最佳覆蓋" value={String(gapCoverageAnalysis.assigned)} />
+                      <Info label="全局缺口" value={String(gapCoverageAnalysis.shortage)} />
+                      <Info label="瓶頸站點" value={String(gapCoverageAnalysis.rows.filter((row) => row.bottleneck).length)} />
+                    </div>
+                    <p className="muted">此區會把每個出勤人員視為只能站一個工作站，交叉比對所有站點資格後計算能否完整覆蓋。</p>
+                  </div>
+
+                  <div className="grid two">
+                    <div className="panel">
+                      <div className="panel-header">
+                        <h3>關鍵人缺席模擬</h3>
+                        <div className="panel-header-actions">
+                          <span className={gapAbsentIds.length ? "status-pill danger" : "status-pill"}>{gapAbsentIds.length ? `已選 ${gapAbsentIds.length} 人缺勤` : "未模擬缺勤"}</span>
+                          <button type="button" className="cute-help-button" onClick={() => setGapHelpOpen(true)}>?</button>
+                        </div>
+                      </div>
+                      <div className="inline-action-bar compact-tabs">
+                        <button type="button" className="action-tab primary" onClick={() => { setGapAbsentDialogOpen(true); setGapAbsentKeyword(""); }}>自訂缺勤</button>
+                        <button type="button" className="action-tab ghost" onClick={() => setGapAbsentIds([])} disabled={!gapAbsentIds.length}>清除缺勤</button>
+                      </div>
+                      {gapCoverageAnalysis.criticalPeople.length ? (
+                        <div className="list-scroll short">
+                          {gapCoverageAnalysis.criticalPeople.map((item) => {
+                            const person = data.people.find((p) => p.id === item.employeeId);
+                            const selected = gapAbsentIds.includes(item.employeeId);
+                            const stations = item.affectedStationIds
+                              .map((id) => data.stations.find((station) => station.id === id)?.name || id)
+                              .join("、");
+                            return (
+                              <button type="button" className={`list-row absent-toggle ${selected ? "active danger" : ""}`} key={item.employeeId} onClick={() => toggleGapAbsentPerson(item.employeeId)}>
+                                <strong>{person?.name || item.employeeId}</strong>
+                                <span>{selected ? "人員缺勤｜" : ""}缺席後缺 {item.shortage} 人｜影響 {stations || "-"}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : <p className="muted">目前沒有偵測到單一人員缺席後會擴大缺口。</p>}
+                    </div>
+
+                    <div className="panel">
+                      <div className="panel-header">
+                        <h3>補訓建議</h3>
+                        <div className="panel-header-actions">
+                          <span>{gapAbsentIds.length ? "日常 + 缺勤修正" : "分散風險"}</span>
+                          <span className={gapTrainingSimulations.length ? "status-pill active" : "status-pill"}>{gapTrainingSimulations.length ? `已導入 ${gapTrainingSimulations.length} 項` : "未導入"}</span>
+                          <button type="button" className="cute-help-button small" onClick={() => setGapTrainingHelpOpen(true)}>?</button>
+                        </div>
+                      </div>
+                      <div className="inline-action-bar compact-tabs">
+                        <button type="button" className="action-tab primary" onClick={openGapTrainingDialog}>自訂補訓</button>
+                        <button type="button" className="action-tab ghost" onClick={() => setGapTrainingSimulations([])} disabled={!gapTrainingSimulations.length}>清除補訓</button>
+                      </div>
+                      {gapCombinedTrainingSuggestions.length ? (
+                        <div className="list-scroll short">
+                          {gapCombinedTrainingSuggestions.map((item) => {
+                            const person = data.people.find((p) => p.id === item.employeeId);
+                            const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                            return (
+                              <button
+                                type="button"
+                                className={`list-row training-suggestion ${item.priority === "補缺口" ? "urgent" : ""} ${item.isOfficer ? "officer" : ""} ${gapTrainingSimulations.some((selected) => selected.employeeId === item.employeeId && selected.stationId === item.stationId) ? "active" : ""}`}
+                                key={`${item.employeeId}-${item.stationId}`}
+                                onClick={() => openGapTrainingPicker(item.employeeId, item.stationId, "recommendation")}
+                              >
+                                <strong>{person?.name || item.employeeId}</strong>
+                                <span>點擊選擇補訓站點｜推薦：{station?.name || item.stationId}｜{item.priority}{item.isOfficer ? "｜幹部非優先" : ""}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : <p className="muted">目前沒有明顯補訓建議；可先補齊站點需求後再檢查。</p>}
+                    </div>
+                  </div>
+
+                  {gapTrainingSimulations.length && gapTrainingSimulationAnalysis ? (() => {
+                    const reduced = Math.max(0, gapActiveCoverageAnalysis.shortage - gapTrainingSimulationAnalysis.shortage);
+                    const selectedStationIds = new Set(gapTrainingSimulations.map((item) => item.stationId));
+                    const selectedText = gapTrainingSimulations.map((item) => {
+                      const person = data.people.find((personItem) => personItem.id === item.employeeId);
+                      const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                      return `${person?.name || item.employeeId} -> ${station?.name || item.stationId}`;
+                    }).join("、");
+                    const assignedCountByPerson = new Map<string, number>();
+                    gapTrainingSimulationAnalysis.rows.forEach((row) => {
+                      row.assignedIds.forEach((id) => assignedCountByPerson.set(id, (assignedCountByPerson.get(id) || 0) + 1));
+                    });
+                    const duplicatedAssignedNames = [...assignedCountByPerson]
+                      .filter(([, count]) => count > 1)
+                      .map(([id]) => data.people.find((personItem) => personItem.id === id)?.name || id);
+                    return (
+                      <div className={`panel coverage-summary-panel ${reduced > 0 ? "is-covered" : "has-gap"}`}>
+                        <div className="panel-header">
+                          <h3>補訓導入模擬結果</h3>
+                          <button type="button" className="ghost compact-help-button" onClick={() => setGapTrainingSimulations([])}>關閉</button>
+                        </div>
+                        <p className="muted">假設以下人員補訓後變成合格，並直接導入指定站點，再重新檢查其他站是否出現缺口：{selectedText}</p>
+                        <p className="muted">下表列出所有站點的導入前後指派，你可以逐站核對是否只是補上缺口，或是否把人從其他站拉走造成新缺口。</p>
+                        <div className="detail-grid">
+                          <Info label="目前缺口" value={String(gapActiveCoverageAnalysis.shortage)} />
+                          <Info label="導入後缺口" value={String(gapTrainingSimulationAnalysis.shortage)} />
+                          <Info label="可減少缺口" value={String(reduced)} />
+                          <Info label="導入後覆蓋" value={`${gapTrainingSimulationAnalysis.assigned}/${gapTrainingSimulationAnalysis.required}`} />
+                          <Info label="重複指派" value={duplicatedAssignedNames.length ? duplicatedAssignedNames.join("、") : "0"} />
+                        </div>
+                        <table className="table">
+                          <thead>
+                            <tr>
+                              <th>站點</th>
+                              <th>需求</th>
+                              <th>導入前指派</th>
+                              <th>導入後指派</th>
+                              <th>導入前缺口</th>
+                              <th>缺口</th>
+                              <th>狀態</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {gapTrainingSimulationAnalysis.rows.map((row) => {
+                              const rowStation = data.stations.find((item) => item.id === row.stationId);
+                              const assignedNames = [...new Set(row.assignedIds)].map((id) => data.people.find((item) => item.id === id)?.name || id);
+                              const beforeRow = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === row.stationId);
+                              const beforeShortage = beforeRow?.shortage || 0;
+                              const beforeAssignedNames = [...new Set(beforeRow?.assignedIds || [])].map((id) => data.people.find((item) => item.id === id)?.name || id);
+                              const assignedChanged = beforeAssignedNames.join("|") !== assignedNames.join("|");
+                              const status = row.shortage > beforeShortage
+                                ? beforeShortage > 0 ? "缺口擴大" : "新增缺口"
+                                : row.shortage < beforeShortage
+                                  ? "缺口改善"
+                                  : selectedStationIds.has(row.stationId)
+                                    ? "補訓導入站"
+                                    : assignedChanged
+                                      ? "指派調整"
+                                      : row.shortage ? "導入後仍有缺口" : "穩定";
+                              return (
+                                <tr key={row.stationId} className={row.shortage > beforeShortage ? "danger-row" : row.shortage < beforeShortage || selectedStationIds.has(row.stationId) || assignedChanged ? "warning-row" : ""}>
+                                  <td>{rowStation?.name || row.stationId}</td>
+                                  <td>{row.required}</td>
+                                  <td>{beforeAssignedNames.join("、") || "-"}</td>
+                                  <td>{assignedNames.join("、") || "-"}</td>
+                                  <td>{beforeShortage}</td>
+                                  <td>{row.shortage}</td>
+                                  <td>{status}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })() : null}
+
+                  {gapAbsentDialogOpen ? (
+                    <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapAbsentDialogOpen(false)}>
+                      <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="manual-modal-title-row">
+                          <h3>選擇缺勤人員</h3>
+                          <button type="button" className="manual-modal-close-button" aria-label="關閉缺勤人員視窗" onClick={() => setGapAbsentDialogOpen(false)}>×</button>
+                        </div>
+                        <label className="manual-extra-dialog-field">
+                          搜尋人員
+                          <input value={gapAbsentKeyword} onChange={(event) => setGapAbsentKeyword(event.target.value)} placeholder="輸入姓名或工號" autoFocus />
+                        </label>
+                        <div className="manual-extra-selected">
+                          {gapAbsentIds.length ? gapAbsentIds.map((id) => {
+                            const person = data.people.find((item) => item.id === id);
+                            return (
+                              <button key={id} type="button" onClick={() => toggleGapAbsentPerson(id)} title="點擊移除缺勤">
+                                {person?.name || id} ×
+                              </button>
+                            );
+                          }) : <span className="muted">尚未加入缺勤人員</span>}
+                        </div>
+                        <div className="menu-option-grid">
+                          {gapAbsentCandidates.length ? gapAbsentCandidates.map((person) => (
+                            <button type="button" className="menu-option" key={person.id} onClick={() => toggleGapAbsentPerson(person.id)}>
+                              <strong>{person.name}</strong>
+                              <span>{person.role || "-"}</span>
+                            </button>
+                          )) : <p className="muted">找不到可加入的出勤人員，或人員已在缺勤清單中。</p>}
+                        </div>
+                        <div className="manual-modal-actions">
+                          <button type="button" className="ghost" onClick={() => setGapAbsentIds([])}>清空缺勤</button>
+                          <button type="button" className="primary" onClick={() => setGapAbsentDialogOpen(false)}>完成</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {gapTrainingDialogOpen ? (
+                    <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingDialogOpen(false)}>
+                      <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                        <div className="manual-modal-title-row">
+                          <h3>選擇補訓人員</h3>
+                          <button type="button" className="manual-modal-close-button" aria-label="關閉補訓導入視窗" onClick={() => setGapTrainingDialogOpen(false)}>×</button>
+                        </div>
+                        <label className="manual-extra-dialog-field">
+                          搜尋人員
+                          <input value={gapTrainingKeyword} onChange={(event) => setGapTrainingKeyword(event.target.value)} placeholder="輸入姓名或工號" autoFocus />
+                        </label>
+                        <div className="manual-extra-selected">
+                          {gapTrainingSimulations.length ? gapTrainingSimulations.map((item) => {
+                            const person = data.people.find((personItem) => personItem.id === item.employeeId);
+                            const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                            return (
+                              <button key={`${item.employeeId}-${item.stationId}`} type="button" onClick={() => toggleGapTrainingSimulation(item.employeeId, item.stationId)} title="點擊移除補訓導入">
+                                {person?.name || item.employeeId} → {station?.name || item.stationId} ×
+                              </button>
+                            );
+                          }) : <span className="muted">尚未加入補訓導入</span>}
+                        </div>
+                        <div className="menu-option-grid">
+                          {gapTrainingCustomCandidates.length ? gapTrainingCustomCandidates.map((person) => {
+                            return (
+                              <button type="button" className="menu-option" key={person.id} onClick={() => openGapTrainingPicker(person.id, undefined, "custom")}>
+                                <strong>{person.name}</strong>
+                                <span>{person.role || "-"}</span>
+                              </button>
+                            );
+                          }) : <p className="muted">找不到可加入的人員，或人員已在缺勤清單中。</p>}
+                        </div>
+                        <div className="manual-modal-actions">
+                          <button type="button" className="ghost" onClick={() => setGapTrainingSimulations([])}>清空補訓</button>
+                          <button type="button" className="primary" onClick={() => setGapTrainingDialogOpen(false)}>完成</button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {gapTrainingPicker && gapTrainingPickerPerson ? (() => {
+                    const recommendedStation = gapTrainingPicker.recommendedStationId
+                      ? data.stations.find((station) => station.id === gapTrainingPicker.recommendedStationId)
+                      : null;
+                    const selectedStation = data.stations.find((station) => station.id === gapTrainingPickerSelectedStationId);
+                    return (
+                      <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingPicker(null)}>
+                        <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                          <div className="manual-modal-title-row">
+                            <h3>{gapTrainingPickerPerson.name} 補訓站點</h3>
+                            <button type="button" className="manual-modal-close-button" aria-label="關閉補訓站點選單" onClick={() => setGapTrainingPicker(null)}>×</button>
+                          </div>
+
+                          <div className="picker-section">
+                            <h4>推薦補訓</h4>
+                            {gapTrainingPicker.recommendedStationId ? (
+                              <button type="button" className="station-choice recommended" onClick={() => addGapTrainingSimulationFromPicker(gapTrainingPicker.recommendedStationId)}>
+                                <strong>{recommendedStation?.name || gapTrainingPicker.recommendedStationId}</strong>
+                                <span>依目前缺口與風險推薦</span>
+                              </button>
+                            ) : <p className="muted">此人不是從推薦名單開啟，請改用下方資格站點或自訂站點。</p>}
+                          </div>
+
+                          <div className="picker-section">
+                            <h4>資格站點</h4>
+                            {gapTrainingPickerQualifiedStations.length ? (
+                              <div className="station-choice-grid">
+                                {gapTrainingPickerQualifiedStations.map((rule) => {
+                                  const station = data.stations.find((item) => item.id === rule.stationId);
+                                  const qualification = data.qualifications.find((item) => item.employeeId === gapTrainingPickerPerson.id && item.stationId === rule.stationId);
+                                  return (
+                                    <button type="button" className="station-choice" key={rule.stationId} onClick={() => addGapTrainingSimulationFromPicker(rule.stationId)}>
+                                      <strong>{station?.name || rule.stationId}</strong>
+                                      <span>{qualification?.status || "已建檔"}</span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ) : <p className="muted">此人目前沒有本班規則內的合格或訓練中站點。</p>}
+                          </div>
+
+                          <div className="picker-section">
+                            <h4>自訂</h4>
+                            <select value={gapTrainingPickerSelectedStationId} onChange={(event) => setGapTrainingPickerStationId(event.target.value)}>
+                              {gapRules.map((rule) => {
+                                const station = data.stations.find((item) => item.id === rule.stationId);
+                                const row = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+                                return (
+                                  <option key={rule.stationId} value={rule.stationId}>
+                                    {station?.name || rule.stationId}{row?.shortage ? `（缺 ${row.shortage}）` : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                            <div className={gapTrainingPickerSelectedIsQualified ? "training-warning is-ok" : "training-warning"}>
+                              {gapTrainingPickerSelectedIsQualified
+                                ? `${gapTrainingPickerPerson.name} 已具備 ${selectedStation?.name || gapTrainingPickerSelectedStationId} 合格資格，可直接納入模擬。`
+                                : `${gapTrainingPickerPerson.name} 尚未具備 ${selectedStation?.name || gapTrainingPickerSelectedStationId} 合格資格；若要排入分析，代表要先安排補訓。`}
+                            </div>
+                            <div className="modal-button-row">
+                              <button type="button" className="primary" onClick={() => addGapTrainingSimulationFromPicker()}>
+                                {gapTrainingPickerSelectedIsQualified ? "加入模擬" : "確認補訓並模擬"}
+                              </button>
+                              {!gapTrainingPickerSelectedIsQualified ? (
+                                <button type="button" className="ghost" onClick={openQualificationReviewForTraining}>前往考核標記訓練中</button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })() : null}
+
+                  {gapAbsentIds.length && !gapTrainingSimulations.length ? (
+                    <div className={`panel coverage-summary-panel ${gapAbsentAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
+                      <div className="panel-header">
+                        <h3>缺勤模擬結果</h3>
+                        <span>{gapAbsentAnalysis.fullyCovered ? "缺勤後仍可覆蓋" : `缺勤後缺 ${gapAbsentAnalysis.shortage} 人`}</span>
+                      </div>
+                      <p className="muted">模擬缺勤：{gapAbsentIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join("、")}</p>
+                      <div className="detail-grid">
+                        <Info label="原最佳覆蓋" value={`${gapCoverageAnalysis.assigned}/${gapCoverageAnalysis.required}`} />
+                        <Info label="缺勤後覆蓋" value={`${gapAbsentAnalysis.assigned}/${gapAbsentAnalysis.required}`} />
+                        <Info label="新增缺口" value={String(Math.max(0, gapAbsentAnalysis.shortage - gapCoverageAnalysis.shortage))} />
+                        <Info label="受影響站點" value={String(gapAbsentAnalysis.rows.filter((row) => row.shortage > 0).length)} />
+                      </div>
+                      <table className="table">
+                        <thead>
+                          <tr>
+                            <th>站點</th>
+                            <th>需求</th>
+                            <th>缺勤後指派</th>
+                            <th>缺口</th>
+                            <th>狀態</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gapAbsentAnalysis.rows.filter((row) => row.shortage > 0 || row.bottleneck).map((row) => {
+                            const station = data.stations.find((item) => item.id === row.stationId);
+                            const assignedNames = row.assignedIds.map((id) => data.people.find((person) => person.id === id)?.name || id);
+                            return (
+                              <tr key={row.stationId} className={row.shortage ? "danger-row" : "warning-row"}>
+                                <td>{station?.name || row.stationId}</td>
+                                <td>{row.required}</td>
+                                <td>{assignedNames.join("、") || "-"}</td>
+                                <td>{row.shortage}</td>
+                                <td>{row.shortage ? "缺口" : "瓶頸"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
+                  <div className="panel">
+                    <div className="panel-header">
+                      <h3>{gapTrainingSimulationAnalysis ? "全站模擬檢核表" : gapAbsentIds.length ? "缺勤後全站檢核表" : "站點缺口明細"}</h3>
+                      <span>{gapTrainingSimulationAnalysis ? "補訓導入後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}</span>
+                    </div>
+                    <p className="muted">
+                      {gapTrainingSimulationAnalysis
+                        ? "此表已套用上方補訓導入與缺勤條件，最佳指派、缺口與合格人數都會跟著模擬狀態更新。"
+                        : gapAbsentIds.length
+                          ? "此表已排除目前模擬缺勤的人員，方便核對缺勤後每站是否仍有人可頂。"
+                          : "此表顯示目前班別與日期的原始全站分析。"}
+                    </p>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>站點</th>
+                          <th>{gapDay === "當班" ? "最低需求" : "輪休需求"}</th>
+                          <th>{gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}</th>
+                          <th>{gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全局缺口"}</th>
+                          <th>本班合格</th>
+                          <th>支援合格</th>
+                          <th>總合格</th>
+                          <th>訓練中</th>
+                          <th>風險</th>
+                          <th>支援可補</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gapRules.map((rule) => {
+                          const station = data.stations.find((item) => item.id === rule.stationId);
+                          const required = getRuleNeed(rule, gapDay);
+                          const coverage = getStationCoverage(rule.stationId, required, gapDisplayAttendanceAll, gapDisplayAttendanceSupport, gapDisplayQualifications);
+                          const row = gapDisplayCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+                          const beforeRow = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+                          const beforeShortage = beforeRow?.shortage || 0;
+                          const supportNames = coverage.supportQualifiedIds.map((id) => `${data.people.find((p) => p.id === id)?.name || id}（${gapAttendance.supportTeam}）`);
+                          const assignedNames = (row?.assignedIds || []).map((id) => data.people.find((p) => p.id === id)?.name || id);
+                          const isChangedBySimulation = Boolean(gapTrainingSimulationAnalysis && row && row.shortage !== beforeShortage);
+                          return (
+                            <tr key={`${rule.team}-${rule.stationId}`} className={row?.shortage ? "danger-row" : row?.bottleneck || isChangedBySimulation ? "warning-row" : ""}>
+                              <td>{station?.name || rule.stationId}</td>
+                              <td>{required}</td>
+                              <td>{assignedNames.join("、") || "-"}</td>
+                              <td>{row?.shortage ?? 0}</td>
+                              <td>{coverage.ownQualified}</td>
+                              <td>{coverage.supportQualified}</td>
+                              <td>{coverage.qualified}</td>
+                              <td>{coverage.training}</td>
+                              <td>{row?.shortage ? "缺口" : row?.bottleneck ? "瓶頸" : "穩定"}</td>
+                              <td>{supportNames.join("、") || "-"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}
+
+              {gapHelpOpen ? (
+                <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapHelpOpen(false)}>
+                  <div className="manual-modal coverage-help-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="manual-modal-title-row">
+                      <h3>關鍵人缺席模擬說明</h3>
+                      <button type="button" className="manual-modal-close-button" aria-label="關閉說明" onClick={() => setGapHelpOpen(false)}>×</button>
+                    </div>
+                    <p>此功能會假設某一位出勤人員沒有來，重新把所有站點一起交叉排一次，檢查全班還能不能不重複地覆蓋所有工作站。</p>
+                    <p>如果某人缺席後讓最佳覆蓋下降，或讓某些站點出現缺口，他就會被列為關鍵人。</p>
+                    <p>測試方式：點選關鍵人姓名，該人會反紅並加入缺勤模擬；下方「缺勤模擬結果」會立即重新分析缺勤後的覆蓋人數、缺口與受影響站點。</p>
+                    <p>如果某個人常造成缺口，代表技能太集中在他身上，補訓時應優先訓練其他人去覆蓋他的關鍵站點。</p>
+                    <div className="manual-modal-actions">
+                      <button type="button" className="primary" onClick={() => setGapHelpOpen(false)}>知道了</button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {gapTrainingHelpOpen ? (
+                <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingHelpOpen(false)}>
+                  <div className="manual-modal coverage-help-modal" onClick={(event) => event.stopPropagation()}>
+                    <div className="manual-modal-title-row">
+                      <h3>補訓建議說明</h3>
+                      <button type="button" className="manual-modal-close-button" aria-label="關閉補訓說明" onClick={() => setGapTrainingHelpOpen(false)}>×</button>
+                    </div>
+                    <p>補訓建議會同時參考目前全站缺口、臨時缺勤模擬、站點瓶頸與人員可分散風險的程度。</p>
+                    <p>點選推薦名單時，系統不會立即導入，而是先開啟站點選單，讓你決定要採用推薦站點、此人既有資格站點，或自訂其他站點。</p>
+                    <p>如果自訂站點不是此人的合格站點，系統會明確提示需要訓練。你可以先加入補訓模擬查看全站結果，也可以前往站點考核頁將該站標記為訓練中。</p>
+                    <p>只要加入補訓模擬，下方全站檢核表會立刻用新的假設重新計算，包含重複指派、導入後缺口與全站指派。</p>
+                    <div className="manual-modal-actions">
+                      <button type="button" className="primary" onClick={() => setGapTrainingHelpOpen(false)}>知道了</button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </EntranceLayout>
+          ) : null}
           {currentRole && page === "manual-schedule" && canUsePage("manual-schedule") ? (
             <EntranceLayout pageKey="manual-schedule">
               <div translate="no">
@@ -4138,13 +4867,29 @@ export default function App() {
           .compact-selector-header { justify-content: center; }
           .compact-home-stats .stat-card { max-width: none; }
  .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
-                .manual-schedule-station .manual-schedule-group { margin-top: 18px; }
-                .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 10px; font-size: 22px; font-weight: 950; color: #06142f; }
-                .manual-schedule-list { display: flex; flex-wrap: wrap; gap: 10px; max-height: none; overflow: visible; }
-                .manual-schedule-list .list-row { width: auto; min-width: 88px; min-height: 48px; justify-content: center; touch-action: manipulation; }
+                .manual-schedule-station .manual-schedule-group { margin-top: 14px; }
+                .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 8px; font-size: 19px; font-weight: 950; color: #06142f; }
+                .manual-schedule-list { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 7px !important; max-height: none !important; overflow: visible !important; }
+                .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 36px !important; justify-content: center !important; touch-action: manipulation; padding: 6px 5px !important; border-radius: 14px !important; }
+                .manual-schedule-list .list-row strong { max-width: 100% !important; font-size: 15px !important; line-height: 1.15 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+                .manual-schedule-list .list-row span { font-size: 10px !important; line-height: 1.1 !important; }
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+                .manual-schedule-station.is-filled { border-color: #22c55e; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%); }
+                .manual-schedule-station.is-overfilled { border-color: #0ea5e9; background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%); }
+                .manual-schedule-station.is-short { border-color: #fb923c; background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%); }
+                .manual-schedule-station.is-neutral { border-color: #dbe2ea; }
+                .manual-schedule-station.is-filled .panel-header span,
+                .manual-schedule-station.is-overfilled .panel-header span,
+                .manual-schedule-station.is-short .panel-header span {
+                  border-radius: 999px;
+                  padding: 5px 10px;
+                  font-weight: 950;
+                }
+                .manual-schedule-station.is-filled .panel-header span { background: #dcfce7; color: #166534; }
+                .manual-schedule-station.is-overfilled .panel-header span { background: #dbeafe; color: #1d4ed8; }
+                .manual-schedule-station.is-short .panel-header span { background: #ffedd5; color: #9a3412; }
                 .manual-officer-board { display: grid; gap: 14px; }
                 .manual-officer-row { display: grid; grid-template-columns: 88px 1fr; gap: 12px; align-items: start; }
                 .manual-officer-title { font-size: 22px; font-weight: 950; color: #0f172a; padding-top: 9px; }
@@ -4269,7 +5014,10 @@ export default function App() {
                 .mobile-modal-fab-close { position: sticky; bottom: 14px; z-index: 6; }
                 @media (max-width: 900px) {
                   .manual-floating-tip-react { right: 10px; bottom: 12px; font-size: 18px; }
-                  .manual-schedule-station .manual-schedule-group h4 { font-size: 20px; }
+                  .manual-schedule-station .manual-schedule-group h4 { font-size: 18px; }
+                  .manual-schedule-list { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important; }
+                  .manual-schedule-list .list-row { min-height: 34px !important; padding: 5px 4px !important; border-radius: 13px !important; }
+                  .manual-schedule-list .list-row strong { font-size: 14px !important; }
                   .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
                   .manual-officer-title { font-size: 20px; padding-top: 0; }
                   .manual-officer-chip { min-height: 46px; font-size: 17px; }
@@ -4393,6 +5141,17 @@ export default function App() {
                   {manualDisplayRules.map((rule) => {
                     const station = data.stations.find((item) => item.id === rule.stationId);
                     const selectedIds = manualAssignments[rule.stationId] || [];
+                    const required = Number(rule.minRequired || 0);
+                    const maxAssignable = Number(rule.maxAssignable || 0);
+                    const stationStatusClass = required > 0
+                      ? selectedIds.length >= required
+                        ? maxAssignable > required && selectedIds.length >= maxAssignable
+                          ? "is-overfilled"
+                          : "is-filled"
+                        : "is-short"
+                      : selectedIds.length
+                        ? "is-filled"
+                        : "is-neutral";
                     const assignableAttendance = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
                     const candidates = getQualifiedPeopleForStation(rule.stationId, assignableAttendance, data.qualifications)
                       .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }));
@@ -4400,10 +5159,10 @@ export default function App() {
                     const pendingPeople = candidates.filter((person) => !selectedIds.includes(person.id));
 
                     return (
-                      <div className="panel manual-schedule-station" key={rule.stationId}>
+                      <div className={`panel manual-schedule-station ${stationStatusClass}`} key={rule.stationId}>
                         <div className="panel-header">
                           <h3>{station?.name || rule.stationId}</h3>
-                          <span>需求 {rule.minRequired}</span>
+                          <span>需求 {required}{maxAssignable ? `｜可排滿 ${maxAssignable}` : ""}｜已排 {selectedIds.length}</span>
                         </div>
 
                         <div className="toolbar">
@@ -4432,6 +5191,7 @@ export default function App() {
                             {pendingPeople.map((person) => {
                               const assignedStationId = findAssignedStation(manualAssignments, person.id);
                               const isConflict = Boolean(assignedStationId && assignedStationId !== rule.stationId);
+                              const assignedStation = assignedStationId ? data.stations.find((item) => item.id === assignedStationId) : null;
                               return (
                                 <button
                                   key={person.id}
@@ -4440,6 +5200,7 @@ export default function App() {
                                   onClick={() => toggleManualAssignment(rule.stationId, person.id)}
                                 >
                                   <strong>{person.name}</strong>
+                                  {isConflict ? <span>已在 {assignedStation?.name || assignedStationId}</span> : null}
                                 </button>
                               );
                             })}
@@ -4629,11 +5390,20 @@ export default function App() {
                 const person = data.people.find((item) => item.id === manualConflictDialog.employeeId);
                 const oldStation = data.stations.find((item) => item.id === manualConflictDialog.assignedStationId);
                 const nextStation = data.stations.find((item) => item.id === manualConflictDialog.stationId);
+                const oldRule = manualRules.find((rule) => rule.stationId === manualConflictDialog.assignedStationId);
+                const oldNeed = oldRule ? getRuleNeed(oldRule, manualDay) : 0;
+                const oldCount = manualAssignments[manualConflictDialog.assignedStationId]?.length || 0;
+                const oldNextCount = Math.max(0, oldCount - 1);
+                const willCreateShortage = oldNeed > 0 && oldNextCount < oldNeed;
                 return (
                   <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
                     <div className="manual-modal">
                       <h3>更換站點？</h3>
                       <p>{person?.name || manualConflictDialog.employeeId} 已安排在「{oldStation?.name || manualConflictDialog.assignedStationId}」，是否更換到「{nextStation?.name || manualConflictDialog.stationId}」？</p>
+                      <p className={willCreateShortage ? "manual-impact-warning" : "muted"}>
+                        移動後影響：{oldStation?.name || manualConflictDialog.assignedStationId} 將從 {oldCount}/{oldNeed} 變成 {oldNextCount}/{oldNeed}
+                        {willCreateShortage ? "，會產生缺口。" : "，不會低於需求。"}
+                      </p>
                       <div className="manual-modal-actions">
                         <button type="button" className="ghost" onClick={() => setManualConflictDialog(null)}>取消</button>
                         <button type="button" className="primary" onClick={confirmManualConflictReplace}>確認更換</button>

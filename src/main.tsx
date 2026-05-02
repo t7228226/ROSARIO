@@ -3,12 +3,8 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
 import "./schedule-overrides.css";
-// import { installScheduleRuntime } from "./schedule-runtime";
-import { installScheduleShareRuntime } from "./schedule-share-runtime";
 import { installScheduleTipRuntime } from "./schedule-tip-runtime";
 import { installScheduleColorRuntime } from "./schedule-color-runtime";
-// import { installScheduleSectionRuntime } from "./schedule-section-runtime";
-// import { installScheduleTouchRuntime } from "./schedule-touch-runtime";
 
 declare global {
   interface Window {
@@ -50,27 +46,6 @@ function installOptionalRuntime(name: string, installer: () => void) {
     installer();
   } catch (error) {
     console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
-  }
-}
-
-function installShareRuntimeWithoutFilterListener() {
-  const originalAddEventListener = window.addEventListener.bind(window);
-  const patchedAddEventListener = ((type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
-    if (type === "change") {
-      const listenerName = typeof listener === "function" ? listener.name : "";
-      if (listenerName === "handleFilterChange") {
-        console.warn("已阻止站點分享外掛接管日別切換，避免切換時白畫面。");
-        return;
-      }
-    }
-    return originalAddEventListener(type, listener, options);
-  }) as typeof window.addEventListener;
-
-  window.addEventListener = patchedAddEventListener;
-  try {
-    installScheduleShareRuntime();
-  } finally {
-    window.addEventListener = originalAddEventListener;
   }
 }
 
@@ -130,8 +105,5 @@ try {
   showFatalError("系統載入失敗", formatError(error));
 }
 
-// window.setTimeout(() => installOptionalRuntime("站點試排外掛", installScheduleRuntime), 500);
 window.setTimeout(() => installOptionalRuntime("站點浮動提示窗", installScheduleTipRuntime), 550);
 window.setTimeout(() => installOptionalRuntime("站點顏色標籤", installScheduleColorRuntime), 650);
-// window.setTimeout(() => installOptionalRuntime("手機觸控優化", installScheduleTouchRuntime), 700);
-// window.setTimeout(() => installOptionalRuntime("站點分享外掛", installShareRuntimeWithoutFilterListener), 800);
