@@ -1353,6 +1353,22 @@ export default function App() {
     };
   }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
+  const visibleRulesTeams = useMemo(() => {
+    if (!currentUser) return [];
+    if (currentRole === "最高權限") return TEAM_OPTIONS;
+    const ownTeam = getTeamOfPerson(currentUser);
+    const isDirector = currentRole === "主任" || normalizeOfficerRole(currentUser.role) === "主任";
+    return isDirector && TEAM_OPTIONS.includes(ownTeam) ? [ownTeam] : [];
+  }, [currentRole, currentUser]);
+
+  useEffect(() => {
+    if (!visibleRulesTeams.length) return;
+    if (!visibleRulesTeams.includes(rulesTeam)) {
+      setRulesTeam(visibleRulesTeams[0]);
+      setEditingRuleKey("");
+      setRulesOverviewEditing(false);
+    }
+  }, [rulesTeam, visibleRulesTeams]);
 
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
@@ -1390,8 +1406,14 @@ export default function App() {
     return canUsePermission(permissionId, currentUser);
   }
 
-  function canEditRulesForTeam(_team: TeamName) {
-    return canUsePermission("PERM_012");
+  function canViewRulesForTeam(team: TeamName) {
+    if (!canUsePermission("PERM_011")) return false;
+    return visibleRulesTeams.includes(team);
+  }
+
+  function canEditRulesForTeam(team: TeamName) {
+    if (!canUsePermission("PERM_012")) return false;
+    return visibleRulesTeams.includes(team);
   }
 
   function toggleGapAbsentPerson(employeeId: string) {
@@ -1599,6 +1621,10 @@ export default function App() {
   }
 
   async function handleUpdateRule(rule: StationRule, patch: Partial<StationRule>) {
+    if (!canEditRulesForTeam(rule.team)) {
+      setFlashMessage("你只能修改自己班的站點規則；最高權限才可修改全部班別。");
+      return;
+    }
     const next = { ...rule, ...patch };
     const station = data.stations.find((item) => item.id === rule.stationId);
     if (Number(next.maxAssignable || 0) > 0 && Number(next.maxAssignable || 0) < Number(next.minRequired || 0)) {
@@ -2747,31 +2773,44 @@ export default function App() {
   if (loading) return <div className="app-shell loading" translate="no">資料載入中...</div>;
 
   function renderStationRulesPage() {
+    const canViewCurrentRulesTeam = canViewRulesForTeam(rulesTeam);
     const disabled = !canEditRulesForTeam(rulesTeam);
-    const editingRule = stationRuleRows.find((rule) => `${rule.team}-${rule.stationId}` === editingRuleKey) || null;
+    const visibleStationRuleRows = canViewCurrentRulesTeam ? stationRuleRows : [];
+    const editingRule = visibleStationRuleRows.find((rule) => `${rule.team}-${rule.stationId}` === editingRuleKey) || null;
     const editingRuleStation = editingRule ? data.stations.find((item) => item.id === editingRule.stationId) : null;
-    const mandatoryCount = stationRuleRows.filter((rule) => rule.isMandatory).length;
-    const trainingCount = stationRuleRows.filter((rule) => rule.trainingCanFill).length;
-    const shareCount = stationRuleRows.filter((rule) => rule.canShare).length;
-    const totalMin = stationRuleRows.reduce((sum, rule) => sum + Number(rule.minRequired || 0), 0);
-    const totalMaxAssignable = stationRuleRows.reduce((sum, rule) => sum + Number(rule.maxAssignable || 0), 0);
+    const mandatoryCount = visibleStationRuleRows.filter((rule) => rule.isMandatory).length;
+    const trainingCount = visibleStationRuleRows.filter((rule) => rule.trainingCanFill).length;
+    const shareCount = visibleStationRuleRows.filter((rule) => rule.canShare).length;
+    const totalMin = visibleStationRuleRows.reduce((sum, rule) => sum + Number(rule.minRequired || 0), 0);
+    const totalMaxAssignable = visibleStationRuleRows.reduce((sum, rule) => sum + Number(rule.maxAssignable || 0), 0);
+
+    if (!visibleRulesTeams.length) {
+      return (
+        <EntranceLayout pageKey="station-rules">
+          <div className="panel">
+            <Empty text="站點規則設定只開放當班主任查看自己班；最高權限可查看四個班。" />
+          </div>
+        </EntranceLayout>
+      );
+    }
 
     return (
       <EntranceLayout pageKey="station-rules">
         <div className="panel mobile-management-panel">
           <div className="mobile-management-toolbar">
-            <select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)}>
-              {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
+            <select value={rulesTeam} onChange={(e) => setRulesTeam(e.target.value as TeamName)} disabled={visibleRulesTeams.length <= 1}>
+              {visibleRulesTeams.map((item) => <option key={item} value={item}>{item}</option>)}
             </select>
+            <span className="status-pill">{currentRole === "最高權限" ? "最高權限：可查看四班" : "主任：僅限自己班"}</span>
           </div>
           <button type="button" className="rules-summary-card" onClick={() => setRulesPreviewOpen(true)}>
             <strong>{rulesTeam} 規則總預覽</strong>
-            <span>站點 {stationRuleRows.length}｜最低需求 {totalMin}｜可排滿 {totalMaxAssignable || "未設定"}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
+            <span>站點 {visibleStationRuleRows.length}｜最低需求 {totalMin}｜可排滿 {totalMaxAssignable || "未設定"}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
             <small>點擊查看總表，可切換編輯模式一次核對修正</small>
           </button>
-          {stationRuleRows.length ? (
+          {visibleStationRuleRows.length ? (
             <div className="mobile-rule-card-list">
-              {stationRuleRows.map((rule) => {
+              {visibleStationRuleRows.map((rule) => {
                 const station = data.stations.find((item) => item.id === rule.stationId);
                 const key = `${rule.team}-${rule.stationId}`;
                 return (
@@ -2808,7 +2847,7 @@ export default function App() {
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
                   <strong>{rulesTeam} 規則總預覽</strong>
-                  <small>共 {stationRuleRows.length} 個站點｜{rulesOverviewEditing ? "編輯模式：欄位失焦或切換會詢問儲存" : "檢查模式：一眼核對全部規則"}</small>
+                  <small>共 {visibleStationRuleRows.length} 個站點｜{rulesOverviewEditing ? "編輯模式：欄位失焦或切換會詢問儲存" : "檢查模式：一眼核對全部規則"}</small>
                 </div>
                 <button type="button" className={rulesOverviewEditing ? "ghost" : "primary"} disabled={disabled} onClick={() => setRulesOverviewEditing((current) => !current)}>
                   {rulesOverviewEditing ? "完成編輯" : "編輯總攬"}
@@ -2831,7 +2870,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {stationRuleRows.map((rule) => {
+                      {visibleStationRuleRows.map((rule) => {
                         const station = data.stations.find((item) => item.id === rule.stationId);
                         const maxAssignableInvalid = Number(rule.maxAssignable || 0) > 0 && Number(rule.maxAssignable || 0) < Number(rule.minRequired || 0);
                         return (
@@ -4478,7 +4517,7 @@ export default function App() {
                                 onClick={() => openGapTrainingPicker(item.employeeId, item.stationId, "recommendation")}
                               >
                                 <strong>{person?.name || item.employeeId}</strong>
-                                <span>點擊選擇補訓站點｜推薦：{station?.name || item.stationId}｜{item.priority}{item.isOfficer ? "｜幹部非優先" : ""}</span>
+                                <span>點擊選擇補訓站點｜推薦：{station?.name || item.stationId}｜{item.priority}｜{item.reason}{item.isOfficer ? "｜幹部非優先" : ""}</span>
                               </button>
                             );
                           })}
@@ -4841,6 +4880,7 @@ export default function App() {
                       <button type="button" className="manual-modal-close-button" aria-label="關閉補訓說明" onClick={() => setGapTrainingHelpOpen(false)}>×</button>
                     </div>
                     <p>補訓建議會同時參考目前全站缺口、臨時缺勤模擬、站點瓶頸與人員可分散風險的程度。</p>
+                    <p>如果沒有更急迫的補缺口人選，系統也會把 0 站點或合格站點明顯偏少的人列為「培養」建議，讓閒置人力逐步補足戰力。</p>
                     <p>點選推薦名單時，系統不會立即導入，而是先開啟站點選單，讓你決定要採用推薦站點、此人既有資格站點，或自訂其他站點。</p>
                     <p>如果自訂站點不是此人的合格站點，系統會明確提示需要訓練。你可以先加入補訓模擬查看全站結果，也可以前往站點考核頁將該站標記為訓練中。</p>
                     <p>只要加入補訓模擬，下方全站檢核表會立刻用新的假設重新計算，包含重複指派、導入後缺口與全站指派。</p>
