@@ -249,7 +249,7 @@ export interface CoverageTrainingSuggestion {
   stationId: string;
   impact: number;
   reason: string;
-  priority: "補缺口" | "降風險" | "備援";
+  priority: "補缺口" | "降風險" | "培養" | "備援";
   isOfficer: boolean;
 }
 
@@ -463,10 +463,26 @@ export function analyzeStationCoverage(
     .sort((a, b) => b.shortage - a.shortage || b.affectedStationIds.length - a.affectedStationIds.length)
     .slice(0, 8);
 
-  const shortageStationIds = new Set(rows.filter((row) => row.shortage > 0 || row.bottleneck).map((row) => row.stationId));
+  const qualificationCountMap = getQualificationCountMap(activePeople, qualifications);
+  const nonOfficerQualificationCounts = activePeople
+    .filter((person) => !isStationOfficer(person))
+    .map((person) => qualificationCountMap.get(person.id) || 0);
+  const averageNonOfficerQualificationCount = nonOfficerQualificationCounts.length
+    ? nonOfficerQualificationCounts.reduce((sum, count) => sum + count, 0) / nonOfficerQualificationCounts.length
+    : 0;
+  const shortageStationRows = rows.filter((row) => row.shortage > 0 || row.bottleneck);
+  const trainingTargetRows = (shortageStationRows.length ? shortageStationRows : rows.filter((row) => row.required > 0))
+    .sort((a, b) => {
+      const shortageDiff = b.shortage - a.shortage;
+      if (shortageDiff !== 0) return shortageDiff;
+      if (a.bottleneck !== b.bottleneck) return a.bottleneck ? -1 : 1;
+      const candidatePressure = (a.candidateCount - a.required) - (b.candidateCount - b.required);
+      if (candidatePressure !== 0) return candidatePressure;
+      return b.required - a.required;
+    })
+    .slice(0, Math.max(8, rules.length));
   const trainingSuggestionCandidates = activePeople
-    .flatMap((person) => rows
-      .filter((row) => shortageStationIds.has(row.stationId))
+    .flatMap((person) => trainingTargetRows
       .filter((row) => !row.qualifiedIds.includes(person.id) && !row.blockedIds.includes(person.id))
       .map((row) => {
         const simulatedQualifications: Qualification[] = [
@@ -488,13 +504,30 @@ export function analyzeStationCoverage(
         const shortageReduced = shortage - simulatedShortage;
         const officer = isStationOfficer(person);
         const bottleneckRelief = row.bottleneck ? Math.max(0, row.required + 2 - (row.candidateCount + 1)) : 0;
-        const impact = shortageReduced * 100 + (row.shortage > 0 ? 30 : 0) + (row.bottleneck ? 12 : 0) - (officer ? 20 : 0) - bottleneckRelief;
-        const priority: CoverageTrainingSuggestion["priority"] = shortageReduced > 0 ? "補缺口" : row.bottleneck ? "降風險" : "備援";
+        const qualifiedCount = qualificationCountMap.get(person.id) || 0;
+        const lowSkillBonus = officer
+          ? 0
+          : qualifiedCount === 0
+            ? 38
+            : Math.max(0, Math.ceil(averageNonOfficerQualificationCount - qualifiedCount) * 6);
+        const stationPressureBonus = row.shortage > 0 ? 30 : row.bottleneck ? 12 : Math.max(0, row.required + 2 - row.candidateCount);
+        const impact = shortageReduced * 100 + stationPressureBonus + lowSkillBonus - (officer ? 20 : 0) - bottleneckRelief;
+        const priority: CoverageTrainingSuggestion["priority"] = shortageReduced > 0
+          ? "補缺口"
+          : row.bottleneck
+            ? "降風險"
+            : lowSkillBonus > 0
+              ? "培養"
+              : "備援";
         const reason = shortageReduced > 0
           ? `補訓後全局缺口可少 ${shortageReduced} 人`
           : officer
             ? "領班以上非必要不優先，缺人時可支援"
-            : "可分散關鍵站點風險";
+            : qualifiedCount === 0
+              ? "目前沒有合格站點，可培養成可調度戰力"
+              : lowSkillBonus > 0
+                ? `合格站點較少（${qualifiedCount} 站），可補足戰力`
+                : "可分散關鍵站點風險";
         return {
           employeeId: person.id,
           stationId: row.stationId,
@@ -506,7 +539,7 @@ export function analyzeStationCoverage(
       }))
     .filter((item) => item.impact > 0)
     .sort((a, b) => {
-      const priorityOrder = { 補缺口: 0, 降風險: 1, 備援: 2 };
+      const priorityOrder = { 補缺口: 0, 降風險: 1, 培養: 2, 備援: 3 };
       const priorityDiff = priorityOrder[a.priority] - priorityOrder[b.priority];
       if (priorityDiff !== 0) return priorityDiff;
       if (a.isOfficer !== b.isOfficer) return a.isOfficer ? 1 : -1;

@@ -4517,7 +4517,7 @@ export default function App() {
                                 onClick={() => openGapTrainingPicker(item.employeeId, item.stationId, "recommendation")}
                               >
                                 <strong>{person?.name || item.employeeId}</strong>
-                                <span>點擊選擇補訓站點｜推薦：{station?.name || item.stationId}｜{item.priority}{item.isOfficer ? "｜幹部非優先" : ""}</span>
+                                <span>點擊選擇補訓站點｜推薦：{station?.name || item.stationId}｜{item.priority}｜{item.reason}{item.isOfficer ? "｜幹部非優先" : ""}</span>
                               </button>
                             );
                           })}
@@ -4880,6 +4880,7 @@ export default function App() {
                       <button type="button" className="manual-modal-close-button" aria-label="關閉補訓說明" onClick={() => setGapTrainingHelpOpen(false)}>×</button>
                     </div>
                     <p>補訓建議會同時參考目前全站缺口、臨時缺勤模擬、站點瓶頸與人員可分散風險的程度。</p>
+                    <p>如果沒有更急迫的補缺口人選，系統也會把 0 站點或合格站點明顯偏少的人列為「培養」建議，讓閒置人力逐步補足戰力。</p>
                     <p>點選推薦名單時，系統不會立即導入，而是先開啟站點選單，讓你決定要採用推薦站點、此人既有資格站點，或自訂其他站點。</p>
                     <p>如果自訂站點不是此人的合格站點，系統會明確提示需要訓練。你可以先加入補訓模擬查看全站結果，也可以前往站點考核頁將該站標記為訓練中。</p>
                     <p>只要加入補訓模擬，下方全站檢核表會立刻用新的假設重新計算，包含重複指派、導入後缺口與全站指派。</p>
