@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-003";
+const APP_VERSION = "2026-05-03-004";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -130,8 +130,14 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
 
   try {
     if (isWriteAction) {
-      const status = await fetchGasVersionStatus();
-      if (status.outdated || status.writeBlocked) {
+      const [status, deployedVersion] = await Promise.all([
+        fetchGasVersionStatus().catch(() => null),
+        fetchDeployedFrontendVersion().catch(() => null),
+      ]);
+      if (deployedVersion && compareAppVersion(deployedVersion, APP_VERSION) > 0) {
+        throw new Error(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續操作。`);
+      }
+      if (status?.outdated || status?.writeBlocked) {
         throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
       }
     }
@@ -175,6 +181,10 @@ async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWrit
     writeBlocked: !!result.writeBlocked,
     message: result.message,
   };
+}
+
+function compareAppVersion(a: string | null | undefined, b: string | null | undefined) {
+  return String(a || "").localeCompare(String(b || ""), "en", { numeric: true });
 }
 
 async function fetchDeployedFrontendVersion(): Promise<string | null> {
@@ -816,8 +826,6 @@ export default function App() {
     }
     if (storedVersion !== APP_VERSION) {
       window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
-      setAppVersionBlocked(true);
-      setAppVersionMessage(`系統已更新：${storedVersion} → ${APP_VERSION}。為避免舊版畫面或快取資料混用，請重新整理後繼續使用。`);
     }
   }, []);
 
@@ -830,7 +838,7 @@ export default function App() {
           fetchDeployedFrontendVersion().catch(() => null),
         ]);
         if (!active) return;
-        if (deployedVersion && deployedVersion !== APP_VERSION) {
+        if (deployedVersion && compareAppVersion(deployedVersion, APP_VERSION) > 0) {
           setAppVersionBlocked(true);
           setAppVersionMessage(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續使用。`);
           return;
