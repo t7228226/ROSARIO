@@ -60,8 +60,9 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
+const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-04-30-001";
+const APP_VERSION = "2026-05-03-002";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -798,6 +799,19 @@ export default function App() {
       throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
     }
   }
+
+  useEffect(() => {
+    const storedVersion = window.localStorage.getItem(appVersionStorageKey);
+    if (!storedVersion) {
+      window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
+      return;
+    }
+    if (storedVersion !== APP_VERSION) {
+      window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
+      setAppVersionBlocked(true);
+      setAppVersionMessage(`系統已更新：${storedVersion} → ${APP_VERSION}。為避免舊版畫面或快取資料混用，請重新整理後繼續使用。`);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -3080,6 +3094,7 @@ export default function App() {
           --theme-primary: #2563eb;
           --theme-primary-contrast: #ffffff;
           --theme-soft: #eff6ff;
+          --theme-soft-text: #1d4ed8;
           --theme-success: #16a34a;
           --theme-danger: #dc2626;
           --theme-accent: #38bdf8;
@@ -3108,8 +3123,10 @@ export default function App() {
           --theme-border: #ffd6c8;
           --theme-text: #3f2f2f;
           --theme-muted: #9a7b72;
-          --theme-primary: #fb7185;
+          --theme-primary: #be123c;
+          --theme-primary-contrast: #ffffff;
           --theme-soft: #fff1f2;
+          --theme-soft-text: #9f1239;
           --theme-accent: #fbbf24;
           --theme-success: #22c55e;
           --theme-shadow: 0 18px 42px rgba(251, 113, 133, .15);
@@ -3122,8 +3139,10 @@ export default function App() {
           --theme-border: rgba(34, 211, 238, .42);
           --theme-text: #e0f2fe;
           --theme-muted: #93c5fd;
-          --theme-primary: #06b6d4;
+          --theme-primary: #22d3ee;
+          --theme-primary-contrast: #082f49;
           --theme-soft: rgba(8, 47, 73, .72);
+          --theme-soft-text: #e0f2fe;
           --theme-accent: #e879f9;
           --theme-success: #22d3ee;
           --theme-danger: #fb7185;
@@ -3139,7 +3158,9 @@ export default function App() {
           --theme-text: #102033;
           --theme-muted: #927a55;
           --theme-primary: #0f2742;
+          --theme-primary-contrast: #ffffff;
           --theme-soft: #f6efe4;
+          --theme-soft-text: #6b4e16;
           --theme-accent: #b98c42;
           --theme-success: #2f7d5b;
           --theme-shadow: 0 18px 42px rgba(73, 54, 28, .13);
@@ -3154,7 +3175,9 @@ export default function App() {
           --theme-text: #111827;
           --theme-muted: #475569;
           --theme-primary: #2563eb;
+          --theme-primary-contrast: #ffffff;
           --theme-soft: #fef3c7;
+          --theme-soft-text: #78350f;
           --theme-accent: #f43f5e;
           --theme-success: #22c55e;
           --theme-shadow: 6px 6px 0 rgba(17,24,39,.15);
@@ -3356,6 +3379,112 @@ export default function App() {
         }
         .brand-card p, .control-card label, .layout-title p, .panel p, .muted, .list-row span {
           color: var(--theme-muted) !important;
+        }
+        .panel .primary,
+        .control-card .primary,
+        .toolbar .primary,
+        .manual-modal-actions .primary,
+        .nav-item.active {
+          background: var(--theme-primary) !important;
+          border-color: var(--theme-primary) !important;
+          color: var(--theme-primary-contrast) !important;
+        }
+        .panel .ghost,
+        .control-card .ghost,
+        .toolbar .ghost,
+        .manual-modal-actions .ghost,
+        .chip,
+        .manual-officer-chip {
+          background: var(--theme-soft) !important;
+          border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-border)) !important;
+          color: var(--theme-soft-text) !important;
+        }
+        .panel .danger,
+        .control-card .danger,
+        .toolbar .danger {
+          background: #fee2e2 !important;
+          border-color: #fecaca !important;
+          color: #991b1b !important;
+        }
+        .status-pill {
+          background: #f1f5f9 !important;
+          color: #334155 !important;
+        }
+        .status-pill.active,
+        .status-pill.green-pill {
+          background: #dcfce7 !important;
+          color: #166534 !important;
+        }
+        .status-pill.danger {
+          background: #fee2e2 !important;
+          color: #991b1b !important;
+        }
+        .chip-on {
+          background: #dcfce7 !important;
+          color: #166534 !important;
+        }
+        .chip-off {
+          background: #f1f5f9 !important;
+          color: #475569 !important;
+        }
+        .badge-pass,
+        .review-status-badge.status-合格 {
+          background: #dcfce7 !important;
+          color: #166534 !important;
+        }
+        .badge-training,
+        .review-status-badge.status-訓練中 {
+          background: #fef3c7 !important;
+          color: #92400e !important;
+        }
+        .badge-blocked,
+        .review-status-badge.status-不可排 {
+          background: #fee2e2 !important;
+          color: #991b1b !important;
+        }
+        .badge-empty,
+        .review-status-badge.status-empty {
+          background: #e2e8f0 !important;
+          color: #334155 !important;
+        }
+        .table tr.danger-row td,
+        .table tr.danger-row td * {
+          background: #fff1f2 !important;
+          color: #7f1d1d !important;
+        }
+        .table tr.warning-row td,
+        .table tr.warning-row td * {
+          background: #fffbeb !important;
+          color: #78350f !important;
+        }
+        .table th {
+          background: color-mix(in srgb, var(--theme-soft) 72%, var(--theme-panel)) !important;
+          color: var(--theme-text) !important;
+        }
+        .table {
+          background: var(--theme-panel) !important;
+        }
+        .table td {
+          background: color-mix(in srgb, var(--theme-panel) 96%, var(--theme-surface)) !important;
+          color: var(--theme-text) !important;
+          border-color: var(--theme-border) !important;
+        }
+        .info-item,
+        .rule-metric-grid div,
+        .person-summary-grid div {
+          background: color-mix(in srgb, var(--theme-panel) 90%, var(--theme-soft)) !important;
+          border-color: var(--theme-border) !important;
+          color: var(--theme-text) !important;
+        }
+        .info-item span,
+        .rule-metric-grid span,
+        .person-summary-grid span {
+          color: var(--theme-muted) !important;
+        }
+        .info-item strong,
+        .rule-metric-grid strong,
+        .person-summary-grid strong {
+          color: var(--theme-text) !important;
         }
         .brand-kicker, .brand-card h1, .layout-title h1, .content h1, .content h2, .content h3, .panel h3 {
           color: var(--theme-text) !important;
@@ -3855,23 +3984,23 @@ export default function App() {
         .mobile-management-toolbar select,
         .mobile-management-toolbar input { min-height: 44px; border-radius: 18px; }
         .mobile-management-toolbar.single-search input { width: 100%; }
-        .rules-summary-card { width: 100%; border: 2px solid var(--line); border-radius: 24px; background: linear-gradient(135deg, rgba(255,250,220,.95), rgba(255,255,255,.95)); padding: 18px; display: grid; gap: 6px; text-align: center; box-shadow: 10px 10px 0 rgba(15, 23, 42, .12); color: var(--text); }
+        .rules-summary-card { width: 100%; border: 2px solid var(--theme-border); border-radius: 24px; background: var(--theme-panel); padding: 18px; display: grid; gap: 6px; text-align: center; box-shadow: var(--theme-shadow); color: var(--theme-text); }
         .rules-summary-card strong { font-size: 1.25rem; }
-        .rules-summary-card span { color: var(--muted); }
-        .rules-summary-card small { color: var(--accent); font-weight: 800; }
+        .rules-summary-card span { color: var(--theme-muted); }
+        .rules-summary-card small { color: var(--theme-soft-text); font-weight: 800; }
         .mobile-rule-card-list,
         .mobile-person-card-list { display: grid; gap: 14px; }
         .mobile-rule-card,
-        .mobile-person-card { border: 2px solid var(--line); border-radius: 24px; background: rgba(255,255,255,.95); padding: 18px; box-shadow: 8px 8px 0 rgba(15, 23, 42, .10); display: grid; gap: 14px; }
+        .mobile-person-card { border: 2px solid var(--theme-border); border-radius: 24px; background: var(--theme-panel); color: var(--theme-text); padding: 18px; box-shadow: var(--theme-shadow); display: grid; gap: 14px; }
         .mobile-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
         .mobile-card-header h3 { margin: 0; font-size: 1.25rem; }
-        .mobile-card-header p { margin: 4px 0 0; color: var(--muted); }
+        .mobile-card-header p { margin: 4px 0 0; color: var(--theme-muted); }
         .rule-metric-grid,
         .person-summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
         .rule-metric-grid div,
         .person-summary-grid div { border-left: 1px solid rgba(100,116,139,.28); padding-left: 10px; display: grid; gap: 4px; }
         .rule-metric-grid span,
-        .person-summary-grid span { color: var(--muted); font-size: .86rem; }
+        .person-summary-grid span { color: var(--theme-muted); font-size: .86rem; }
         .rule-metric-grid strong,
         .person-summary-grid strong { font-size: 1.25rem; }
         .rule-chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -3886,10 +4015,10 @@ export default function App() {
         .rule-preview-list { display: grid; gap: 10px; }
         .rule-preview-row { border: 1px solid rgba(100,116,139,.35); border-radius: 16px; padding: 12px; display: grid; gap: 4px; }
         .rule-preview-row span,
-        .rule-preview-row small { color: var(--muted); }
+        .rule-preview-row small { color: var(--theme-muted); }
         .mobile-edit-sheet { max-height: 86vh; overflow: auto; }
         .mobile-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-        .mobile-edit-grid label { display: grid; gap: 6px; color: var(--muted); font-weight: 800; }
+        .mobile-edit-grid label { display: grid; gap: 6px; color: var(--theme-muted); font-weight: 800; }
         .mobile-edit-grid input,
         .mobile-edit-grid select { width: 100%; min-height: 44px; }
 
@@ -4243,6 +4372,7 @@ export default function App() {
               <div className="logged-user">
                 <strong>{currentUser.name}</strong>
                 <span>{currentUser.id}｜權限 {currentRole || "-"}</span>
+                <span>版本 {APP_VERSION}</span>
                 <button className="ghost" type="button" onClick={logout}>登出</button>
               </div>
             ) : (
