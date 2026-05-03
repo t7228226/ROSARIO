@@ -187,6 +187,16 @@ function compareAppVersion(a: string | null | undefined, b: string | null | unde
   return String(a || "").localeCompare(String(b || ""), "en", { numeric: true });
 }
 
+function getStationQualificationStatus(qualifications: Qualification[], employeeId: string, stationId: string) {
+  const statuses = qualifications
+    .filter((item) => item.employeeId === employeeId && item.stationId === stationId)
+    .map((item) => item.status);
+  if (statuses.includes("合格")) return "合格";
+  if (statuses.includes("訓練中")) return "訓練中";
+  if (statuses.includes("不可排")) return "不可排";
+  return "";
+}
+
 async function fetchDeployedFrontendVersion(): Promise<string | null> {
   const base = import.meta.env.BASE_URL || "/";
   const response = await fetch(`${base}version.json?t=${Date.now()}`, { cache: "no-store" });
@@ -1759,20 +1769,21 @@ export default function App() {
       return;
     }
 
-    const qualification = data.qualifications.find((item) => item.employeeId === person.id && item.stationId === stationId);
-    const isQualified = qualification?.status === "合格";
+    const currentStatus = getStationQualificationStatus(data.qualifications, person.id, stationId);
+    const isQualified = currentStatus === "合格";
+    const isTraining = currentStatus === "訓練中";
 
-    if (!isQualified) {
+    if (!isQualified && !isTraining) {
       setManualTrainingDialog({
         stationId,
         personId: person.id,
-        currentStatus: qualification?.status || "無站點資格",
+        currentStatus: currentStatus || "無站點資格",
       });
       return;
     }
 
     assignManualPerson(stationId, person.id, false);
-    setFlashMessage(`${person.name} 已加入 ${station.name}。`);
+    setFlashMessage(isTraining ? `${person.name} 已以訓練人員加入 ${station.name}。` : `${person.name} 已加入 ${station.name}。`);
     setManualCustomDialog(null);
     setManualCustomKeyword("");
   }
@@ -5077,6 +5088,15 @@ export default function App() {
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+                .manual-schedule-list .list-row.training-candidate { background: #fffbeb; color: #92400e; border-color: #f59e0b; }
+                .manual-schedule-list .list-row.training-candidate strong,
+                .manual-schedule-list .list-row.training-candidate span { color: #92400e; }
+                .manual-schedule-list .list-row.conflict.training-candidate { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+                .manual-schedule-list .list-row.conflict.training-candidate strong,
+                .manual-schedule-list .list-row.conflict.training-candidate span { color: #991b1b; }
+                .manual-schedule-list .list-row.training-assigned { background: #facc15; color: #713f12; border-color: #eab308; box-shadow: 0 10px 22px rgba(234, 179, 8, .24); }
+                .manual-schedule-list .list-row.training-assigned strong,
+                .manual-schedule-list .list-row.training-assigned span { color: #713f12; }
                 .manual-schedule-station.is-filled { border-color: #22c55e; background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%); }
                 .manual-schedule-station.is-overfilled { border-color: #0ea5e9; background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%); }
                 .manual-schedule-station.is-short { border-color: #fb923c; background: linear-gradient(180deg, #fff7ed 0%, #ffffff 100%); }
@@ -5354,8 +5374,13 @@ export default function App() {
                         ? "is-filled"
                         : "is-neutral";
                     const assignableAttendance = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
-                    const candidates = getQualifiedPeopleForStation(rule.stationId, assignableAttendance, data.qualifications)
-                      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }));
+                    const candidates = getQualifiedPeopleForStation(rule.stationId, assignableAttendance, data.qualifications, true)
+                      .sort((a, b) => {
+                        const statusA = getStationQualificationStatus(data.qualifications, a.id, rule.stationId);
+                        const statusB = getStationQualificationStatus(data.qualifications, b.id, rule.stationId);
+                        if (statusA !== statusB) return statusA === "合格" ? -1 : 1;
+                        return a.name.localeCompare(b.name, "zh-Hant", { numeric: true });
+                      });
                     const assignedPeople = candidates.filter((person) => selectedIds.includes(person.id));
                     const pendingPeople = candidates.filter((person) => !selectedIds.includes(person.id));
 
@@ -5374,14 +5399,22 @@ export default function App() {
                           <h4>已安排</h4>
                           <div className="list-scroll short manual-schedule-list">
                             {assignedPeople.length ? assignedPeople.map((person) => (
-                              <button
-                                key={person.id}
-                                type="button"
-                                className="list-row active"
-                                onClick={() => toggleManualAssignment(rule.stationId, person.id)}
-                              >
-                                <strong>{person.name}</strong>
-                              </button>
+                              (() => {
+                                const status = getStationQualificationStatus(data.qualifications, person.id, rule.stationId);
+                                const isTraining = status === "訓練中";
+                                return (
+                                  <button
+                                    key={person.id}
+                                    type="button"
+                                    className={`list-row active${isTraining ? " training-assigned" : ""}`}
+                                    onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                    title={isTraining ? "訓練人員：手動安排，不會被一鍵安排" : undefined}
+                                  >
+                                    <strong>{person.name}</strong>
+                                    {isTraining ? <span>訓練人員</span> : null}
+                                  </button>
+                                );
+                              })()
                             )) : <span className="muted">-</span>}
                           </div>
                         </div>
@@ -5393,14 +5426,18 @@ export default function App() {
                               const assignedStationId = findAssignedStation(manualAssignments, person.id);
                               const isConflict = Boolean(assignedStationId && assignedStationId !== rule.stationId);
                               const assignedStation = assignedStationId ? data.stations.find((item) => item.id === assignedStationId) : null;
+                              const status = getStationQualificationStatus(data.qualifications, person.id, rule.stationId);
+                              const isTraining = status === "訓練中";
                               return (
                                 <button
                                   key={person.id}
                                   type="button"
-                                  className={`list-row ${isConflict ? "conflict" : ""}`}
+                                  className={`list-row ${isConflict ? "conflict" : ""}${isTraining ? " training-candidate" : ""}`}
                                   onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                  title={isTraining ? "訓練人員：可手動補位，不會被一鍵安排" : undefined}
                                 >
                                   <strong>{person.name}</strong>
+                                  {isTraining ? <span>訓練人員</span> : null}
                                   {isConflict ? <span>已在 {assignedStation?.name || assignedStationId}</span> : null}
                                 </button>
                               );
