@@ -60,8 +60,9 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
+const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-04-30-001";
+const APP_VERSION = "2026-05-03-001";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -798,6 +799,19 @@ export default function App() {
       throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
     }
   }
+
+  useEffect(() => {
+    const storedVersion = window.localStorage.getItem(appVersionStorageKey);
+    if (!storedVersion) {
+      window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
+      return;
+    }
+    if (storedVersion !== APP_VERSION) {
+      window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
+      setAppVersionBlocked(true);
+      setAppVersionMessage(`系統已更新：${storedVersion} → ${APP_VERSION}。為避免舊版畫面或快取資料混用，請重新整理後繼續使用。`);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -4243,6 +4257,7 @@ export default function App() {
               <div className="logged-user">
                 <strong>{currentUser.name}</strong>
                 <span>{currentUser.id}｜權限 {currentRole || "-"}</span>
+                <span>版本 {APP_VERSION}</span>
                 <button className="ghost" type="button" onClick={logout}>登出</button>
               </div>
             ) : (
