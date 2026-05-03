@@ -253,6 +253,13 @@ export interface CoverageTrainingSuggestion {
   isOfficer: boolean;
 }
 
+export interface CoverageOfficerSuggestion {
+  employeeId: string;
+  stationId: string;
+  shortageReduced: number;
+  role: string;
+}
+
 export interface CoverageAnalysisResult {
   required: number;
   assigned: number;
@@ -261,6 +268,7 @@ export interface CoverageAnalysisResult {
   rows: CoverageStationRow[];
   criticalPeople: CoverageCriticalPerson[];
   trainingSuggestions: CoverageTrainingSuggestion[];
+  officerSuggestions: CoverageOfficerSuggestion[];
 }
 
 function getQualifiedIdsForStation(
@@ -278,7 +286,7 @@ function getQualifiedIdsForStation(
 }
 
 function isStationOfficer(person: Person) {
-  return ["領班", "組長", "主任", "站長"].includes(String(person.role || "").trim());
+  return ["領班", "組長", "主任"].includes(String(person.role || "").trim());
 }
 
 function countMatchingShortage(rules: StationRule[], assignedByStation: Map<string, string[]>, mode: ShiftMode) {
@@ -415,18 +423,29 @@ export function analyzeStationCoverage(
   people: Person[],
   qualifications: Qualification[],
   unavailableIds = new Set<string>(),
-  forcedAssignments = new Map<string, string>()
+  forcedAssignments = new Map<string, string>(),
+  options: { excludeOfficersFromCoverage?: boolean } = {}
 ): CoverageAnalysisResult {
   const attendance = getAttendanceForTeam(people, team, mode);
   const rules = getApplicableRules(team, mode, stationRules);
   const activePeople = attendance.all.filter((person) => !unavailableIds.has(person.id));
-  const { assignedByStation, qualifiedByStation } = solveCoverageMatching(rules, activePeople, qualifications, mode, new Set<string>(), "資格優先", new Set<string>(), new Set<string>(), forcedAssignments);
+  const forcedIds = new Set([...forcedAssignments.keys()]);
+  const matchingPeople = options.excludeOfficersFromCoverage
+    ? activePeople.filter((person) => !isStationOfficer(person) || forcedIds.has(person.id))
+    : activePeople;
+  const { assignedByStation, qualifiedByStation } = solveCoverageMatching(rules, matchingPeople, qualifications, mode, new Set<string>(), "資格優先", new Set<string>(), new Set<string>(), forcedAssignments);
   const required = rules.reduce((sum, rule) => sum + getRuleNeed(rule, mode), 0);
 
   const rows = rules.map((rule) => {
     const assignedIds = [...new Set(assignedByStation.get(rule.stationId) || [])];
     const qualifiedIds = qualifiedByStation.get(rule.stationId) || [];
-    const coverage = getStationCoverage(rule.stationId, getRuleNeed(rule, mode), activePeople, attendance.support, qualifications);
+    const coveragePeople = options.excludeOfficersFromCoverage
+      ? activePeople.filter((person) => !isStationOfficer(person))
+      : activePeople;
+    const supportPeople = options.excludeOfficersFromCoverage
+      ? attendance.support.filter((person) => !isStationOfficer(person))
+      : attendance.support;
+    const coverage = getStationCoverage(rule.stationId, getRuleNeed(rule, mode), coveragePeople, supportPeople, qualifications);
     const requiredForStation = getRuleNeed(rule, mode);
     return {
       stationId: rule.stationId,
@@ -444,9 +463,9 @@ export function analyzeStationCoverage(
   const assigned = rows.reduce((sum, row) => sum + row.assignedIds.length, 0);
   const shortage = Math.max(0, required - assigned);
 
-  const criticalPeople = activePeople
+  const criticalPeople = matchingPeople
     .map((person) => {
-      const next = solveCoverageMatching(rules, activePeople, qualifications, mode, new Set([person.id]));
+      const next = solveCoverageMatching(rules, matchingPeople, qualifications, mode, new Set([person.id]));
       const affectedStationIds = rules
         .map((rule) => {
           const assignedIds = next.assignedByStation.get(rule.stationId) || [];
@@ -463,8 +482,41 @@ export function analyzeStationCoverage(
     .sort((a, b) => b.shortage - a.shortage || b.affectedStationIds.length - a.affectedStationIds.length)
     .slice(0, 8);
 
-  const qualificationCountMap = getQualificationCountMap(activePeople, qualifications);
-  const nonOfficerQualificationCounts = activePeople
+  const officerSuggestions = options.excludeOfficersFromCoverage
+    ? activePeople
+        .filter((person) => isStationOfficer(person))
+        .flatMap((person) =>
+          rows
+            .filter((row) => row.shortage > 0)
+            .filter((row) => qualifications.some((item) => item.employeeId === person.id && item.stationId === row.stationId && item.status === "合格"))
+            .map((row) => {
+              const simulated = solveCoverageMatching(
+                rules,
+                [...matchingPeople.filter((item) => item.id !== person.id), person],
+                qualifications,
+                mode,
+                new Set<string>(),
+                "資格優先",
+                new Set<string>(),
+                new Set<string>(),
+                new Map([[person.id, row.stationId]])
+              );
+              const simulatedShortage = countMatchingShortage(rules, simulated.assignedByStation, mode);
+              return {
+                employeeId: person.id,
+                stationId: row.stationId,
+                shortageReduced: Math.max(0, shortage - simulatedShortage),
+                role: person.role || "幹部",
+              };
+            })
+        )
+        .filter((item) => item.shortageReduced > 0)
+        .sort((a, b) => b.shortageReduced - a.shortageReduced || a.role.localeCompare(b.role, "zh-Hant", { numeric: true }))
+        .slice(0, 12)
+    : [];
+
+  const qualificationCountMap = getQualificationCountMap(matchingPeople, qualifications);
+  const nonOfficerQualificationCounts = matchingPeople
     .filter((person) => !isStationOfficer(person))
     .map((person) => qualificationCountMap.get(person.id) || 0);
   const averageNonOfficerQualificationCount = nonOfficerQualificationCounts.length
@@ -481,7 +533,7 @@ export function analyzeStationCoverage(
       return b.required - a.required;
     })
     .slice(0, Math.max(8, rules.length));
-  const trainingSuggestionCandidates = activePeople
+  const trainingSuggestionCandidates = matchingPeople
     .flatMap((person) => trainingTargetRows
       .filter((row) => !row.qualifiedIds.includes(person.id) && !row.blockedIds.includes(person.id))
       .map((row) => {
@@ -491,7 +543,7 @@ export function analyzeStationCoverage(
         ];
         const simulated = solveCoverageMatching(
           rules,
-          activePeople,
+          matchingPeople,
           simulatedQualifications,
           mode,
           new Set<string>(),
@@ -522,7 +574,7 @@ export function analyzeStationCoverage(
         const reason = shortageReduced > 0
           ? `補訓後全局缺口可少 ${shortageReduced} 人`
           : officer
-            ? "領班以上非必要不優先，缺人時可支援"
+            ? "領班/組長/主任非必要不優先，缺人時可支援"
             : qualifiedCount === 0
               ? "目前沒有合格站點，可培養成可調度戰力"
               : lowSkillBonus > 0
@@ -560,6 +612,7 @@ export function analyzeStationCoverage(
     rows,
     criticalPeople,
     trainingSuggestions,
+    officerSuggestions,
   };
 }
 
