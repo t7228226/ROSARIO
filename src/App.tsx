@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-003";
+const APP_VERSION = "2026-05-03-004";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -130,8 +130,14 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
 
   try {
     if (isWriteAction) {
-      const status = await fetchGasVersionStatus();
-      if (status.outdated || status.writeBlocked) {
+      const [status, deployedVersion] = await Promise.all([
+        fetchGasVersionStatus().catch(() => null),
+        fetchDeployedFrontendVersion().catch(() => null),
+      ]);
+      if (deployedVersion && deployedVersion !== APP_VERSION) {
+        throw new Error(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續操作。`);
+      }
+      if (status?.outdated || status?.writeBlocked) {
         throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
       }
     }
