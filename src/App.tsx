@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-008";
+const APP_VERSION = "2026-05-03-009";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -4797,38 +4797,38 @@ export default function App() {
                     <p className="muted">此區預設排除領班、組長、主任；下方會列出領班/組長/主任可緊急支援的缺口。</p>
                   </div>
 
-                  {gapActiveCoverageAnalysis.officerSuggestions.length ? (
-                    <div className="panel officer-relief-panel">
-                      <div className="panel-header">
-                        <h3>領班/組長/主任可支援缺口</h3>
-                        <div className="panel-header-actions">
-                          <span className={gapOfficerSimulations.length ? "status-pill active" : "status-pill"}>{gapOfficerSimulations.length ? `已導入 ${gapOfficerSimulations.length} 人` : "未導入"}</span>
-                          <button type="button" className="ghost" onClick={openGapOfficerDialog}>自訂支援</button>
-                          <button type="button" className="ghost" onClick={() => setGapOfficerSimulations([])} disabled={!gapOfficerSimulations.length}>清除支援</button>
-                        </div>
-                      </div>
-                      <p className="muted">領班、組長、主任主要負責現場監督，這裡只列出可緊急遞補的缺口。站長會直接算入作業人力，不會放在這裡。</p>
-                      <div className="officer-relief-tags">
-                        {gapActiveCoverageAnalysis.officerSuggestions.map((item) => {
-                          const person = data.people.find((p) => p.id === item.employeeId);
-                          const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
-                          const active = gapOfficerSimulations.some((selected) => selected.employeeId === item.employeeId && selected.stationId === item.stationId);
-                          return (
-                            <button
-                              type="button"
-                              key={`${item.employeeId}-${item.stationId}`}
-                              className={`officer-relief-tag ${active ? "active" : ""}`}
-                              onClick={() => toggleGapOfficerSimulation(item.employeeId, item.stationId)}
-                            >
-                              <strong>{person?.name || item.employeeId}</strong>
-                              <span>{station?.name || item.stationId}</span>
-                              <small>可減 {item.shortageReduced}</small>
-                            </button>
-                          );
-                        })}
+                  <div className="panel officer-relief-panel">
+                    <div className="panel-header">
+                      <h3>領班/組長/主任可支援缺口</h3>
+                      <div className="panel-header-actions">
+                        <span className={gapOfficerSimulations.length ? "status-pill active" : "status-pill"}>{gapOfficerSimulations.length ? `已導入 ${gapOfficerSimulations.length} 人` : "未導入"}</span>
+                        <button type="button" className="ghost" onClick={openGapOfficerDialog}>自訂支援</button>
+                        <button type="button" className="ghost" onClick={() => setGapOfficerSimulations([])} disabled={!gapOfficerSimulations.length}>清除支援</button>
                       </div>
                     </div>
-                  ) : null}
+                    <p className="muted">領班、組長、主任主要負責現場監督。即使目前沒有系統推薦，也可以用自訂支援手動導入模擬檢查。</p>
+                    {gapActiveCoverageAnalysis.officerSuggestions.length ? (
+                      <div className="officer-relief-tags">
+                        {gapActiveCoverageAnalysis.officerSuggestions.map((item) => {
+                            const person = data.people.find((p) => p.id === item.employeeId);
+                            const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                            const active = gapOfficerSimulations.some((selected) => selected.employeeId === item.employeeId && selected.stationId === item.stationId);
+                            return (
+                              <button
+                                type="button"
+                                key={`${item.employeeId}-${item.stationId}`}
+                                className={`officer-relief-tag ${active ? "active" : ""}`}
+                                onClick={() => toggleGapOfficerSimulation(item.employeeId, item.stationId)}
+                              >
+                                <strong>{person?.name || item.employeeId}</strong>
+                                <span>{station?.name || item.stationId}</span>
+                                <small>可減 {item.shortageReduced}</small>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    ) : <p className="muted">目前沒有自動判定需要領班/組長/主任支援的缺口；可按「自訂支援」手動選人與站點測試。</p>}
+                  </div>
 
                   <div className="grid two">
                     <div className="panel">
