@@ -134,7 +134,7 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
         fetchGasVersionStatus().catch(() => null),
         fetchDeployedFrontendVersion().catch(() => null),
       ]);
-      if (deployedVersion && deployedVersion !== APP_VERSION) {
+      if (deployedVersion && compareAppVersion(deployedVersion, APP_VERSION) > 0) {
         throw new Error(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續操作。`);
       }
       if (status?.outdated || status?.writeBlocked) {
@@ -181,6 +181,10 @@ async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWrit
     writeBlocked: !!result.writeBlocked,
     message: result.message,
   };
+}
+
+function compareAppVersion(a: string | null | undefined, b: string | null | undefined) {
+  return String(a || "").localeCompare(String(b || ""), "en", { numeric: true });
 }
 
 async function fetchDeployedFrontendVersion(): Promise<string | null> {
@@ -822,8 +826,6 @@ export default function App() {
     }
     if (storedVersion !== APP_VERSION) {
       window.localStorage.setItem(appVersionStorageKey, APP_VERSION);
-      setAppVersionBlocked(true);
-      setAppVersionMessage(`系統已更新：${storedVersion} → ${APP_VERSION}。為避免舊版畫面或快取資料混用，請重新整理後繼續使用。`);
     }
   }, []);
 
@@ -836,7 +838,7 @@ export default function App() {
           fetchDeployedFrontendVersion().catch(() => null),
         ]);
         if (!active) return;
-        if (deployedVersion && deployedVersion !== APP_VERSION) {
+        if (deployedVersion && compareAppVersion(deployedVersion, APP_VERSION) > 0) {
           setAppVersionBlocked(true);
           setAppVersionMessage(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續使用。`);
           return;
