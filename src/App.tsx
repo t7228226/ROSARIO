@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-002";
+const APP_VERSION = "2026-05-03-003";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -175,6 +175,14 @@ async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWrit
     writeBlocked: !!result.writeBlocked,
     message: result.message,
   };
+}
+
+async function fetchDeployedFrontendVersion(): Promise<string | null> {
+  const base = import.meta.env.BASE_URL || "/";
+  const response = await fetch(`${base}version.json?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) return null;
+  const result = (await response.json()) as { version?: string };
+  return result.version ? String(result.version) : null;
 }
 
 function getStoredLoginKeep(): LoginKeepKey {
@@ -817,9 +825,17 @@ export default function App() {
     let active = true;
     async function checkVersion() {
       try {
-        const status = await fetchGasVersionStatus();
+        const [status, deployedVersion] = await Promise.all([
+          fetchGasVersionStatus().catch(() => null),
+          fetchDeployedFrontendVersion().catch(() => null),
+        ]);
         if (!active) return;
-        if (status.outdated) {
+        if (deployedVersion && deployedVersion !== APP_VERSION) {
+          setAppVersionBlocked(true);
+          setAppVersionMessage(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續使用。`);
+          return;
+        }
+        if (status?.outdated) {
           setAppVersionBlocked(true);
           setAppVersionMessage(status.message || "系統已有新版，請重新整理後繼續使用。");
         }
@@ -3379,6 +3395,13 @@ export default function App() {
         }
         .brand-card p, .control-card label, .layout-title p, .panel p, .muted, .list-row span {
           color: var(--theme-muted) !important;
+        }
+        .logged-user strong {
+          color: var(--theme-text) !important;
+        }
+        .logged-user span {
+          color: var(--theme-muted) !important;
+          font-weight: 900;
         }
         .panel .primary,
         .control-card .primary,
