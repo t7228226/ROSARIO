@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-009";
+const APP_VERSION = "2026-05-03-010";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -798,6 +798,7 @@ export default function App() {
   const [editingRuleKey, setEditingRuleKey] = useState("");
 
   const [peopleSearchKeyword, setPeopleSearchKeyword] = useState("");
+  const [peopleTeamFilter, setPeopleTeamFilter] = useState<TeamName | "全部班別">("全部班別");
   const [editingPersonId, setEditingPersonId] = useState("");
   const [permissionSearchKeyword, setPermissionSearchKeyword] = useState("");
   const [permissionAdminTab, setPermissionAdminTab] = useState<PermissionAdminTab>("role");
@@ -3047,12 +3048,25 @@ export default function App() {
   }
 
   function renderPeopleManagementPage() {
-    const peopleRows = data.people.filter((person) => searchText([person.id, person.name, String(getTeamOfPerson(person)), person.role, person.nationality, person.aDay1 || "", person.aDay2 || "", person.bDay1 || "", person.bDay2 || ""], peopleSearchKeyword));
+    const peopleRows = data.people.filter((person) => {
+      const team = getTeamOfPerson(person);
+      const matchesTeam = peopleTeamFilter === "全部班別" || team === peopleTeamFilter;
+      return matchesTeam && searchText([person.id, person.name, String(team), person.role, person.nationality, person.aDay1 || "", person.aDay2 || "", person.bDay1 || "", person.bDay2 || ""], peopleSearchKeyword);
+    });
     const editingPerson = data.people.find((person) => person.id === editingPersonId) || null;
     return (
       <EntranceLayout pageKey="people-management">
         <div className="panel mobile-management-panel">
-          <div className="mobile-management-toolbar single-search"><input placeholder="快速搜尋工號、姓名、班別、職務、國籍" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} /></div>
+          <div className="mobile-management-toolbar people-management-toolbar">
+            <select value={peopleTeamFilter} onChange={(e) => setPeopleTeamFilter(e.target.value as TeamName | "全部班別")} aria-label="篩選班別">
+              <option value="全部班別">全部班別</option>
+              {TEAM_OPTIONS.map((team) => (
+                <option key={team} value={team}>{team}</option>
+              ))}
+            </select>
+            <input placeholder="快速搜尋工號、姓名、班別、職務、國籍" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} />
+            <span className="status-pill people-count-pill">{peopleTeamFilter === "全部班別" ? `全部 ${peopleRows.length} 人` : `${peopleTeamFilter} ${peopleRows.length} 人`}</span>
+          </div>
           <div className="mobile-person-card-list">
             {peopleRows.map((person) => (
               <article className="mobile-person-card" key={person.id}>
@@ -4192,6 +4206,9 @@ export default function App() {
         .mobile-management-toolbar select,
         .mobile-management-toolbar input { min-height: 44px; border-radius: 18px; }
         .mobile-management-toolbar.single-search input { width: 100%; }
+        .people-management-toolbar select { min-width: 150px; flex: 0 0 170px; }
+        .people-management-toolbar input { flex: 1 1 260px; }
+        .people-count-pill { white-space: nowrap; }
         .rules-summary-card { width: 100%; border: 2px solid var(--theme-border); border-radius: 24px; background: var(--theme-panel); padding: 18px; display: grid; gap: 6px; text-align: center; box-shadow: var(--theme-shadow); color: var(--theme-text); }
         .rules-summary-card strong { font-size: 1.25rem; }
         .rules-summary-card span { color: var(--theme-muted); }
