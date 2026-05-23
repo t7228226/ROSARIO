@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-017";
+const APP_VERSION = "2026-05-03-018";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -1635,8 +1635,9 @@ export default function App() {
       setPage("home");
       setFlashMessage(`登入成功：${mergedUser.name}，重新整理仍會保留登入。`);
       scrollToTop();
-    } catch {
-      setFlashMessage("登入失敗，請確認 GAS login 已重新部署。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "請確認 GAS login 已重新部署。";
+      setFlashMessage(`登入失敗：${message}`);
       setPage("home");
       scrollToTop();
     }
