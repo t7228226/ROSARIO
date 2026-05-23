@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-010";
+const APP_VERSION = "2026-05-03-018";
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -1635,8 +1635,9 @@ export default function App() {
       setPage("home");
       setFlashMessage(`登入成功：${mergedUser.name}，重新整理仍會保留登入。`);
       scrollToTop();
-    } catch {
-      setFlashMessage("登入失敗，請確認 GAS login 已重新部署。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "請確認 GAS login 已重新部署。";
+      setFlashMessage(`登入失敗：${message}`);
       setPage("home");
       scrollToTop();
     }
@@ -3918,6 +3919,34 @@ export default function App() {
           width: auto !important;
           text-align: left !important;
         }
+        .person-tag-list {
+          display: grid !important;
+          gap: 12px !important;
+        }
+        .content:not(:has(.home-flat-page)) .person-tag-list .list-row,
+        .person-tag-list .list-row,
+        .manual-schedule-list .list-row {
+          display: inline-flex !important;
+          flex-direction: column !important;
+          align-items: center !important;
+          justify-content: center !important;
+          justify-items: center !important;
+          text-align: center !important;
+          grid-template-columns: none !important;
+          gap: 4px !important;
+        }
+        .content:not(:has(.home-flat-page)) .person-tag-list .list-row strong,
+        .content:not(:has(.home-flat-page)) .person-tag-list .list-row span,
+        .content:not(:has(.home-flat-page)) .manual-schedule-list .list-row strong,
+        .content:not(:has(.home-flat-page)) .manual-schedule-list .list-row span,
+        .person-tag-list .list-row strong,
+        .person-tag-list .list-row span,
+        .manual-schedule-list .list-row strong,
+        .manual-schedule-list .list-row span {
+          width: 100% !important;
+          max-width: 100% !important;
+          text-align: center !important;
+        }
 
         /* 站點試排：幹部站位全部置中，不要標籤偏左 */
         .manual-officer-section,
@@ -4861,7 +4890,7 @@ export default function App() {
                         <button type="button" className="action-tab ghost" onClick={() => { setGapAbsentIds([]); setGapOfficerSimulations([]); }} disabled={!gapAbsentIds.length}>清除缺勤</button>
                       </div>
                       {gapCoverageAnalysis.criticalPeople.length ? (
-                        <div className="list-scroll short">
+                        <div className="list-scroll short person-tag-list">
                           {gapCoverageAnalysis.criticalPeople.map((item) => {
                             const person = data.people.find((p) => p.id === item.employeeId);
                             const selected = gapAbsentIds.includes(item.employeeId);
@@ -4893,7 +4922,7 @@ export default function App() {
                         <button type="button" className="action-tab ghost" onClick={() => setGapTrainingSimulations([])} disabled={!gapTrainingSimulations.length}>清除補訓</button>
                       </div>
                       {gapCombinedTrainingSuggestions.length ? (
-                        <div className="list-scroll short">
+                        <div className="list-scroll short person-tag-list">
                           {gapCombinedTrainingSuggestions.map((item) => {
                             const person = data.people.find((p) => p.id === item.employeeId);
                             const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
@@ -5384,9 +5413,9 @@ export default function App() {
                 .manual-schedule-station .manual-schedule-group { margin-top: 14px; }
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 8px; font-size: 19px; font-weight: 950; color: #06142f; }
                 .manual-schedule-list { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 7px !important; max-height: none !important; overflow: visible !important; }
-                .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 36px !important; justify-content: center !important; touch-action: manipulation; padding: 6px 5px !important; border-radius: 14px !important; }
-                .manual-schedule-list .list-row strong { max-width: 100% !important; font-size: 15px !important; line-height: 1.15 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
-                .manual-schedule-list .list-row span { font-size: 10px !important; line-height: 1.1 !important; }
+                .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 46px !important; height: 46px !important; display: grid !important; place-items: center !important; align-content: center !important; justify-content: center !important; text-align: center !important; touch-action: manipulation; padding: 4px 8px !important; border-radius: 18px !important; line-height: 1 !important; }
+                .manual-schedule-list .list-row strong { display: block !important; max-width: 100% !important; font-size: 15px !important; line-height: 1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important; transform: translateY(5px); }
+                .manual-schedule-list .list-row span { display: block !important; max-width: 100% !important; margin-top: 2px !important; font-size: 10px !important; line-height: 1.1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                 .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
@@ -5396,9 +5425,37 @@ export default function App() {
                 .manual-schedule-list .list-row.conflict.training-candidate { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
                 .manual-schedule-list .list-row.conflict.training-candidate strong,
                 .manual-schedule-list .list-row.conflict.training-candidate span { color: #991b1b; }
-                .manual-schedule-list .list-row.training-assigned { background: #facc15; color: #713f12; border-color: #eab308; box-shadow: 0 10px 22px rgba(234, 179, 8, .24); }
+                .manual-schedule-list .list-row.training-candidate,
+                .manual-schedule-list .list-row.training-assigned { min-height: 62px !important; height: 62px !important; row-gap: 3px !important; }
+                .manual-schedule-list .list-row.training-assigned { background: #facc15 !important; color: #713f12 !important; border-color: #eab308 !important; box-shadow: 0 10px 22px rgba(234, 179, 8, .24); }
                 .manual-schedule-list .list-row.training-assigned strong,
                 .manual-schedule-list .list-row.training-assigned span { color: #713f12; }
+                .manual-schedule-list .list-row.training-candidate strong,
+                .manual-schedule-list .list-row.training-assigned strong {
+                  color: #713f12 !important;
+                  line-height: 1.05 !important;
+                  transform: translateY(1px);
+                }
+                .manual-schedule-list .list-row .training-badge-text {
+                  display: none !important;
+                }
+                .manual-schedule-list .list-row.training-candidate::after,
+                .manual-schedule-list .list-row.training-assigned::after {
+                  content: "訓練人員";
+                  display: block !important;
+                  width: 100% !important;
+                  max-width: 100% !important;
+                  margin: 0 !important;
+                  padding: 0 !important;
+                  color: #713f12 !important;
+                  font-size: 11px !important;
+                  font-weight: 950 !important;
+                  line-height: 1.05 !important;
+                  text-align: center !important;
+                  white-space: nowrap !important;
+                  opacity: 1 !important;
+                  visibility: visible !important;
+                }
                 .officer-relief-panel { border-color: #dbeafe; background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%); }
                 .officer-relief-tags { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
                 .officer-relief-tag { display: grid; align-content: center; justify-items: center; gap: 2px; min-height: 58px; padding: 7px 8px; border-radius: 16px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8; cursor: pointer; box-shadow: 0 6px 14px rgba(37, 99, 235, .08); }
@@ -5556,7 +5613,9 @@ export default function App() {
                   .manual-schedule-station .manual-schedule-group h4 { font-size: 18px; }
                   .manual-schedule-list { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important; }
                   .officer-relief-tags { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-                  .manual-schedule-list .list-row { min-height: 34px !important; padding: 5px 4px !important; border-radius: 13px !important; }
+                  .manual-schedule-list .list-row { min-height: 44px !important; height: 44px !important; padding: 4px 6px !important; border-radius: 16px !important; }
+                  .manual-schedule-list .list-row.training-candidate,
+                  .manual-schedule-list .list-row.training-assigned { min-height: 58px !important; height: 58px !important; }
                   .manual-schedule-list .list-row strong { font-size: 14px !important; }
                   .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
                   .manual-officer-title { font-size: 20px; padding-top: 0; }
@@ -5730,7 +5789,7 @@ export default function App() {
                                     title={isTraining ? "訓練人員：手動安排，不會被一鍵安排" : undefined}
                                   >
                                     <strong>{person.name}</strong>
-                                    {isTraining ? <span>訓練人員</span> : null}
+                                    {isTraining ? <small className="training-badge-text">訓練人員</small> : null}
                                   </button>
                                 );
                               })()
@@ -5756,7 +5815,7 @@ export default function App() {
                                   title={isTraining ? "訓練人員：可手動補位，不會被一鍵安排" : undefined}
                                 >
                                   <strong>{person.name}</strong>
-                                  {isTraining ? <span>訓練人員</span> : null}
+                                  {isTraining ? <small className="training-badge-text">訓練人員</small> : null}
                                   {isConflict ? <span>已在 {assignedStation?.name || assignedStationId}</span> : null}
                                 </button>
                               );
