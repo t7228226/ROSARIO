@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-07-01-003";
+const APP_VERSION = "2026-07-01-004";
 const GAS_READ_TIMEOUT_MS = 20_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
 const FRONT_WRITE_ACTIONS = new Set([
@@ -1014,7 +1014,6 @@ export default function App() {
   useEffect(() => {
     if (currentUser || loginSubmitting || loginAutoSubmittedRef.current) return;
 
-    const startedAt = Date.now();
     const timer = window.setInterval(() => {
       const accountInput = loginAccountRef.current;
       const passwordInput = loginPasswordRef.current;
@@ -1024,7 +1023,7 @@ export default function App() {
       const password = passwordInput.value.trim();
       if (!account || !password) return;
 
-      let browserAutofilled = account !== loginForm.account || password !== loginForm.password;
+      let browserAutofilled = false;
       try {
         browserAutofilled = browserAutofilled ||
           accountInput.matches(":-webkit-autofill") ||
@@ -1042,10 +1041,7 @@ export default function App() {
         void handleLogin({ account, password });
       }
 
-      if (Date.now() - startedAt >= 8_000) {
-        window.clearInterval(timer);
-      }
-    }, 250);
+    }, 400);
 
     return () => window.clearInterval(timer);
   }, [currentUser, loginSubmitting]);
