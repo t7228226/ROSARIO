@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-07-01-002";
+const APP_VERSION = "2026-07-01-003";
 const GAS_READ_TIMEOUT_MS = 20_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
 const FRONT_WRITE_ACTIONS = new Set([
@@ -721,6 +721,7 @@ export default function App() {
   const loginAccountRef = useRef<HTMLInputElement | null>(null);
   const loginPasswordRef = useRef<HTMLInputElement | null>(null);
   const loginAutoSubmittedRef = useRef(false);
+  const loginSubmittingRef = useRef(false);
   const currentRole = getSystemPermission(currentUser);
 
   const [personTeamFilter, setPersonTeamFilter] = useState<string>("全部班別");
@@ -1669,7 +1670,7 @@ export default function App() {
   }
 
   async function handleLogin(credentials?: { account: string; password: string }) {
-    if (loginSubmitting) return;
+    if (loginSubmittingRef.current) return;
 
     const account = (credentials?.account ?? loginAccountRef.current?.value ?? loginForm.account).trim();
     const password = (credentials?.password ?? loginPasswordRef.current?.value ?? loginForm.password).trim();
@@ -1683,6 +1684,7 @@ export default function App() {
       return;
     }
 
+    loginSubmittingRef.current = true;
     setLoginSubmitting(true);
     setFlashMessage("正在驗證帳號，請稍候...");
 
@@ -1711,6 +1713,7 @@ export default function App() {
       setPage("home");
       scrollToTop();
     } finally {
+      loginSubmittingRef.current = false;
       setLoginSubmitting(false);
     }
   }
