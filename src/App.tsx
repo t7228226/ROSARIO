@@ -62,7 +62,9 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-05-03-018";
+const APP_VERSION = "2026-07-01-001";
+const GAS_READ_TIMEOUT_MS = 20_000;
+const GAS_WRITE_TIMEOUT_MS = 60_000;
 const FRONT_WRITE_ACTIONS = new Set([
   "upsertQualification",
   "deleteQualification",
@@ -120,6 +122,21 @@ function hideGlobalProcessingOverlay() {
   if (overlay) overlay.remove();
 }
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = GAS_READ_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`連線逾時（${Math.round(timeoutMs / 1000)} 秒），請稍後再試。`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
   const isWriteAction = FRONT_WRITE_ACTIONS.has(action);
   const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
@@ -142,10 +159,10 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
       }
     }
 
-    const response = await fetch(GAS_WRITE_ENDPOINT, {
+    const response = await fetchWithTimeout(GAS_WRITE_ENDPOINT, {
       method: "POST",
       body: JSON.stringify({ action, appVersion: APP_VERSION, payload }),
-    });
+    }, isWriteAction ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
 
     const result = (await response.json()) as GasWriteResponse;
     if (!response.ok || result.ok === false) {
@@ -160,7 +177,7 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
 }
 
 async function fetchGasBootstrapData(): Promise<AppBootstrap> {
-  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`);
+  const response = await fetchWithTimeout(`${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`);
   const result = (await response.json()) as AppBootstrap & GasWriteResponse;
   if (!response.ok || result.ok === false) {
     throw new Error(String(result.message || "GAS bootstrap 讀取失敗"));
@@ -169,7 +186,7 @@ async function fetchGasBootstrapData(): Promise<AppBootstrap> {
 }
 
 async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWriteVersion: string; outdated: boolean; writeBlocked: boolean; message?: string }> {
-  const response = await fetch(`${GAS_WRITE_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store" });
+  const response = await fetchWithTimeout(`${GAS_WRITE_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store" }, 10_000);
   const result = (await response.json()) as GasWriteResponse & { latestVersion?: string; minWriteVersion?: string; outdated?: boolean; writeBlocked?: boolean; message?: string };
   if (!response.ok || result.ok === false) {
     throw new Error(String(result.message || "版本檢查失敗"));
@@ -199,7 +216,7 @@ function getStationQualificationStatus(qualifications: Qualification[], employee
 
 async function fetchDeployedFrontendVersion(): Promise<string | null> {
   const base = import.meta.env.BASE_URL || "/";
-  const response = await fetch(`${base}version.json?t=${Date.now()}`, { cache: "no-store" });
+  const response = await fetchWithTimeout(`${base}version.json?t=${Date.now()}`, { cache: "no-store" }, 8_000);
   if (!response.ok) return null;
   const result = (await response.json()) as { version?: string };
   return result.version ? String(result.version) : null;
@@ -938,6 +955,9 @@ export default function App() {
       try {
         const next = sanitizeBootstrapData(await fetchGasBootstrapData());
         if (!active) return;
+        if (!next.people.length && next.qualifications.length > 0) {
+          throw new Error("人員主表讀取為 0 筆，請確認 GAS 已部署標題列自動偵測修正版。");
+        }
         setData(next);
         const permissionConfig = next as AppBootstrap & {
           permissionItems?: PermissionItemDefinition[];
@@ -950,11 +970,12 @@ export default function App() {
         if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
           setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
         }
-      } catch {
+      } catch (error) {
         if (!active) return;
         setData(emptyBootstrap);
         setPage("home");
-        setFlashMessage("系統資料載入失敗：APP 已改由同一個 GAS 端點讀取 bootstrap，請確認 GAS 已重新部署且可回傳權限/帳號資料。");
+        const message = error instanceof Error ? error.message : "請確認 GAS 已重新部署且可回傳權限/帳號資料。";
+        setFlashMessage(`系統資料載入失敗：${message}`);
       } finally {
         if (active) setLoading(false);
       }
@@ -2883,8 +2904,6 @@ export default function App() {
 
   const allowedNav = navItems.filter((item) => canUsePage(item.key));
 
-  if (loading) return <div className="app-shell loading" translate="no">資料載入中...</div>;
-
   function renderStationRulesPage() {
     const canViewCurrentRulesTeam = canViewRulesForTeam(rulesTeam);
     const disabled = !canEditRulesForTeam(rulesTeam);
@@ -4668,9 +4687,9 @@ export default function App() {
             <EntranceLayout pageKey="home">
               <section className="home-flat-page">
                 <div className="home-flat-stats">
-                  <StatCard title="人員總數" value={String(data.people.length)} note="人員主檔" />
-                  <StatCard title="站點總數" value={String(data.stations.length)} note="站點主檔" />
-                  <StatCard title="資格筆數" value={String(data.qualifications.length)} note="站點資格" />
+                  <StatCard title="人員總數" value={loading ? "..." : String(data.people.length)} note="人員主檔" />
+                  <StatCard title="站點總數" value={loading ? "..." : String(data.stations.length)} note="站點主檔" />
+                  <StatCard title="資格筆數" value={loading ? "..." : String(data.qualifications.length)} note="站點資格" />
                 </div>
 
                 <div className="home-flat-grid">
