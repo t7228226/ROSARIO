@@ -62,7 +62,7 @@ const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-07-01-001";
+const APP_VERSION = "2026-07-01-002";
 const GAS_READ_TIMEOUT_MS = 20_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
 const FRONT_WRITE_ACTIONS = new Set([
@@ -715,8 +715,12 @@ export default function App() {
   const reviewDetailRef = useRef<HTMLDivElement | null>(null);
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
   const [loginKeep, setLoginKeep] = useState<LoginKeepKey>(() => getStoredLoginKeep());
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
+  const loginAccountRef = useRef<HTMLInputElement | null>(null);
+  const loginPasswordRef = useRef<HTMLInputElement | null>(null);
+  const loginAutoSubmittedRef = useRef(false);
   const currentRole = getSystemPermission(currentUser);
 
   const [personTeamFilter, setPersonTeamFilter] = useState<string>("全部班別");
@@ -1005,6 +1009,45 @@ export default function App() {
       window.localStorage.removeItem(loginSessionStorageKey);
     }
   }, [data.people, currentUser]);
+
+  useEffect(() => {
+    if (currentUser || loginSubmitting || loginAutoSubmittedRef.current) return;
+
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      const accountInput = loginAccountRef.current;
+      const passwordInput = loginPasswordRef.current;
+      if (!accountInput || !passwordInput) return;
+
+      const account = accountInput.value.trim();
+      const password = passwordInput.value.trim();
+      if (!account || !password) return;
+
+      let browserAutofilled = account !== loginForm.account || password !== loginForm.password;
+      try {
+        browserAutofilled = browserAutofilled ||
+          accountInput.matches(":-webkit-autofill") ||
+          passwordInput.matches(":-webkit-autofill") ||
+          accountInput.matches(":autofill") ||
+          passwordInput.matches(":autofill");
+      } catch {
+        // Some browsers do not support the autofill selectors.
+      }
+
+      if (browserAutofilled) {
+        loginAutoSubmittedRef.current = true;
+        window.clearInterval(timer);
+        setLoginForm({ account, password });
+        void handleLogin({ account, password });
+      }
+
+      if (Date.now() - startedAt >= 8_000) {
+        window.clearInterval(timer);
+      }
+    }, 250);
+
+    return () => window.clearInterval(timer);
+  }, [currentUser, loginSubmitting]);
 
   useEffect(() => {
     const syncViewportMode = () => setViewMode(getViewportMode());
@@ -1617,6 +1660,7 @@ export default function App() {
 
   function logout() {
     setCurrentUser(null);
+    loginAutoSubmittedRef.current = false;
     window.localStorage.removeItem(loginSessionStorageKey);
     setPage("home");
     setFlashMessage("已登出。");
@@ -1624,9 +1668,11 @@ export default function App() {
     scrollToTop();
   }
 
-  async function handleLogin() {
-    const account = loginForm.account.trim();
-    const password = loginForm.password.trim();
+  async function handleLogin(credentials?: { account: string; password: string }) {
+    if (loginSubmitting) return;
+
+    const account = (credentials?.account ?? loginAccountRef.current?.value ?? loginForm.account).trim();
+    const password = (credentials?.password ?? loginPasswordRef.current?.value ?? loginForm.password).trim();
 
     if (!account) {
       setFlashMessage("請輸入登入帳號。");
@@ -1636,6 +1682,9 @@ export default function App() {
       setFlashMessage("請輸入登入密碼。");
       return;
     }
+
+    setLoginSubmitting(true);
+    setFlashMessage("正在驗證帳號，請稍候...");
 
     try {
       const result = await postGasAction("login", { account, password }) as GasWriteResponse & { user?: Person };
@@ -1661,6 +1710,8 @@ export default function App() {
       setFlashMessage(`登入失敗：${message}`);
       setPage("home");
       scrollToTop();
+    } finally {
+      setLoginSubmitting(false);
     }
   }
 
@@ -3518,6 +3569,44 @@ export default function App() {
           color: var(--theme-muted) !important;
           font-weight: 900;
         }
+        .login-form {
+          display: grid;
+          gap: 10px;
+          width: 100%;
+        }
+        .login-form input:disabled,
+        .login-form select:disabled {
+          cursor: wait;
+          opacity: .72;
+        }
+        .login-submit-button {
+          display: inline-flex !important;
+          align-items: center;
+          justify-content: center;
+          gap: 9px;
+          min-height: 48px;
+          transition: transform .16s ease, opacity .16s ease, filter .16s ease;
+        }
+        .login-submit-button:active:not(:disabled) {
+          transform: scale(.98);
+        }
+        .login-submit-button:disabled {
+          cursor: wait;
+          opacity: .78;
+          filter: saturate(.8);
+        }
+        .login-spinner {
+          width: 18px;
+          height: 18px;
+          flex: 0 0 18px;
+          border: 3px solid color-mix(in srgb, currentColor 32%, transparent);
+          border-top-color: currentColor;
+          border-radius: 50%;
+          animation: login-spin .75s linear infinite;
+        }
+        @keyframes login-spin {
+          to { transform: rotate(360deg); }
+        }
         .panel .primary,
         .control-card .primary,
         .toolbar .primary,
@@ -4649,14 +4738,17 @@ export default function App() {
                 <button className="ghost" type="button" onClick={logout}>登出</button>
               </div>
             ) : (
-              <>
-                <input placeholder="登入帳號（不分大小寫）" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
-                <input type="password" placeholder="登入密碼（不分大小寫）" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
+              <form className="login-form" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
+                <input ref={loginAccountRef} name="username" autoComplete="username" disabled={loginSubmitting} placeholder="登入帳號（不分大小寫）" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
+                <input ref={loginPasswordRef} name="password" type="password" autoComplete="current-password" disabled={loginSubmitting} placeholder="登入密碼（不分大小寫）" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
                 <select value={loginKeep} onChange={(e) => updateLoginKeep(e.target.value as LoginKeepKey)} aria-label="保持登入時間">
                   {loginKeepOptions.map((item) => <option key={item.key} value={item.key}>重新整理保持登入：{item.label}</option>)}
                 </select>
-                <button className="primary" type="button" onClick={handleLogin}>登入</button>
-              </>
+                <button className="primary login-submit-button" type="submit" disabled={loginSubmitting} aria-busy={loginSubmitting}>
+                  {loginSubmitting ? <span className="login-spinner" aria-hidden="true" /> : null}
+                  <span>{loginSubmitting ? "登入中..." : "登入"}</span>
+                </button>
+              </form>
             )}
           </div>
           <nav className="nav-list">
