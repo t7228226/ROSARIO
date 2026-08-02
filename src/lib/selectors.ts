@@ -302,7 +302,7 @@ function appendUniqueId(map: Map<string, string[]>, stationId: string, personId:
   map.set(stationId, [...current, personId]);
 }
 
-function solveCoverageMatching(
+export function solveCoverageMatching(
   rules: StationRule[],
   activePeople: Person[],
   qualifications: Qualification[],

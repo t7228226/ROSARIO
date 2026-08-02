@@ -4,6 +4,7 @@ import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./c
 import { appEnvironment } from "./config/environment";
 import { FRONT_WRITE_ACTIONS } from "./config/writeActions";
 import { prepareNewPerson } from "./domain/people/newPerson";
+import type { CoverageResilienceResult } from "./domain/workforce/resilience";
 import WorkforceWorkbench from "./features/workbench/WorkforceWorkbench";
 import {
   analyzeStationCoverage,
@@ -1012,6 +1013,11 @@ export default function App() {
   const [gapOfficerKeyword, setGapOfficerKeyword] = useState("");
   const [gapOfficerPickerId, setGapOfficerPickerId] = useState("");
   const [gapOfficerPickerStationId, setGapOfficerPickerStationId] = useState("");
+  const [gapStressMaxAbsences, setGapStressMaxAbsences] = useState(1);
+  const [gapStressResult, setGapStressResult] = useState<CoverageResilienceResult | null>(null);
+  const [gapStressRunning, setGapStressRunning] = useState(false);
+  const [gapStressError, setGapStressError] = useState("");
+  const gapStressWorkerRef = useRef<Worker | null>(null);
 
   const [manualShift, setManualShift] = useState<TeamName>("婷芬班");
   const [manualDay, setManualDay] = useState<ShiftMode>("當班");
@@ -1780,6 +1786,18 @@ export default function App() {
     }
   }, [rulesTeam, visibleRulesTeams]);
 
+  useEffect(() => {
+    gapStressWorkerRef.current?.terminate();
+    gapStressWorkerRef.current = null;
+    setGapStressResult(null);
+    setGapStressRunning(false);
+    setGapStressError("");
+    return () => {
+      gapStressWorkerRef.current?.terminate();
+      gapStressWorkerRef.current = null;
+    };
+  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift]);
+
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
     const match = rolePermissionMapStates.find((item) =>
@@ -1824,6 +1842,46 @@ export default function App() {
   function canEditRulesForTeam(team: TeamName) {
     if (!canUsePermission("PERM_012")) return false;
     return visibleRulesTeams.includes(team);
+  }
+
+  function runGapStressAnalysis() {
+    if (!gapRules.length || gapStressRunning) return;
+    gapStressWorkerRef.current?.terminate();
+    setGapStressRunning(true);
+    setGapStressError("");
+    setGapStressResult(null);
+
+    const worker = new Worker(
+      new URL("./domain/workforce/resilience.worker.ts", import.meta.url),
+      { type: "module" }
+    );
+    gapStressWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ ok: boolean; result?: CoverageResilienceResult; message?: string }>) => {
+      if (gapStressWorkerRef.current !== worker) return;
+      if (event.data.ok && event.data.result) {
+        setGapStressResult(event.data.result);
+      } else {
+        setGapStressError(event.data.message || "缺勤壓力測試失敗，請稍後再試。");
+      }
+      setGapStressRunning(false);
+      worker.terminate();
+      gapStressWorkerRef.current = null;
+    };
+    worker.onerror = (event) => {
+      if (gapStressWorkerRef.current !== worker) return;
+      setGapStressError(event.message || "缺勤壓力測試失敗，請稍後再試。");
+      setGapStressRunning(false);
+      worker.terminate();
+      gapStressWorkerRef.current = null;
+    };
+    worker.postMessage({
+      team: gapShift,
+      mode: gapDay,
+      stationRules: data.stationRules || [],
+      people: data.people,
+      qualifications: data.qualifications,
+      maxAbsences: gapStressMaxAbsences,
+    });
   }
 
   function toggleGapAbsentPerson(employeeId: string) {
@@ -5332,8 +5390,8 @@ export default function App() {
                 <>
                   <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
                     <div className="panel-header">
-                      <h3>全站覆蓋檢查</h3>
-                      <span>{gapCoverageAnalysis.fullyCovered ? "作業人力可全面覆蓋" : `排除領班/組長/主任後仍缺 ${gapCoverageAnalysis.shortage} 人`}</span>
+                      <h3>全勤基準分析</h3>
+                      <span>{gapCoverageAnalysis.fullyCovered ? "全員出勤時可全面覆蓋" : `全員出勤仍缺 ${gapCoverageAnalysis.shortage} 人`}</span>
                     </div>
                     <div className="detail-grid">
                       <Info label="全站需求" value={String(gapCoverageAnalysis.required)} />
@@ -5341,7 +5399,7 @@ export default function App() {
                       <Info label="排除後缺口" value={String(gapCoverageAnalysis.shortage)} />
                       <Info label="瓶頸站點" value={String(gapCoverageAnalysis.rows.filter((row) => row.bottleneck).length)} />
                     </div>
-                    <p className="muted">此區預設排除領班、組長、主任；下方會列出領班/組長/主任可緊急支援的缺口。</p>
+                    <p className="muted">進入頁面即依目前班別與日期計算。此區預設排除領班、組長、主任；下方會列出可緊急支援的缺口。</p>
                   </div>
 
                   <div className="panel officer-relief-panel">
@@ -5377,10 +5435,112 @@ export default function App() {
                     ) : <p className="muted">目前沒有自動判定需要領班/組長/主任支援的缺口；可按「自訂支援」手動選人與站點測試。</p>}
                   </div>
 
+                  <div className="panel resilience-panel">
+                    <div className="panel-header">
+                      <div>
+                        <h3>預防性缺勤壓力測試</h3>
+                        <p className="muted">自動交叉測試 1 人至指定人數缺勤，找出真正無法由重新排列吸收的風險。</p>
+                      </div>
+                      <span className={gapStressRunning ? "status-pill active" : gapStressResult ? "status-pill success" : "status-pill"}>
+                        {gapStressRunning ? "分析中" : gapStressResult ? "分析完成" : "尚未執行"}
+                      </span>
+                    </div>
+                    <div className="resilience-control-bar">
+                      <label>
+                        最大缺勤人數
+                        <input
+                          type="number"
+                          min={1}
+                          max={5}
+                          step={1}
+                          value={gapStressMaxAbsences}
+                          disabled={gapStressRunning}
+                          onChange={(event) => setGapStressMaxAbsences(Math.max(1, Math.min(5, Number(event.target.value) || 1)))}
+                        />
+                      </label>
+                      <button type="button" className="primary" disabled={gapStressRunning} onClick={runGapStressAnalysis}>
+                        {gapStressRunning ? "正在交叉計算…" : `分析 1～${gapStressMaxAbsences} 人缺勤`}
+                      </button>
+                      <span>1～2 人通常完整排列；組合過大時採固定抽樣並明確標示。</span>
+                    </div>
+
+                    {gapStressRunning ? (
+                      <div className="resilience-progress" role="status" aria-live="polite">
+                        <span />
+                        <strong>正在重新排列所有站點，請稍候，不需重複點擊。</strong>
+                      </div>
+                    ) : null}
+                    {gapStressError ? <p className="resilience-error" role="alert">{gapStressError}</p> : null}
+
+                    {gapStressResult ? (
+                      <div className="resilience-results">
+                        <div className="detail-grid resilience-summary-grid">
+                          <Info label="測試組合" value={`${gapStressResult.testedCombinations}/${gapStressResult.totalCombinations}`} />
+                          <Info label="風險組合" value={String(gapStressResult.levels.reduce((sum, item) => sum + item.riskScenarios, 0))} />
+                          <Info label="風險站點" value={String(gapStressResult.stationRisks.length)} />
+                          <Info label="計算方式" value={gapStressResult.exhaustive ? "完整排列" : "完整 + 抽樣"} />
+                        </div>
+
+                        <div className="resilience-level-grid" aria-label="各缺勤人數分析結果">
+                          {gapStressResult.levels.map((level) => (
+                            <div className={`resilience-level-item ${level.riskScenarios ? "has-risk" : "is-safe"}`} key={level.absenceCount}>
+                              <strong>缺勤 {level.absenceCount} 人</strong>
+                              <span>維持基準 {level.baselineMaintainedRate.toFixed(1)}%</span>
+                              <small>{level.riskScenarios} 個風險組合｜{level.exhaustive ? "完整" : `抽樣 ${level.testedCombinations.toLocaleString()}`}</small>
+                            </div>
+                          ))}
+                        </div>
+
+                        {gapStressResult.stationRisks.length ? (
+                          <div className="table-wrap resilience-table-wrap">
+                            <table className="table resilience-table">
+                              <thead><tr><th>風險站點</th><th>最少缺勤</th><th>風險次數</th><th>最大新增缺口</th><th>關鍵缺勤人員</th></tr></thead>
+                              <tbody>
+                                {gapStressResult.stationRisks.map((risk) => {
+                                  const station = data.stations.find((item) => item.id === risk.stationId);
+                                  const criticalNames = risk.criticalCombinations.slice(0, 3).map((ids) => ids
+                                    .map((id) => data.people.find((person) => person.id === id)?.name || id)
+                                    .join(" + "));
+                                  return (
+                                    <tr key={risk.stationId}>
+                                      <td><strong>{station?.name || risk.stationId}</strong></td>
+                                      <td>{risk.minAbsenceCount} 人</td>
+                                      <td>{risk.riskScenarioCount}</td>
+                                      <td>{risk.maxAddedShortage} 人</td>
+                                      <td>{criticalNames.join("、") || "-"}</td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <p className="resilience-safe-message">在本次測試範圍內，所有缺勤組合都能透過重新排列維持全勤基準。</p>
+                        )}
+
+                        {gapStressResult.criticalCombinations.length ? (
+                          <details className="resilience-critical-details">
+                            <summary>查看最小關鍵缺勤組合（{gapStressResult.criticalCombinations.length}）</summary>
+                            <div className="risk-combination-list">
+                              {gapStressResult.criticalCombinations.map((item) => {
+                                const names = item.absentIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join(" + ");
+                                const stations = item.affectedStations.map((impact) => {
+                                  const station = data.stations.find((stationItem) => stationItem.id === impact.stationId);
+                                  return `${station?.name || impact.stationId}缺 ${impact.shortage}`;
+                                }).join("、");
+                                return <div key={item.absentIds.join("|")}><strong>{names}</strong><span>{stations}</span></div>;
+                              })}
+                            </div>
+                          </details>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+
                   <div className="grid two">
                     <div className="panel">
                       <div className="panel-header">
-                        <h3>關鍵人缺席模擬</h3>
+                        <h3>指定缺勤模擬</h3>
                         <div className="panel-header-actions">
                           <span className={gapAbsentIds.length ? "status-pill danger" : "status-pill"}>{gapAbsentIds.length ? `已選 ${gapAbsentIds.length} 人缺勤` : "未模擬缺勤"}</span>
                           <button type="button" className="cute-help-button" onClick={() => setGapHelpOpen(true)}>?</button>
@@ -5413,7 +5573,7 @@ export default function App() {
                       <div className="panel-header">
                         <h3>補訓建議</h3>
                         <div className="panel-header-actions">
-                          <span>{gapAbsentIds.length ? "日常 + 缺勤修正" : "分散風險"}</span>
+                          <span>{gapStressResult ? "預防風險排序" : gapAbsentIds.length ? "全勤 + 指定缺勤" : "全勤基準"}</span>
                           <span className={gapSimulationCount ? "status-pill active" : "status-pill"}>{gapSimulationCount ? `已導入 ${gapSimulationCount} 項` : "未導入"}</span>
                           <button type="button" className="cute-help-button small" onClick={() => setGapTrainingHelpOpen(true)}>?</button>
                         </div>
@@ -5422,7 +5582,25 @@ export default function App() {
                         <button type="button" className="action-tab primary" onClick={openGapTrainingDialog}>自訂補訓</button>
                         <button type="button" className="action-tab ghost" onClick={() => setGapTrainingSimulations([])} disabled={!gapTrainingSimulations.length}>清除補訓</button>
                       </div>
-                      {gapCombinedTrainingSuggestions.length ? (
+                      {gapStressResult ? gapStressResult.trainingSuggestions.length ? (
+                        <div className="list-scroll short person-tag-list">
+                          {gapStressResult.trainingSuggestions.map((item) => {
+                            const person = data.people.find((p) => p.id === item.employeeId);
+                            const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                            return (
+                              <button
+                                type="button"
+                                className={`list-row training-suggestion ${item.priority === "當前缺口" ? "urgent" : ""} ${gapTrainingSimulations.some((selected) => selected.employeeId === item.employeeId && selected.stationId === item.stationId) ? "active" : ""}`}
+                                key={`${item.employeeId}-${item.stationId}`}
+                                onClick={() => openGapTrainingPicker(item.employeeId, item.stationId, "recommendation")}
+                              >
+                                <strong>{person?.name || item.employeeId}</strong>
+                                <span>推薦：{station?.name || item.stationId}｜{item.priority}｜{item.reason}｜目前合格 {item.qualificationCount} 站{item.estimated ? "｜成效為抽樣估算" : ""}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : <p className="muted">本次壓力測試沒有找出能實際降低缺口的補訓組合。</p> : gapCombinedTrainingSuggestions.length ? (
                         <div className="list-scroll short person-tag-list">
                           {gapCombinedTrainingSuggestions.map((item) => {
                             const person = data.people.find((p) => p.id === item.employeeId);
@@ -5440,7 +5618,7 @@ export default function App() {
                             );
                           })}
                         </div>
-                      ) : <p className="muted">目前沒有明顯補訓建議；可先補齊站點需求後再檢查。</p>}
+                      ) : <p className="muted">全勤基準沒有明顯補訓建議；可執行上方壓力測試，進一步找出預防性補強位置。</p>}
                     </div>
                   </div>
 
@@ -5862,13 +6040,13 @@ export default function App() {
                 <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapHelpOpen(false)}>
                   <div className="manual-modal coverage-help-modal" onClick={(event) => event.stopPropagation()}>
                     <div className="manual-modal-title-row">
-                      <h3>關鍵人缺席模擬說明</h3>
+                      <h3>缺勤分析說明</h3>
                       <button type="button" className="manual-modal-close-button" aria-label="關閉說明" onClick={() => setGapHelpOpen(false)}>×</button>
                     </div>
-                    <p>此功能會假設某一位出勤人員沒有來，重新把所有站點一起交叉排一次，檢查全班還能不能不重複地覆蓋所有工作站。</p>
-                    <p>如果某人缺席後讓最佳覆蓋下降，或讓某些站點出現缺口，他就會被列為關鍵人。</p>
-                    <p>測試方式：點選關鍵人姓名，該人會反紅並加入缺勤模擬；下方「缺勤模擬結果」會立即重新分析缺勤後的覆蓋人數、缺口與受影響站點。</p>
-                    <p>如果某個人常造成缺口，代表技能太集中在他身上，補訓時應優先訓練其他人去覆蓋他的關鍵站點。</p>
+                    <p>「預防性缺勤壓力測試」會從 1 人一路測到你指定的人數，每一種情境都重新安排全站，確認是否能在不重複指派人員的前提下維持全勤基準。</p>
+                    <p>最大缺勤人數設為 1，等同完整測試每一位作業人員單獨缺勤；設為 2，則同時包含所有單人與雙人組合。組合過大時會改採固定抽樣，結果會清楚標示。</p>
+                    <p>「指定缺勤模擬」則是每天有人請假時，直接選定實際缺勤名單，立即查看該組合的全站指派與缺口。</p>
+                    <p>如果某人或某個組合反覆造成同一站點缺口，代表資格過度集中，補訓建議會優先尋找能真正降低這些風險的人選。</p>
                     <div className="manual-modal-actions">
                       <button type="button" className="primary" onClick={() => setGapHelpOpen(false)}>知道了</button>
                     </div>
@@ -5883,8 +6061,8 @@ export default function App() {
                       <h3>補訓建議說明</h3>
                       <button type="button" className="manual-modal-close-button" aria-label="關閉補訓說明" onClick={() => setGapTrainingHelpOpen(false)}>×</button>
                     </div>
-                    <p>補訓建議會同時參考目前全站缺口、臨時缺勤模擬、站點瓶頸與人員可分散風險的程度。</p>
-                    <p>如果沒有更急迫的補缺口人選，系統也會把 0 站點或合格站點明顯偏少的人列為「培養」建議，讓閒置人力逐步補足戰力。</p>
+                    <p>未執行壓力測試時，補訓建議先依全勤基準缺口排序；完成壓力測試後，會改依「能解除多少缺勤風險、能減少多少缺口人次」排序。</p>
+                    <p>合格站點較少只作為成效相同時的排序條件，不會因認證少就直接推薦；領班、組長、主任也不列入一般補訓候選。</p>
                     <p>點選推薦名單時，系統不會立即導入，而是先開啟站點選單，讓你決定要採用推薦站點、此人既有資格站點，或自訂其他站點。</p>
                     <p>如果自訂站點不是此人的合格站點，系統會明確提示需要訓練。你可以先加入補訓模擬查看全站結果，也可以前往站點考核頁將該站標記為訓練中。</p>
                     <p>只要加入補訓模擬，下方全站檢核表會立刻用新的假設重新計算，包含重複指派、導入後缺口與全站指派。</p>
