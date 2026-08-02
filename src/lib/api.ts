@@ -204,3 +204,8 @@ export async function updatePerson(payload: Person): Promise<Person> {
   await request("updatePerson", payload, "POST");
   return payload;
 }
+
+export async function createPerson(payload: Person): Promise<Person> {
+  await request("createPerson", payload, "POST");
+  return payload;
+}

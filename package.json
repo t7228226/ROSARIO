@@ -5,8 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:preview": "vite --mode preview",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:preview": "vite build --mode preview",
+    "preview": "vite preview",
+    "check:contracts": "node scripts/check-contracts.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test src/domain/workforce/engine.test.ts src/domain/people/newPerson.test.ts",
+    "test:watch": "tsx --test --watch src/domain/workforce/engine.test.ts src/domain/people/newPerson.test.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -16,6 +22,7 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.23.1",
     "typescript": "^5.8.3",
     "vite": "^5.4.10"
   }

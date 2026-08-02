@@ -1,6 +1,10 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
+import { appEnvironment } from "./config/environment";
+import { FRONT_WRITE_ACTIONS } from "./config/writeActions";
+import { prepareNewPerson } from "./domain/people/newPerson";
+import WorkforceWorkbench from "./features/workbench/WorkforceWorkbench";
 import {
   analyzeStationCoverage,
   buildSmartAssignments,
@@ -61,21 +65,26 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
-const GAS_WRITE_ENDPOINT = "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
-const APP_VERSION = "2026-07-01-004";
+const GAS_WRITE_ENDPOINT = appEnvironment.gasEndpoint;
+const APP_VERSION = appEnvironment.version;
 const GAS_READ_TIMEOUT_MS = 20_000;
+const GAS_BOOTSTRAP_TIMEOUT_MS = 35_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
-const FRONT_WRITE_ACTIONS = new Set([
-  "upsertQualification",
-  "deleteQualification",
-  "updateStationRule",
-  "updatePerson",
-  "updatePermissionItem",
-  "updateRolePermission",
-  "upsertPersonalPermissionException",
-  "deletePersonalPermissionException",
-  "saveScheduleDraft",
-]);
+function createEmptyPersonDraft(): Person {
+  return {
+    id: "",
+    name: "",
+    shift: TEAM_OPTIONS[0],
+    role: "技術員",
+    nationality: "",
+    employmentStatus: "在職",
+    note: "",
+    aDay1: "",
+    aDay2: "",
+    bDay1: "",
+    bDay2: "",
+  };
+}
 
 type GasWriteResponse = {
   ok?: boolean;
@@ -141,6 +150,10 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
   const isWriteAction = FRONT_WRITE_ACTIONS.has(action);
   const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
 
+  if (isWriteAction && !appEnvironment.writesEnabled) {
+    throw new Error("升級測試環境目前為唯讀，已阻擋寫入正式資料。");
+  }
+
   if (isWriteAction) {
     showGlobalProcessingOverlay(processingKind);
   }
@@ -177,7 +190,11 @@ async function postGasAction(action: string, payload: Record<string, unknown>): 
 }
 
 async function fetchGasBootstrapData(): Promise<AppBootstrap> {
-  const response = await fetchWithTimeout(`${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`);
+  const response = await fetchWithTimeout(
+    `${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`,
+    { cache: "no-store" },
+    GAS_BOOTSTRAP_TIMEOUT_MS
+  );
   const result = (await response.json()) as AppBootstrap & GasWriteResponse;
   if (!response.ok || result.ok === false) {
     throw new Error(String(result.message || "GAS bootstrap 讀取失敗"));
@@ -690,6 +707,8 @@ function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children:
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
   const [loading, setLoading] = useState(true);
+  const [bootstrapError, setBootstrapError] = useState("");
+  const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
   const [page, setPage] = useState<PageKey>("home");
   const [globalThemeOption, setGlobalThemeOption] = useState<GlobalThemeKey>(() => getStoredThemeOption());
   const [globalFontOption, setGlobalFontOption] = useState<GlobalFontKey>(() => getStoredFontOption());
@@ -822,6 +841,9 @@ export default function App() {
   const [peopleSearchKeyword, setPeopleSearchKeyword] = useState("");
   const [peopleTeamFilter, setPeopleTeamFilter] = useState<TeamName | "全部班別">("全部班別");
   const [editingPersonId, setEditingPersonId] = useState("");
+  const [newPersonOpen, setNewPersonOpen] = useState(false);
+  const [newPersonDraft, setNewPersonDraft] = useState<Person>(() => createEmptyPersonDraft());
+  const [newPersonSubmitting, setNewPersonSubmitting] = useState(false);
   const [permissionSearchKeyword, setPermissionSearchKeyword] = useState("");
   const [permissionAdminTab, setPermissionAdminTab] = useState<PermissionAdminTab>("role");
   const [permissionSelectedRole, setPermissionSelectedRole] = useState<UserRole>("組長");
@@ -957,6 +979,8 @@ export default function App() {
   useEffect(() => {
     let active = true;
     async function loadBootstrap() {
+      setLoading(true);
+      setBootstrapError("");
       try {
         const next = sanitizeBootstrapData(await fetchGasBootstrapData());
         if (!active) return;
@@ -977,9 +1001,9 @@ export default function App() {
         }
       } catch (error) {
         if (!active) return;
-        setData(emptyBootstrap);
         setPage("home");
         const message = error instanceof Error ? error.message : "請確認 GAS 已重新部署且可回傳權限/帳號資料。";
+        setBootstrapError(message);
         setFlashMessage(`系統資料載入失敗：${message}`);
       } finally {
         if (active) setLoading(false);
@@ -989,7 +1013,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [bootstrapRetryKey]);
 
   useEffect(() => {
     if (!data.people.length || currentUser) return;
@@ -1784,6 +1808,43 @@ export default function App() {
     setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
     if (currentUser?.id === person.id) setCurrentUser(next);
     setFlashMessage(`人員 ${person.name} 已寫入試算表。`);
+  }
+
+  async function handleCreatePerson() {
+    const { person: next, error } = prepareNewPerson(newPersonDraft, data.people);
+    if (error) {
+      setFlashMessage(error);
+      return;
+    }
+
+    if (!appEnvironment.writesEnabled) {
+      setNewPersonDraft(next);
+      setFlashMessage(`新增資料檢查通過：${next.name}（${next.id}）。測試版唯讀，尚未寫入正式資料。`);
+      return;
+    }
+    if (!confirmAction(`確認新增人員 ${next.name}（${next.id}）至 ${next.shift}？`)) {
+      setFlashMessage("已取消新增人員。");
+      return;
+    }
+
+    setNewPersonSubmitting(true);
+    try {
+      await checkAppVersionBeforeWrite();
+      const result = await postGasAction("createPerson", next as unknown as Record<string, unknown>);
+      const created = result.person && typeof result.person === "object"
+        ? { ...next, ...(result.person as Person) }
+        : next;
+      setData((current) => ({ ...current, people: [...current.people, created] }));
+      setPeopleTeamFilter(created.shift as TeamName);
+      setPeopleSearchKeyword(created.id);
+      setNewPersonOpen(false);
+      setNewPersonDraft(createEmptyPersonDraft());
+      setFlashMessage(`已新增 ${created.name}（${created.id}），並寫入人員主表。`);
+    } catch (error) {
+      setFlashMessage(`新增人員失敗：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setNewPersonSubmitting(false);
+    }
   }
 
   async function handleUpdatePermission(person: Person, permission: UserRole) {
@@ -3136,6 +3197,16 @@ export default function App() {
             </select>
             <input placeholder="快速搜尋工號、姓名、班別、職務、國籍" value={peopleSearchKeyword} onChange={(e) => setPeopleSearchKeyword(e.target.value)} />
             <span className="status-pill people-count-pill">{peopleTeamFilter === "全部班別" ? `全部 ${peopleRows.length} 人` : `${peopleTeamFilter} ${peopleRows.length} 人`}</span>
+            <button
+              type="button"
+              className="primary people-create-button"
+              onClick={() => {
+                setNewPersonDraft(createEmptyPersonDraft());
+                setNewPersonOpen(true);
+              }}
+            >
+              新增人員
+            </button>
           </div>
           <div className="mobile-person-card-list">
             {peopleRows.map((person) => (
@@ -3193,6 +3264,52 @@ export default function App() {
               </div>
               <div className="mobile-modal-footer upgraded-modal-footer">
                 <button type="button" className="ghost full-width" onClick={() => setEditingPersonId("")}>關閉</button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+        {newPersonOpen ? (
+          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-person-title" onClick={() => setNewPersonOpen(false)}>
+            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal new-person-modal" onClick={(event) => event.stopPropagation()}>
+              <button type="button" className="mobile-modal-floating-close" aria-label="關閉新增人員視窗" onClick={() => setNewPersonOpen(false)}>×</button>
+              <div className="mobile-modal-header upgraded-modal-header">
+                <div>
+                  <strong id="new-person-title">新增人員</strong>
+                  <small>{appEnvironment.writesEnabled ? "儲存後會新增至人員主表" : "升級測試版僅檢查內容，不會寫入正式資料"}</small>
+                </div>
+              </div>
+              <div className="mobile-modal-body upgraded-modal-body">
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">必要資料</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>工號<input autoFocus value={newPersonDraft.id} onChange={(event) => setNewPersonDraft((current) => ({ ...current, id: event.target.value }))} placeholder="例如 P0123" /></label>
+                    <label>姓名<input value={newPersonDraft.name} onChange={(event) => setNewPersonDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+                    <label>班別<select value={newPersonDraft.shift} onChange={(event) => setNewPersonDraft((current) => ({ ...current, shift: event.target.value }))}>{TEAM_OPTIONS.map((team) => <option key={team} value={team}>{team}</option>)}</select></label>
+                    <label>職務<input value={newPersonDraft.role} onChange={(event) => setNewPersonDraft((current) => ({ ...current, role: event.target.value }))} /></label>
+                  </div>
+                </section>
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">基本資料</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>國籍<input value={newPersonDraft.nationality} onChange={(event) => setNewPersonDraft((current) => ({ ...current, nationality: event.target.value }))} /></label>
+                    <label>在職狀態<input value={newPersonDraft.employmentStatus} onChange={(event) => setNewPersonDraft((current) => ({ ...current, employmentStatus: event.target.value }))} /></label>
+                  </div>
+                </section>
+                <section className="mobile-form-section">
+                  <div className="mobile-form-section-title">支援出勤欄位</div>
+                  <div className="mobile-edit-grid upgraded-edit-grid">
+                    <label>A1<input value={newPersonDraft.aDay1 || ""} onChange={(event) => setNewPersonDraft((current) => ({ ...current, aDay1: event.target.value }))} /></label>
+                    <label>A2<input value={newPersonDraft.aDay2 || ""} onChange={(event) => setNewPersonDraft((current) => ({ ...current, aDay2: event.target.value }))} /></label>
+                    <label>B1<input value={newPersonDraft.bDay1 || ""} onChange={(event) => setNewPersonDraft((current) => ({ ...current, bDay1: event.target.value }))} /></label>
+                    <label>B2<input value={newPersonDraft.bDay2 || ""} onChange={(event) => setNewPersonDraft((current) => ({ ...current, bDay2: event.target.value }))} /></label>
+                  </div>
+                </section>
+              </div>
+              <div className="mobile-modal-footer upgraded-modal-footer new-person-actions">
+                <button type="button" className="ghost" disabled={newPersonSubmitting} onClick={() => setNewPersonOpen(false)}>取消</button>
+                <button type="button" className="primary" disabled={newPersonSubmitting} onClick={() => void handleCreatePerson()}>
+                  {newPersonSubmitting ? "新增中..." : appEnvironment.writesEnabled ? "確認新增" : "檢查新增資料"}
+                </button>
               </div>
             </div>
           </div>
@@ -4344,6 +4461,9 @@ export default function App() {
         .mobile-management-toolbar.single-search input { width: 100%; }
         .people-management-toolbar select { min-width: 150px; flex: 0 0 170px; }
         .people-management-toolbar input { flex: 1 1 260px; }
+        .people-management-toolbar .people-create-button { flex: 0 0 auto; min-height: 44px; }
+        .new-person-actions { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        .new-person-actions button { width: 100% !important; }
         .people-count-pill { white-space: nowrap; }
         .rules-summary-card { width: 100%; border: 2px solid var(--theme-border); border-radius: 24px; background: var(--theme-panel); padding: 18px; display: grid; gap: 6px; text-align: center; box-shadow: var(--theme-shadow); color: var(--theme-text); }
         .rules-summary-card strong { font-size: 1.25rem; }
@@ -4638,6 +4758,8 @@ export default function App() {
         }
         .preview-metric-badges b { color: #0f172a !important; font-size: 1.12rem !important; }
         @media (max-width: 760px) {
+          .people-management-toolbar .people-create-button { width: 100%; }
+          .new-person-actions { grid-template-columns: 1fr !important; }
           .upgraded-modal-backdrop,
           .mobile-modal-backdrop {
             align-items: flex-end !important;
@@ -4774,13 +4896,47 @@ export default function App() {
           </div>
         ) : null}
         <main className="content" ref={contentRef}>
+          {appEnvironment.isPreview ? (
+            <div className="preview-environment-banner" role="status">
+              <strong>升級測試版</strong>
+              <span>{appEnvironment.writesEnabled ? "已連接測試資料，可進行寫入測試。" : "目前為唯讀模式，不會修改正式資料。"}</span>
+              <span>版本 {APP_VERSION}</span>
+            </div>
+          ) : null}
+          {bootstrapError ? (
+            <div className="bootstrap-error-banner" role="alert">
+              <div>
+                <strong>系統資料尚未載入</strong>
+                <span>{bootstrapError}</span>
+                <small>目前不會用 0 筆資料取代既有內容，請稍後重新讀取。</small>
+              </div>
+              <button
+                type="button"
+                className="primary"
+                disabled={loading}
+                onClick={() => setBootstrapRetryKey((current) => current + 1)}
+              >
+                {loading ? "重新讀取中..." : "重新讀取"}
+              </button>
+            </div>
+          ) : null}
           {page === "home" ? (
-            <EntranceLayout pageKey="home">
+            currentUser ? (
+              <Layout title="" subtitle="">
+                <WorkforceWorkbench
+                  data={data}
+                  currentUser={currentUser}
+                  loading={loading}
+                  onNavigate={navigateToPage}
+                />
+              </Layout>
+            ) : (
+              <EntranceLayout pageKey="home">
               <section className="home-flat-page">
                 <div className="home-flat-stats">
-                  <StatCard title="人員總數" value={loading ? "..." : String(data.people.length)} note="人員主檔" />
-                  <StatCard title="站點總數" value={loading ? "..." : String(data.stations.length)} note="站點主檔" />
-                  <StatCard title="資格筆數" value={loading ? "..." : String(data.qualifications.length)} note="站點資格" />
+                  <StatCard title="人員總數" value={loading ? "..." : bootstrapError && !data.people.length ? "-" : String(data.people.length)} note="人員主檔" />
+                  <StatCard title="站點總數" value={loading ? "..." : bootstrapError && !data.stations.length ? "-" : String(data.stations.length)} note="站點主檔" />
+                  <StatCard title="資格筆數" value={loading ? "..." : bootstrapError && !data.qualifications.length ? "-" : String(data.qualifications.length)} note="站點資格" />
                 </div>
 
                 <div className="home-flat-grid">
@@ -4818,7 +4974,8 @@ export default function App() {
                   </div>
                 </div>
               </section>
-            </EntranceLayout>
+              </EntranceLayout>
+            )
           ) : null}
           {!currentRole && page !== "home" ? <EntranceLayout pageKey="login-required"><Empty text="請先登入。" /></EntranceLayout> : null}
 

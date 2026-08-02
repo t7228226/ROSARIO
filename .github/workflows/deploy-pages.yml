@@ -28,7 +28,16 @@ jobs:
           node-version: 20
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Check contracts
+        run: npm run check:contracts
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
 
       - name: Build
         run: npm run build

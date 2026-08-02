@@ -46,7 +46,7 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有同名設定，會以試算表設定為準。
-  APP_VERSION: '2026-07-01-001',
+  APP_VERSION: '2026-08-02-v2-preview.4',
   MIN_WRITE_VERSION: '2026-05-03-004',
 };
 
@@ -100,6 +100,9 @@ function doPost(e) {
       case 'updatePerson':
         assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
         return jsonOutput_(updatePerson_(payload));
+      case 'createPerson':
+        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
+        return jsonOutput_(createPerson_(payload));
       case 'updatePermissionItem':
         assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
         return jsonOutput_(updatePermissionItem_(payload));
@@ -854,6 +857,65 @@ function updatePerson_(payload) {
   }
 
   return { ok: true, person: payload };
+}
+
+function createPerson_(payload) {
+  payload = payload || {};
+  const employeeId = normalizeString_(payload.id).toUpperCase();
+  const name = normalizeString_(payload.name);
+  const shift = normalizeString_(payload.shift);
+  if (!employeeId || !name || !shift) {
+    throw new Error('createPerson 缺少工號、姓名或班別');
+  }
+
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(10000);
+  try {
+    const peopleSheet = getSheet_(SHEETS.PEOPLE);
+    const peopleHeaders = getHeaders_(peopleSheet);
+    const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
+    const duplicate = peopleRows.some(function (row) {
+      return normalizeString_(row['工號']).toUpperCase() === employeeId;
+    });
+    if (duplicate) {
+      throw new Error('工號已存在：' + employeeId);
+    }
+
+    const person = {
+      id: employeeId,
+      name: name,
+      shift: shift,
+      role: normalizeString_(payload.role) || '技術員',
+      nationality: normalizeString_(payload.nationality),
+      aDay1: normalizeString_(payload.aDay1),
+      aDay2: normalizeString_(payload.aDay2),
+      bDay1: normalizeString_(payload.bDay1),
+      bDay2: normalizeString_(payload.bDay2),
+      employmentStatus: normalizeString_(payload.employmentStatus) || '在職',
+      note: normalizeString_(payload.note),
+    };
+    const valuesByHeader = {
+      '工號': person.id,
+      '姓名': person.name,
+      '班別': person.shift,
+      '職務': person.role,
+      '國籍': person.nationality,
+      '(A)第一天': person.aDay1,
+      '(A)第二天': person.aDay2,
+      '(B)第一天': person.bDay1,
+      '(B)第二天': person.bDay2,
+      '在職狀態': person.employmentStatus,
+      '備註': person.note,
+    };
+
+    peopleSheet.appendRow(peopleHeaders.map(function (header) {
+      return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';
+    }));
+
+    return { ok: true, message: '人員已新增', person: person };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** =========================
