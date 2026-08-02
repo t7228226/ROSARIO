@@ -20,8 +20,7 @@
  * 2. 若 04 沒有「輪休需求(單批)」，會優先改寫 02_站點主表 的「輪休最低人數」。
  * 3. updateStationRule 會同步更新同班同站的所有規則列，避免三日別殘留不同值。
  * 4. upsertQualification / deleteQualification 會自動寫入 06_資格異動紀錄。
- * 5. bootstrap 前會先嘗試由 03_站點矩陣同步重建 03_資格明細，
- *    讓使用者日常只維護矩陣，前端仍維持讀取 qualifications 長表。
+ * 5. bootstrap 只回傳日常操作必要資料，權限設定改由 permissionConfig 背景載入。
  */
 
 const SHEETS = {
@@ -46,7 +45,7 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有同名設定，會以試算表設定為準。
-  APP_VERSION: '2026-08-02-v2-001',
+  APP_VERSION: '2026-08-02-v2-002',
   MIN_WRITE_VERSION: '2026-05-03-004',
 };
 
@@ -157,17 +156,11 @@ function buildBootstrap_() {
   const qualificationRows = getSheetObjects_(SHEETS.QUALIFICATIONS);
   const ruleRows = getSheetObjects_(SHEETS.RULES);
   const accountRows = getSheetObjects_(SHEETS.ACCOUNTS);
-  const permissionItemRows = getSheetObjects_(SHEETS.PERMISSION_ITEMS);
-  const rolePermissionRows = getSheetObjects_(SHEETS.ROLE_PERMISSIONS);
-  const personalPermissionRows = getSheetObjects_(SHEETS.PERSONAL_PERMISSION_EXCEPTIONS);
 
   const people = mergeAccountFieldsIntoPeople_(normalizePeople_(peopleRows), accountRows);
   const stations = normalizeStations_(stationRows);
   const qualifications = normalizeQualifications_(qualificationRows);
   const stationRules = normalizeTeamOnlyRules_(ruleRows, stationRows);
-  const permissionItems = normalizePermissionItems_(permissionItemRows);
-  const rolePermissionMaps = normalizeRolePermissionMaps_(rolePermissionRows);
-  const personalPermissionExceptions = normalizePersonalPermissionExceptions_(personalPermissionRows);
 
   return {
     ok: true,
@@ -175,9 +168,6 @@ function buildBootstrap_() {
     stations,
     qualifications,
     stationRules,
-    permissionItems,
-    rolePermissionMaps,
-    personalPermissionExceptions,
     qualificationSync,
   };
 }
@@ -198,8 +188,6 @@ function mergeAccountFieldsIntoPeople_(people, accountRows) {
 
     return Object.assign({}, person, {
       account: normalizeString_(account['登入帳號']),
-      loginPassword: normalizeString_(account['登入密碼']),
-      password: normalizeString_(account['登入密碼']),
       accountEnabled: normalizeString_(account['啟用狀態']) || '啟用',
       accountStatus: normalizeString_(account['啟用狀態']) || '啟用',
       systemPermission: normalizeString_(account['系統權限']) || person.systemPermission || '技術員',
@@ -254,8 +242,6 @@ function login_(payload) {
     systemPermission: normalizeString_(matched['系統權限']) || '技術員',
     permissionLevel: normalizeString_(matched['系統權限']) || '技術員',
     account: normalizeString_(matched['登入帳號']),
-    loginPassword: normalizeString_(matched['登入密碼']),
-    password: normalizeString_(matched['登入密碼']),
     accountEnabled: enabled || '啟用',
     accountStatus: enabled || '啟用',
   });
@@ -856,7 +842,12 @@ function updatePerson_(payload) {
     }
   }
 
-  return { ok: true, person: payload };
+  const responsePerson = Object.assign({}, payload);
+  delete responsePerson.password;
+  delete responsePerson.loginPassword;
+  delete responsePerson.accountPassword;
+  delete responsePerson['登入密碼'];
+  return { ok: true, person: responsePerson };
 }
 
 function createPerson_(payload) {
@@ -907,6 +898,15 @@ function createPerson_(payload) {
       '在職狀態': person.employmentStatus,
       '備註': person.note,
     };
+
+    if (payload.validateOnly === true || normalizeString_(payload.validateOnly).toUpperCase() === 'Y') {
+      return {
+        ok: true,
+        message: '新增人員驗證通過，未寫入正式資料',
+        validatedOnly: true,
+        person: person,
+      };
+    }
 
     peopleSheet.appendRow(peopleHeaders.map(function (header) {
       return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';

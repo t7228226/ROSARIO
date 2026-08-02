@@ -26,8 +26,6 @@ export interface Person {
   permissionLevel?: UserRole | string;
   isSuperAdmin?: boolean;
   account?: string;
-  loginPassword?: string;
-  password?: string;
   accountEnabled?: string;
   accountStatus?: string;
   enabled?: string;

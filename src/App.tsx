@@ -68,7 +68,7 @@ const appVersionStorageKey = "stationAppVersion";
 const GAS_WRITE_ENDPOINT = appEnvironment.gasEndpoint;
 const APP_VERSION = appEnvironment.version;
 const GAS_READ_TIMEOUT_MS = 20_000;
-const GAS_BOOTSTRAP_TIMEOUT_MS = 35_000;
+const GAS_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
 function createEmptyPersonDraft(): Person {
   return {
@@ -202,6 +202,27 @@ async function fetchGasBootstrapData(): Promise<AppBootstrap> {
   return result;
 }
 
+async function fetchGasPermissionConfig(): Promise<{
+  permissionItems?: PermissionItemDefinition[];
+  rolePermissionMaps?: RolePermissionMapDefinition[];
+  personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
+}> {
+  const response = await fetchWithTimeout(
+    `${GAS_WRITE_ENDPOINT}?action=permissionConfig&appVersion=${encodeURIComponent(APP_VERSION)}`,
+    { cache: "no-store" },
+    GAS_BOOTSTRAP_TIMEOUT_MS
+  );
+  const result = (await response.json()) as GasWriteResponse & {
+    permissionItems?: PermissionItemDefinition[];
+    rolePermissionMaps?: RolePermissionMapDefinition[];
+    personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
+  };
+  if (!response.ok || result.ok === false) {
+    throw new Error(String(result.message || "權限設定讀取失敗"));
+  }
+  return result;
+}
+
 async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWriteVersion: string; outdated: boolean; writeBlocked: boolean; message?: string }> {
   const response = await fetchWithTimeout(`${GAS_WRITE_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store" }, 10_000);
   const result = (await response.json()) as GasWriteResponse & { latestVersion?: string; minWriteVersion?: string; outdated?: boolean; writeBlocked?: boolean; message?: string };
@@ -331,7 +352,14 @@ function isRealStationRecord(station: AppBootstrap["stations"][number]) {
 }
 
 function sanitizeBootstrapData(source: AppBootstrap): AppBootstrap {
-  const people = (source.people || []).filter(isRealPersonRecord);
+  const people = (source.people || []).filter(isRealPersonRecord).map((person) => {
+    const sanitized = { ...person } as Person & Record<string, unknown>;
+    delete sanitized.password;
+    delete sanitized.loginPassword;
+    delete sanitized.accountPassword;
+    delete sanitized["登入密碼"];
+    return sanitized as Person;
+  });
   const personIds = new Set(people.map((person) => person.id));
   const stations = (source.stations || []).filter(isRealStationRecord);
   const stationIds = new Set(stations.map((station) => station.id));
@@ -988,21 +1016,10 @@ export default function App() {
           throw new Error("人員主表讀取為 0 筆，請確認 GAS 已部署標題列自動偵測修正版。");
         }
         setData(next);
-        const permissionConfig = next as AppBootstrap & {
-          permissionItems?: PermissionItemDefinition[];
-          rolePermissionMaps?: RolePermissionMapDefinition[];
-          personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
-        };
-        const nextPermissionItems = mergePermissionItemsWithSaved(permissionConfig.permissionItems);
-        setPermissionItemStates(nextPermissionItems);
-        setRolePermissionMapStates(buildRolePermissionMapsFromSaved(permissionConfig.rolePermissionMaps, nextPermissionItems));
-        if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
-          setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
-        }
       } catch (error) {
         if (!active) return;
         setPage("home");
-        const message = error instanceof Error ? error.message : "請確認 GAS 已重新部署且可回傳權限/帳號資料。";
+        const message = error instanceof Error ? error.message : "請確認 GAS 已重新部署且可回傳核心資料。";
         setBootstrapError(message);
         setFlashMessage(`系統資料載入失敗：${message}`);
       } finally {
@@ -1014,6 +1031,29 @@ export default function App() {
       active = false;
     };
   }, [bootstrapRetryKey]);
+
+  useEffect(() => {
+    if (!data.people.length) return;
+    let active = true;
+    async function loadPermissionConfig() {
+      try {
+        const permissionConfig = await fetchGasPermissionConfig();
+        if (!active) return;
+        const nextPermissionItems = mergePermissionItemsWithSaved(permissionConfig.permissionItems);
+        setPermissionItemStates(nextPermissionItems);
+        setRolePermissionMapStates(buildRolePermissionMapsFromSaved(permissionConfig.rolePermissionMaps, nextPermissionItems));
+        if (Array.isArray(permissionConfig.personalPermissionExceptions)) {
+          setPersonalPermissionExceptions(permissionConfig.personalPermissionExceptions);
+        }
+      } catch (error) {
+        console.warn("權限設定背景載入失敗，暫時沿用內建設定。", error);
+      }
+    }
+    void loadPermissionConfig();
+    return () => {
+      active = false;
+    };
+  }, [bootstrapRetryKey, data.people.length]);
 
   useEffect(() => {
     if (!data.people.length || currentUser) return;
