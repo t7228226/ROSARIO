@@ -7,6 +7,7 @@ import type {
   Station,
   StationRule,
 } from "../../types";
+import { getReliefRuleNeed, getRuleNeed } from "../../lib/selectors";
 import { evaluateWorkforceScenario } from "./engine";
 
 const team = "翊展班" as const;
@@ -64,6 +65,18 @@ function snapshot(
 }
 
 describe("evaluateWorkforceScenario", () => {
+  it("第一天與第二天只改變出勤人員，站點分析仍使用最低需求", () => {
+    const stationRule: StationRule = {
+      ...rule("A", 4),
+      reliefMinPerBatch: 1,
+    };
+
+    assert.equal(getRuleNeed(stationRule, "當班"), 4);
+    assert.equal(getRuleNeed(stationRule, "第一天"), 4);
+    assert.equal(getRuleNeed(stationRule, "第二天"), 4);
+    assert.equal(getReliefRuleNeed(stationRule), 1);
+  });
+
   it("使用最大匹配保留彈性人員並完整覆蓋兩站", () => {
     const data = snapshot(
       [person("P-FLEX"), person("P-RARE")],

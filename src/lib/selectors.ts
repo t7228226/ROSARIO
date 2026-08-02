@@ -155,10 +155,12 @@ export function getApplicableRules(team: TeamName, mode: ShiftMode, stationRules
   return [...matched].sort((a, b) => (a.priority ?? 999) - (b.priority ?? 999));
 }
 
-export function getRuleNeed(rule: StationRule, mode: ShiftMode) {
-  if (mode === "當班") return Math.max(0, Number(rule.minRequired || 0));
-  const reliefNeed = Number(rule.reliefMinPerBatch ?? 0);
-  return Math.max(0, reliefNeed || Number(rule.minRequired || 0));
+export function getRuleNeed(rule: StationRule, _mode: ShiftMode) {
+  return Math.max(0, Number(rule.minRequired || 0));
+}
+
+export function getReliefRuleNeed(rule: StationRule) {
+  return Math.max(0, Number(rule.reliefMinPerBatch || 0));
 }
 
 export function qualificationBadge(status: string): string {

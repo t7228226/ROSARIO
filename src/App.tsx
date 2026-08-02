@@ -5978,7 +5978,7 @@ export default function App() {
                       <thead>
                         <tr>
                           <th>站點</th>
-                          <th>{gapDay === "當班" ? "最低需求" : "輪休需求"}</th>
+                          <th>最低需求</th>
                           <th>{gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}</th>
                           <th>{gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全局缺口"}</th>
                           <th>本班合格</th>
