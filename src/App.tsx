@@ -70,6 +70,9 @@ const APP_VERSION = appEnvironment.version;
 const GAS_READ_TIMEOUT_MS = 20_000;
 const GAS_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
+const GAS_WRITE_STATUS_TIMEOUT_MS = 12_000;
+const PENDING_WRITE_TTL_MS = 15 * 60 * 1000;
+const pendingWriteStorageKey = "stationAppPendingWrites";
 function createEmptyPersonDraft(): Person {
   return {
     id: "",
@@ -131,6 +134,111 @@ function hideGlobalProcessingOverlay() {
   if (overlay) overlay.remove();
 }
 
+function updateGlobalProcessingOverlay(title: string, detail: string) {
+  if (typeof document === "undefined") return;
+  const overlay = document.getElementById("global-processing-overlay");
+  if (!overlay) return;
+  const titleEl = overlay.querySelector(".global-processing-title");
+  const detailEl = overlay.querySelector(".global-processing-detail");
+  if (titleEl) titleEl.textContent = title;
+  if (detailEl) detailEl.textContent = detail;
+}
+
+class RequestTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`連線逾時（${Math.round(timeoutMs / 1000)} 秒）。`);
+    this.name = "RequestTimeoutError";
+  }
+}
+
+class GasWriteRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GasWriteRejectedError";
+  }
+}
+
+type PendingWriteOperation = {
+  operationId: string;
+  createdAt: number;
+};
+
+type GasOperationStatus = GasWriteResponse & {
+  found?: boolean;
+  status?: "processing" | "success" | "failed" | "unknown";
+  result?: GasWriteResponse;
+};
+
+const inFlightWriteRequests = new Map<string, Promise<GasWriteResponse>>();
+
+function stableSerialize(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function hashText(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function getWriteFingerprint(action: string, payload: Record<string, unknown>) {
+  const serialized = stableSerialize(payload);
+  return `${action}:${serialized.length}:${hashText(serialized)}`;
+}
+
+function readPendingWrites(): Record<string, PendingWriteOperation> {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(pendingWriteStorageKey) || "{}") as Record<string, PendingWriteOperation>;
+    const now = Date.now();
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, item]) => item?.operationId && now - Number(item.createdAt || 0) < PENDING_WRITE_TTL_MS)
+    );
+  } catch {
+    return {};
+  }
+}
+
+function rememberPendingWrite(fingerprint: string, operation: PendingWriteOperation) {
+  try {
+    const pending = readPendingWrites();
+    pending[fingerprint] = operation;
+    window.sessionStorage.setItem(pendingWriteStorageKey, JSON.stringify(pending));
+  } catch {
+    // sessionStorage unavailable; the current in-flight request is still deduplicated.
+  }
+}
+
+function clearPendingWrite(fingerprint: string) {
+  try {
+    const pending = readPendingWrites();
+    delete pending[fingerprint];
+    window.sessionStorage.setItem(pendingWriteStorageKey, JSON.stringify(pending));
+  } catch {
+    // Cleanup failure does not change the write result.
+  }
+}
+
+function createOperationId(action: string) {
+  const randomPart = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID().replace(/-/g, "")
+    : Math.random().toString(36).slice(2);
+  return `OP_${action}_${Date.now()}_${randomPart}`.slice(0, 120);
+}
+
+function wait(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
+}
+
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = GAS_READ_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -138,7 +246,7 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
     return await fetch(input, { ...init, signal: controller.signal });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`連線逾時（${Math.round(timeoutMs / 1000)} 秒），請稍後再試。`);
+      throw new RequestTimeoutError(timeoutMs);
     }
     throw error;
   } finally {
@@ -146,47 +254,132 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
+async function fetchGasOperationStatus(operationId: string): Promise<GasOperationStatus> {
+  const url = new URL(GAS_WRITE_ENDPOINT);
+  url.searchParams.set("action", "operationStatus");
+  url.searchParams.set("operationId", operationId);
+  url.searchParams.set("appVersion", APP_VERSION);
+  const response = await fetchWithTimeout(url.toString(), { cache: "no-store" }, GAS_WRITE_STATUS_TIMEOUT_MS);
+  const result = (await response.json()) as GasOperationStatus;
+  if (!response.ok || result.ok === false) {
+    throw new Error(String(result.message || "無法確認儲存結果。"));
+  }
+  return result;
+}
+
+async function pollGasOperation(operationId: string, delays = [700, 1400, 2500, 4000]): Promise<GasWriteResponse | null> {
+  for (const delay of delays) {
+    await wait(delay);
+    try {
+      const status = await fetchGasOperationStatus(operationId);
+      if (status.status === "success" && status.result) return status.result;
+      if (status.status === "failed") {
+        throw new GasWriteRejectedError(String(status.message || "資料寫入失敗。"));
+      }
+      if (!status.found || status.status === "unknown") return null;
+    } catch (error) {
+      if (error instanceof GasWriteRejectedError) throw error;
+      // 狀態查詢短暫失敗時，繼續下一輪確認。
+    }
+  }
+  return null;
+}
+
+function isTransientWriteError(error: unknown) {
+  return error instanceof RequestTimeoutError ||
+    error instanceof TypeError ||
+    (error instanceof Error && /network|fetch|連線|逾時/i.test(error.message));
+}
+
+async function sendGasAction(action: string, payload: Record<string, unknown>, operationId?: string) {
+  const response = await fetchWithTimeout(GAS_WRITE_ENDPOINT, {
+    method: "POST",
+    body: JSON.stringify({ action, appVersion: APP_VERSION, operationId, payload }),
+  }, operationId ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
+  const result = (await response.json()) as GasWriteResponse;
+  if (!response.ok || result.ok === false) {
+    throw new GasWriteRejectedError(String(result.message || `GAS ${action} 儲存失敗`));
+  }
+  return result;
+}
+
+async function performReliableGasWrite(
+  action: string,
+  payload: Record<string, unknown>,
+  fingerprint: string,
+  operationId: string
+): Promise<GasWriteResponse> {
+  const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
+  showGlobalProcessingOverlay(processingKind);
+  rememberPendingWrite(fingerprint, { operationId, createdAt: Date.now() });
+
+  try {
+    try {
+      const result = await sendGasAction(action, payload, operationId);
+      if (!result.pending) {
+        clearPendingWrite(fingerprint);
+        return result;
+      }
+    } catch (error) {
+      if (error instanceof GasWriteRejectedError) {
+        clearPendingWrite(fingerprint);
+        throw error;
+      }
+      if (!isTransientWriteError(error)) throw error;
+    }
+
+    updateGlobalProcessingOverlay("正在確認儲存結果", "連線較慢，系統正在確認資料是否已經寫入，請勿重複操作。");
+    const confirmed = await pollGasOperation(operationId);
+    if (confirmed) {
+      clearPendingWrite(fingerprint);
+      return confirmed;
+    }
+
+    updateGlobalProcessingOverlay("正在安全重送", "尚未找到原請求，將使用相同操作編號再送一次，不會重複新增。");
+    try {
+      const retried = await sendGasAction(action, payload, operationId);
+      if (!retried.pending) {
+        clearPendingWrite(fingerprint);
+        return retried;
+      }
+    } catch (error) {
+      if (error instanceof GasWriteRejectedError) {
+        clearPendingWrite(fingerprint);
+        throw error;
+      }
+      if (!isTransientWriteError(error)) throw error;
+    }
+
+    updateGlobalProcessingOverlay("仍在確認中", "伺服器仍在處理，系統會再次核對結果。");
+    const retriedConfirmation = await pollGasOperation(operationId, [1000, 2000, 4000, 6000]);
+    if (retriedConfirmation) {
+      clearPendingWrite(fingerprint);
+      return retriedConfirmation;
+    }
+
+    throw new Error(`資料可能仍在處理，請先重新整理確認；再次操作時系統會沿用同一筆請求。操作編號：${operationId}`);
+  } finally {
+    hideGlobalProcessingOverlay();
+  }
+}
+
 async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
   const isWriteAction = FRONT_WRITE_ACTIONS.has(action);
-  const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
-
-  if (isWriteAction && !appEnvironment.writesEnabled) {
+  if (!isWriteAction) return sendGasAction(action, payload);
+  if (!appEnvironment.writesEnabled) {
     throw new Error("升級測試環境目前為唯讀，已阻擋寫入正式資料。");
   }
 
-  if (isWriteAction) {
-    showGlobalProcessingOverlay(processingKind);
-  }
+  const fingerprint = getWriteFingerprint(action, payload);
+  const currentRequest = inFlightWriteRequests.get(fingerprint);
+  if (currentRequest) return currentRequest;
 
-  try {
-    if (isWriteAction) {
-      const [status, deployedVersion] = await Promise.all([
-        fetchGasVersionStatus().catch(() => null),
-        fetchDeployedFrontendVersion().catch(() => null),
-      ]);
-      if (deployedVersion && compareAppVersion(deployedVersion, APP_VERSION) > 0) {
-        throw new Error(`系統已有新版：${deployedVersion}。目前載入版本為 ${APP_VERSION}，請重新整理後繼續操作。`);
-      }
-      if (status?.outdated || status?.writeBlocked) {
-        throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
-      }
-    }
-
-    const response = await fetchWithTimeout(GAS_WRITE_ENDPOINT, {
-      method: "POST",
-      body: JSON.stringify({ action, appVersion: APP_VERSION, payload }),
-    }, isWriteAction ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
-
-    const result = (await response.json()) as GasWriteResponse;
-    if (!response.ok || result.ok === false) {
-      throw new Error(String(result.message || `GAS ${action} 儲存失敗`));
-    }
-    return result;
-  } finally {
-    if (isWriteAction) {
-      hideGlobalProcessingOverlay();
-    }
-  }
+  const pending = readPendingWrites()[fingerprint];
+  const operationId = pending?.operationId || createOperationId(action);
+  const request = performReliableGasWrite(action, payload, fingerprint, operationId)
+    .finally(() => inFlightWriteRequests.delete(fingerprint));
+  inFlightWriteRequests.set(fingerprint, request);
+  return request;
 }
 
 async function fetchGasBootstrapData(): Promise<AppBootstrap> {
@@ -239,6 +432,22 @@ async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWrit
 }
 
 function compareAppVersion(a: string | null | undefined, b: string | null | undefined) {
+  const parse = (value: string | null | undefined) => {
+    const text = String(value || "").trim();
+    const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!dateMatch) return null;
+    const revisionMatch = text.match(/(?:-v\d+)?-(\d+)$/);
+    return {
+      date: Number(`${dateMatch[1]}${dateMatch[2]}${dateMatch[3]}`),
+      revision: Number(revisionMatch?.[1] || 0),
+    };
+  };
+  const left = parse(a);
+  const right = parse(b);
+  if (left && right) {
+    if (left.date !== right.date) return left.date - right.date;
+    if (left.revision !== right.revision) return left.revision - right.revision;
+  }
   return String(a || "").localeCompare(String(b || ""), "en", { numeric: true });
 }
 
@@ -902,15 +1111,6 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [flash, toastDurationMs]);
 
-  async function checkAppVersionBeforeWrite() {
-    const status = await fetchGasVersionStatus();
-    if (status.outdated || status.writeBlocked) {
-      setAppVersionBlocked(true);
-      setAppVersionMessage(status.message || "系統已有新版，請重新整理後繼續操作。");
-      throw new Error(status.message || "系統已有新版，請重新整理後繼續操作。");
-    }
-  }
-
   useEffect(() => {
     const storedVersion = window.localStorage.getItem(appVersionStorageKey);
     if (!storedVersion) {
@@ -923,6 +1123,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (appEnvironment.isPreview) return;
     let active = true;
     async function checkVersion() {
       try {
@@ -1789,7 +1990,6 @@ export default function App() {
       return false;
     }
     const payload: Qualification = { employeeId: employee.id, employeeName: employee.name, stationId, status };
-    await checkAppVersionBeforeWrite();
     await postGasAction("upsertQualification", payload as unknown as Record<string, unknown>);
     setData((current) => {
       const exists = current.qualifications.some((item) => item.employeeId === payload.employeeId && item.stationId === payload.stationId);
@@ -1831,7 +2031,6 @@ export default function App() {
       setFlashMessage("已取消刪除。");
       return;
     }
-    await checkAppVersionBeforeWrite();
     await postGasAction("deleteQualification", { employeeId, stationId });
     setData((current) => ({ ...current, qualifications: current.qualifications.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId)) }));
     setFlashMessage("站點考核已刪除。");
@@ -1843,7 +2042,6 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await checkAppVersionBeforeWrite();
     await postGasAction("updatePerson", next as unknown as Record<string, unknown>);
     setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
     if (currentUser?.id === person.id) setCurrentUser(next);
@@ -1869,7 +2067,6 @@ export default function App() {
 
     setNewPersonSubmitting(true);
     try {
-      await checkAppVersionBeforeWrite();
       const result = await postGasAction("createPerson", next as unknown as Record<string, unknown>);
       const created = result.person && typeof result.person === "object"
         ? { ...next, ...(result.person as Person) }
@@ -1919,7 +2116,6 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await checkAppVersionBeforeWrite();
     await postGasAction("updateStationRule", next as unknown as Record<string, unknown>);
     setData((current) => {
       const rules = current.stationRules || [];
@@ -2730,7 +2926,6 @@ export default function App() {
           accountEnabled: nextStatus,
           enabled: nextStatus === "啟用" ? "Y" : "N",
         } as Person & Record<string, unknown>;
-        await checkAppVersionBeforeWrite();
         await postGasAction("updatePerson", payload);
         setData((current) => ({
           ...current,
@@ -2758,7 +2953,6 @@ export default function App() {
           loginPassword: nextPassword,
           accountPassword: nextPassword,
         } as Person & Record<string, unknown>;
-        await checkAppVersionBeforeWrite();
         await postGasAction("updatePerson", payload);
         setAccountPasswordById((current) => ({ ...current, [person.id]: nextPassword }));
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));

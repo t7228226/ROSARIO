@@ -44,10 +44,15 @@ const SETTINGS = {
   AUTO_SYNC_QUALIFICATIONS_FROM_MATRIX_ON_BOOTSTRAP: false,
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
-  // 若 00_系統設定 內有同名設定，會以試算表設定為準。
-  APP_VERSION: '2026-08-02-v2-002',
-  MIN_WRITE_VERSION: '2026-05-03-004',
+  // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
+  APP_VERSION: '2026-08-02-003',
+  MIN_WRITE_VERSION: '2026-08-02-003',
+  OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
+  OPERATION_MAX_RECORDS: 160,
+  WRITE_LOCK_TIMEOUT_MS: 20000,
 };
+
+const OPERATION_PROPERTY_PREFIX = 'ROSARIO_OP_';
 
 function doGet(e) {
   try {
@@ -70,6 +75,9 @@ function doGet(e) {
     if (action === 'loadScheduleDrafts') {
       return jsonOutput_(loadScheduleDrafts_((e && e.parameter) || {}));
     }
+    if (action === 'operationStatus') {
+      return jsonOutput_(getOperationStatus_((e && e.parameter && e.parameter.operationId) || ''));
+    }
     return jsonOutput_({ ok: false, message: 'Unknown GET action', action });
   } catch (error) {
     return jsonOutput_(errorPayload_(error));
@@ -88,42 +96,33 @@ function doPost(e) {
       case 'login':
         return jsonOutput_(login_(payload));
       case 'upsertQualification':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(upsertQualification_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertQualification_(payload); }));
       case 'deleteQualification':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(deleteQualification_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deleteQualification_(payload); }));
       case 'updateStationRule':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(updateStationRule_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateStationRule_(payload); }));
       case 'updatePerson':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(updatePerson_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updatePerson_(payload); }));
       case 'createPerson':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(createPerson_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return createPerson_(payload); }));
       case 'updatePermissionItem':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(updatePermissionItem_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updatePermissionItem_(payload); }));
       case 'updateRolePermission':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(updateRolePermission_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateRolePermission_(payload); }));
       case 'upsertPersonalPermissionException':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(upsertPersonalPermissionException_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertPersonalPermissionException_(payload); }));
       case 'deletePersonalPermissionException':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(deletePersonalPermissionException_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deletePersonalPermissionException_(payload); }));
       case 'saveScheduleDraft':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(saveScheduleDraft_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return saveScheduleDraft_(payload); }));
       case 'loadScheduleDrafts':
         return jsonOutput_(loadScheduleDrafts_(payload));
       case 'permissionConfig':
         return jsonOutput_(buildPermissionConfig_());
       case 'syncQualificationsFromMatrix':
-        assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-        return jsonOutput_(syncQualificationsFromMatrix_(payload));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return syncQualificationsFromMatrix_(payload); }));
+      case 'operationStatus':
+        return jsonOutput_(getOperationStatus_(body.operationId || payload.operationId || ''));
       case 'matrixDebug':
         return jsonOutput_(debugQualificationMatrix_());
       case 'bootstrap':
@@ -134,6 +133,175 @@ function doPost(e) {
   } catch (error) {
     return jsonOutput_(errorPayload_(error));
   }
+}
+
+function executeWriteRequest_(action, body, payload, callback) {
+  assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
+  const operationId = normalizeString_(body.operationId || payload.operationId);
+  return executeReliableWrite_(action, operationId, callback);
+}
+
+function executeReliableWrite_(action, operationId, callback) {
+  if (!operationId) {
+    return withDocumentWriteLock_(callback);
+  }
+  if (!/^OP_[A-Za-z0-9_-]{8,117}$/.test(operationId)) {
+    throw new Error('操作編號格式不正確');
+  }
+
+  const begin = beginOperation_(action, operationId);
+  if (!begin.started) {
+    return operationRecordResponse_(operationId, begin.record);
+  }
+
+  try {
+    const result = withDocumentWriteLock_(callback);
+    finishOperation_(operationId, 'success', result, '');
+    return Object.assign({}, result || { ok: true }, {
+      operationId: operationId,
+      operationStatus: 'success',
+    });
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    finishOperation_(operationId, 'failed', null, message);
+    throw error;
+  }
+}
+
+function withDocumentWriteLock_(callback) {
+  const lock = LockService.getDocumentLock();
+  if (!lock) return callback();
+  lock.waitLock(SETTINGS.WRITE_LOCK_TIMEOUT_MS);
+  try {
+    return callback();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function beginOperation_(action, operationId) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    pruneOperationRecords_(properties);
+    const existing = readOperationRecord_(properties, operationId);
+    if (existing) return { started: false, record: existing };
+
+    const record = {
+      action: action,
+      status: 'processing',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+    return { started: true, record: record };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function finishOperation_(operationId, status, result, message) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    const current = readOperationRecord_(properties, operationId) || { createdAt: Date.now() };
+    const record = {
+      action: current.action || '',
+      status: status,
+      createdAt: current.createdAt || Date.now(),
+      updatedAt: Date.now(),
+      result: result || null,
+      message: message || '',
+    };
+    properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function getOperationStatus_(operationId) {
+  operationId = normalizeString_(operationId);
+  if (!operationId) {
+    return { ok: false, message: '缺少操作編號' };
+  }
+  const properties = PropertiesService.getScriptProperties();
+  const record = readOperationRecord_(properties, operationId);
+  if (!record) {
+    return { ok: true, found: false, status: 'unknown', operationId: operationId };
+  }
+  return {
+    ok: true,
+    found: true,
+    status: record.status || 'unknown',
+    operationId: operationId,
+    result: record.status === 'success' ? (record.result || { ok: true }) : undefined,
+    message: record.message || '',
+    updatedAt: record.updatedAt || record.createdAt || 0,
+  };
+}
+
+function operationRecordResponse_(operationId, record) {
+  if (record.status === 'success') {
+    return Object.assign({}, record.result || { ok: true }, {
+      operationId: operationId,
+      operationStatus: 'success',
+      replayed: true,
+    });
+  }
+  if (record.status === 'failed') {
+    return {
+      ok: false,
+      operationId: operationId,
+      operationStatus: 'failed',
+      replayed: true,
+      message: record.message || '先前操作失敗',
+    };
+  }
+  return {
+    ok: true,
+    pending: true,
+    operationId: operationId,
+    operationStatus: 'processing',
+    message: '同一筆資料仍在處理中',
+  };
+}
+
+function operationPropertyKey_(operationId) {
+  return OPERATION_PROPERTY_PREFIX + operationId;
+}
+
+function readOperationRecord_(properties, operationId) {
+  const raw = properties.getProperty(operationPropertyKey_(operationId));
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    properties.deleteProperty(operationPropertyKey_(operationId));
+    return null;
+  }
+}
+
+function pruneOperationRecords_(properties) {
+  const now = Date.now();
+  const records = Object.keys(properties.getProperties())
+    .filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; })
+    .map(function (key) {
+      try {
+        const record = JSON.parse(properties.getProperty(key) || '{}');
+        return { key: key, updatedAt: Number(record.updatedAt || record.createdAt || 0) };
+      } catch (error) {
+        return { key: key, updatedAt: 0 };
+      }
+    })
+    .sort(function (left, right) { return right.updatedAt - left.updatedAt; });
+
+  records.forEach(function (item, index) {
+    if (now - item.updatedAt > SETTINGS.OPERATION_TTL_MS || index >= SETTINGS.OPERATION_MAX_RECORDS) {
+      properties.deleteProperty(item.key);
+    }
+  });
 }
 
 /** =========================
@@ -859,63 +1027,57 @@ function createPerson_(payload) {
     throw new Error('createPerson 缺少工號、姓名或班別');
   }
 
-  const lock = LockService.getDocumentLock();
-  lock.waitLock(10000);
-  try {
-    const peopleSheet = getSheet_(SHEETS.PEOPLE);
-    const peopleHeaders = getHeaders_(peopleSheet);
-    const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
-    const duplicate = peopleRows.some(function (row) {
-      return normalizeString_(row['工號']).toUpperCase() === employeeId;
-    });
-    if (duplicate) {
-      throw new Error('工號已存在：' + employeeId);
-    }
-
-    const person = {
-      id: employeeId,
-      name: name,
-      shift: shift,
-      role: normalizeString_(payload.role) || '技術員',
-      nationality: normalizeString_(payload.nationality),
-      aDay1: normalizeString_(payload.aDay1),
-      aDay2: normalizeString_(payload.aDay2),
-      bDay1: normalizeString_(payload.bDay1),
-      bDay2: normalizeString_(payload.bDay2),
-      employmentStatus: normalizeString_(payload.employmentStatus) || '在職',
-      note: normalizeString_(payload.note),
-    };
-    const valuesByHeader = {
-      '工號': person.id,
-      '姓名': person.name,
-      '班別': person.shift,
-      '職務': person.role,
-      '國籍': person.nationality,
-      '(A)第一天': person.aDay1,
-      '(A)第二天': person.aDay2,
-      '(B)第一天': person.bDay1,
-      '(B)第二天': person.bDay2,
-      '在職狀態': person.employmentStatus,
-      '備註': person.note,
-    };
-
-    if (payload.validateOnly === true || normalizeString_(payload.validateOnly).toUpperCase() === 'Y') {
-      return {
-        ok: true,
-        message: '新增人員驗證通過，未寫入正式資料',
-        validatedOnly: true,
-        person: person,
-      };
-    }
-
-    peopleSheet.appendRow(peopleHeaders.map(function (header) {
-      return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';
-    }));
-
-    return { ok: true, message: '人員已新增', person: person };
-  } finally {
-    lock.releaseLock();
+  const peopleSheet = getSheet_(SHEETS.PEOPLE);
+  const peopleHeaders = getHeaders_(peopleSheet);
+  const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
+  const duplicate = peopleRows.some(function (row) {
+    return normalizeString_(row['工號']).toUpperCase() === employeeId;
+  });
+  if (duplicate) {
+    throw new Error('工號已存在：' + employeeId);
   }
+
+  const person = {
+    id: employeeId,
+    name: name,
+    shift: shift,
+    role: normalizeString_(payload.role) || '技術員',
+    nationality: normalizeString_(payload.nationality),
+    aDay1: normalizeString_(payload.aDay1),
+    aDay2: normalizeString_(payload.aDay2),
+    bDay1: normalizeString_(payload.bDay1),
+    bDay2: normalizeString_(payload.bDay2),
+    employmentStatus: normalizeString_(payload.employmentStatus) || '在職',
+    note: normalizeString_(payload.note),
+  };
+  const valuesByHeader = {
+    '工號': person.id,
+    '姓名': person.name,
+    '班別': person.shift,
+    '職務': person.role,
+    '國籍': person.nationality,
+    '(A)第一天': person.aDay1,
+    '(A)第二天': person.aDay2,
+    '(B)第一天': person.bDay1,
+    '(B)第二天': person.bDay2,
+    '在職狀態': person.employmentStatus,
+    '備註': person.note,
+  };
+
+  if (payload.validateOnly === true || normalizeString_(payload.validateOnly).toUpperCase() === 'Y') {
+    return {
+      ok: true,
+      message: '新增人員驗證通過，未寫入正式資料',
+      validatedOnly: true,
+      person: person,
+    };
+  }
+
+  peopleSheet.appendRow(peopleHeaders.map(function (header) {
+    return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';
+  }));
+
+  return { ok: true, message: '人員已新增', person: person };
 }
 
 /** =========================
@@ -1368,8 +1530,14 @@ function normalizeScheduleDraftDetails_(rows) {
 
 function buildVersionStatus_(clientVersion) {
   const settings = getSystemSettings_();
-  const appVersion = settings.APP_VERSION || SETTINGS.APP_VERSION;
-  const minWriteVersion = settings.MIN_WRITE_VERSION || SETTINGS.MIN_WRITE_VERSION || appVersion;
+  const configuredAppVersion = settings.APP_VERSION || '';
+  const configuredMinWriteVersion = settings.MIN_WRITE_VERSION || '';
+  const appVersion = configuredAppVersion && compareVersion_(configuredAppVersion, SETTINGS.APP_VERSION) > 0
+    ? configuredAppVersion
+    : SETTINGS.APP_VERSION;
+  const minWriteVersion = configuredMinWriteVersion && compareVersion_(configuredMinWriteVersion, SETTINGS.MIN_WRITE_VERSION) > 0
+    ? configuredMinWriteVersion
+    : SETTINGS.MIN_WRITE_VERSION;
   const version = normalizeString_(clientVersion);
   const maintenanceMode = String(settings.MAINTENANCE_MODE || 'N').toUpperCase() === 'Y';
   const outdated = !version || compareVersion_(version, appVersion) < 0;
@@ -1411,7 +1579,24 @@ function assertWritableAppVersion_(clientVersion) {
 }
 
 function compareVersion_(a, b) {
+  const left = parseVersion_(a);
+  const right = parseVersion_(b);
+  if (left && right) {
+    if (left.date !== right.date) return left.date - right.date;
+    if (left.revision !== right.revision) return left.revision - right.revision;
+  }
   return String(a || '').localeCompare(String(b || ''), 'en', { numeric: true });
+}
+
+function parseVersion_(value) {
+  const text = String(value || '').trim();
+  const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!dateMatch) return null;
+  const revisionMatch = text.match(/(?:-v\d+)?-(\d+)$/);
+  return {
+    date: Number(dateMatch[1] + dateMatch[2] + dateMatch[3]),
+    revision: Number(revisionMatch ? revisionMatch[1] : 0),
+  };
 }
 
 function getSystemSettings_() {

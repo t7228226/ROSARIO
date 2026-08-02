@@ -11,7 +11,7 @@
     "preview": "vite preview",
     "check:contracts": "node scripts/check-contracts.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/domain/workforce/engine.test.ts src/domain/people/newPerson.test.ts",
+    "test": "tsx --test src/domain/workforce/engine.test.ts src/domain/people/newPerson.test.ts scripts/gas-idempotency.test.mjs",
     "test:watch": "tsx --test --watch src/domain/workforce/engine.test.ts src/domain/people/newPerson.test.ts"
   },
   "dependencies": {

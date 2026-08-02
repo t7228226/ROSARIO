@@ -41,4 +41,13 @@ assert.ok(
   "createPerson 必須在寫入前支援 validateOnly 驗證"
 );
 
-console.log(`契約檢查通過：${frontendActions.length} 個寫入動作、密碼回傳防護及新增人員安全驗證皆正常。`);
+assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operationStatus 查詢");
+assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
+assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
+assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
+assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-02-003'/, "舊版前端不得繞過可靠寫入");
+assert.match(appSource, /operationId/, "前端寫入必須傳送 operationId");
+assert.match(appSource, /pollGasOperation/, "前端逾時後必須查詢操作結果");
+assert.match(appSource, /inFlightWriteRequests/, "前端必須阻擋相同內容的重複送出");
+
+console.log(`契約檢查通過：${frontendActions.length} 個寫入動作、密碼防護、validateOnly 與可靠寫入皆正常。`);

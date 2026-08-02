@@ -16,6 +16,6 @@ export const appEnvironment = {
   gasEndpoint: String(import.meta.env.VITE_GAS_API_URL || fallbackGasEndpoint).trim(),
   version: String(
     import.meta.env.VITE_APP_VERSION ||
-      (isPreview ? "2026-08-02-v2-preview.5" : "2026-08-02-v2-002")
+      "2026-08-02-003"
   ).trim(),
 } as const;
