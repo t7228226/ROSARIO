@@ -46,7 +46,7 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有同名設定，會以試算表設定為準。
-  APP_VERSION: '2026-08-02-v2-preview.4',
+  APP_VERSION: '2026-08-02-v2-001',
   MIN_WRITE_VERSION: '2026-05-03-004',
 };
 
