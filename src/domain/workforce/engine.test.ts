@@ -23,6 +23,13 @@ function person(id: string, role = "技術員", shift = team): Person {
   };
 }
 
+function firstDayPerson(id: string, shift: Person["shift"]): Person {
+  return {
+    ...person(id, "技術員", shift),
+    bDay1: shift === team ? "夜B" : "夜A",
+  };
+}
+
 function station(id: string): Station {
   return {
     id,
@@ -92,6 +99,41 @@ describe("evaluateWorkforceScenario", () => {
     assert.equal(result.analysis.shortage, 0);
     assert.deepEqual(result.assignments.A, ["P-RARE"]);
     assert.deepEqual(result.assignments.B, ["P-FLEX"]);
+  });
+
+  it("第一天先配置支援人力，保留本班人力作為備援", () => {
+    const data = snapshot(
+      [firstDayPerson("P-OWN", team), firstDayPerson("P-SUPPORT", "俊志班")],
+      [qualification("P-OWN", "A"), qualification("P-SUPPORT", "A")],
+      ["A"]
+    );
+
+    const result = evaluateWorkforceScenario(data, { team, mode: "第一天" });
+
+    assert.deepEqual(result.assignments.A, ["P-SUPPORT"]);
+    assert.equal(result.analysis.supportAssigned, 1);
+    assert.equal(result.analysis.ownAssigned, 0);
+    assert.equal(result.analysis.ownUnassigned, 1);
+    assert.deepEqual(result.unassignedIds, ["P-OWN"]);
+  });
+
+  it("支援人力缺勤後會重新排列並由本班人力補位", () => {
+    const data = snapshot(
+      [firstDayPerson("P-OWN", team), firstDayPerson("P-SUPPORT", "俊志班")],
+      [qualification("P-OWN", "A"), qualification("P-SUPPORT", "A")],
+      ["A"]
+    );
+
+    const result = evaluateWorkforceScenario(data, {
+      team,
+      mode: "第一天",
+      unavailableIds: ["P-SUPPORT"],
+    });
+
+    assert.deepEqual(result.assignments.A, ["P-OWN"]);
+    assert.equal(result.analysis.shortage, 0);
+    assert.equal(result.analysis.ownAssigned, 1);
+    assert.equal(result.analysis.supportAssigned, 0);
   });
 
   it("領班不列入基礎覆蓋，但會提供幹部支援建議", () => {

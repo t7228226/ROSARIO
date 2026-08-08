@@ -16,6 +16,14 @@ function person(id: string): Person {
   };
 }
 
+function firstDayPerson(id: string, shift: Person["shift"]): Person {
+  return {
+    ...person(id),
+    shift,
+    bDay1: shift === team ? "夜B" : "夜A",
+  };
+}
+
 function rule(stationId: string): StationRule {
   return {
     id: `${team}-當班-${stationId}`,
@@ -103,5 +111,19 @@ describe("analyzeCoverageResilience", () => {
     assert.equal(result.baselineShortage, 1);
     assert.equal(result.trainingSuggestions[0]?.priority, "當前缺口");
     assert.equal(result.trainingSuggestions[0]?.baselineShortageReduced, 1);
+  });
+
+  it("第一天的預防補訓只推薦本班人力，不把支援人力當長期補強對象", () => {
+    const result = analyzeCoverageResilience({
+      team,
+      mode: "第一天",
+      people: [firstDayPerson("P-OWN", team), firstDayPerson("P-SUPPORT", "俊志班")],
+      stationRules: [rule("A")],
+      qualifications: [],
+      maxAbsences: 1,
+    });
+
+    assert.equal(result.trainingSuggestions[0]?.employeeId, "P-OWN");
+    assert.equal(result.trainingSuggestions.some((item) => item.employeeId === "P-SUPPORT"), false);
   });
 });

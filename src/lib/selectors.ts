@@ -267,6 +267,12 @@ export interface CoverageAnalysisResult {
   assigned: number;
   shortage: number;
   fullyCovered: boolean;
+  ownAvailable: number;
+  supportAvailable: number;
+  ownAssigned: number;
+  supportAssigned: number;
+  ownUnassigned: number;
+  supportUnassigned: number;
   rows: CoverageStationRow[];
   criticalPeople: CoverageCriticalPerson[];
   trainingSuggestions: CoverageTrainingSuggestion[];
@@ -435,7 +441,26 @@ export function analyzeStationCoverage(
   const matchingPeople = options.excludeOfficersFromCoverage
     ? activePeople.filter((person) => !isStationOfficer(person) || forcedIds.has(person.id))
     : activePeople;
-  const { assignedByStation, qualifiedByStation } = solveCoverageMatching(rules, matchingPeople, qualifications, mode, new Set<string>(), "資格優先", new Set<string>(), new Set<string>(), forcedAssignments);
+  const matchingPersonIds = new Set(matchingPeople.map((person) => person.id));
+  const ownIds = new Set(attendance.own.map((person) => person.id).filter((id) => matchingPersonIds.has(id)));
+  const supportIds = new Set(attendance.support.map((person) => person.id).filter((id) => matchingPersonIds.has(id)));
+  const matchingStrategy: SmartScheduleMode = mode === "當班" ? "資格優先" : "支援優先";
+  const solveWithAttendancePriority = (
+    matchingQualifications: Qualification[],
+    unavailable = new Set<string>(),
+    assignments = new Map<string, string>()
+  ) => solveCoverageMatching(
+    rules,
+    matchingPeople,
+    matchingQualifications,
+    mode,
+    unavailable,
+    matchingStrategy,
+    ownIds,
+    supportIds,
+    assignments
+  );
+  const { assignedByStation, qualifiedByStation } = solveWithAttendancePriority(qualifications, new Set<string>(), forcedAssignments);
   const required = rules.reduce((sum, rule) => sum + getRuleNeed(rule, mode), 0);
 
   const rows = rules.map((rule) => {
@@ -464,10 +489,15 @@ export function analyzeStationCoverage(
 
   const assigned = rows.reduce((sum, row) => sum + row.assignedIds.length, 0);
   const shortage = Math.max(0, required - assigned);
+  const assignedPersonIds = new Set(rows.flatMap((row) => row.assignedIds));
+  const ownAssigned = [...assignedPersonIds].filter((id) => ownIds.has(id)).length;
+  const supportAssigned = [...assignedPersonIds].filter((id) => supportIds.has(id)).length;
+  const ownAvailable = ownIds.size;
+  const supportAvailable = supportIds.size;
 
   const criticalPeople = matchingPeople
     .map((person) => {
-      const next = solveCoverageMatching(rules, matchingPeople, qualifications, mode, new Set([person.id]));
+      const next = solveWithAttendancePriority(qualifications, new Set([person.id]));
       const affectedStationIds = rules
         .map((rule) => {
           const assignedIds = next.assignedByStation.get(rule.stationId) || [];
@@ -498,9 +528,9 @@ export function analyzeStationCoverage(
                 qualifications,
                 mode,
                 new Set<string>(),
-                "資格優先",
-                new Set<string>(),
-                new Set<string>(),
+                matchingStrategy,
+                ownIds,
+                supportIds,
                 new Map([[person.id, row.stationId]])
               );
               const simulatedShortage = countMatchingShortage(rules, simulated.assignedByStation, mode);
@@ -535,7 +565,10 @@ export function analyzeStationCoverage(
       return b.required - a.required;
     })
     .slice(0, Math.max(8, rules.length));
-  const trainingSuggestionCandidates = matchingPeople
+  const trainingPeople = mode === "當班"
+    ? matchingPeople
+    : matchingPeople.filter((person) => ownIds.has(person.id));
+  const trainingSuggestionCandidates = trainingPeople
     .flatMap((person) => trainingTargetRows
       .filter((row) => !row.qualifiedIds.includes(person.id) && !row.blockedIds.includes(person.id))
       .map((row) => {
@@ -549,9 +582,9 @@ export function analyzeStationCoverage(
           simulatedQualifications,
           mode,
           new Set<string>(),
-          "資格優先",
-          new Set<string>(),
-          new Set<string>(),
+          matchingStrategy,
+          ownIds,
+          supportIds,
           new Map([[person.id, row.stationId]])
         );
         const simulatedShortage = countMatchingShortage(rules, simulated.assignedByStation, mode);
@@ -611,6 +644,12 @@ export function analyzeStationCoverage(
     assigned,
     shortage,
     fullyCovered: shortage === 0,
+    ownAvailable,
+    supportAvailable,
+    ownAssigned,
+    supportAssigned,
+    ownUnassigned: Math.max(0, ownAvailable - ownAssigned),
+    supportUnassigned: Math.max(0, supportAvailable - supportAssigned),
     rows,
     criticalPeople,
     trainingSuggestions,

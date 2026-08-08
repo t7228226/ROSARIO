@@ -188,14 +188,19 @@ function solveScenario(
   workingPeople: Person[],
   qualifications: Qualification[],
   mode: ShiftMode,
-  unavailableIds: Set<string>
+  unavailableIds: Set<string>,
+  ownIds: Set<string>,
+  supportIds: Set<string>
 ): SolvedScenario {
   const { assignedByStation } = solveCoverageMatching(
     rules,
     workingPeople,
     qualifications,
     mode,
-    unavailableIds
+    unavailableIds,
+    mode === "當班" ? "資格優先" : "支援優先",
+    ownIds,
+    supportIds
   );
   const shortageByStation = new Map<string, number>();
   let totalShortage = 0;
@@ -232,7 +237,9 @@ function buildTrainingSuggestions(
   riskScenarios: ScenarioSnapshot[],
   stationRisks: StationResilienceRisk[],
   testedCombinations: number,
-  fullyCoveredScenarios: number
+  fullyCoveredScenarios: number,
+  ownIds: Set<string>,
+  supportIds: Set<string>
 ) {
   const qualificationCountMap = getQualificationCountMap(workingPeople, qualifications);
   const targetStationIds = [
@@ -252,8 +259,12 @@ function buildTrainingSuggestions(
     : baseline.totalShortage === 0 ? 100 : 0;
   const candidates: ResilienceTrainingSuggestion[] = [];
 
+  const trainingPeople = mode === "當班"
+    ? workingPeople
+    : workingPeople.filter((person) => ownIds.has(person.id));
+
   for (const stationId of targetStationIds) {
-    const stationCandidates = workingPeople
+    const stationCandidates = trainingPeople
       .filter((person) => !qualifications.some((item) =>
         item.employeeId === person.id && item.stationId === stationId && Boolean(item.status)
       ))
@@ -278,7 +289,9 @@ function buildTrainingSuggestions(
         workingPeople,
         simulatedQualifications,
         mode,
-        new Set<string>()
+        new Set<string>(),
+        ownIds,
+        supportIds
       );
       const baselineShortageReduced = Math.max(0, baseline.totalShortage - simulatedBaseline.totalShortage);
       let riskScenariosResolved = 0;
@@ -293,7 +306,9 @@ function buildTrainingSuggestions(
           workingPeople,
           simulatedQualifications,
           mode,
-          new Set(scenario.absentIds)
+          new Set(scenario.absentIds),
+          ownIds,
+          supportIds
         );
         shortageSlotsReduced += Math.max(0, scenario.totalShortage - simulated.totalShortage);
         if (scenario.addedShortage > 0 && simulated.totalShortage <= baseline.totalShortage) {
@@ -354,9 +369,20 @@ function buildTrainingSuggestions(
 export function analyzeCoverageResilience(input: ResilienceInput): CoverageResilienceResult {
   const attendance = getAttendanceForTeam(input.people, input.team, input.mode);
   const workingPeople = attendance.all.filter((person) => !isOfficer(person));
+  const workingPersonIds = new Set(workingPeople.map((person) => person.id));
+  const ownIds = new Set(attendance.own.map((person) => person.id).filter((id) => workingPersonIds.has(id)));
+  const supportIds = new Set(attendance.support.map((person) => person.id).filter((id) => workingPersonIds.has(id)));
   const rules = getApplicableRules(input.team, input.mode, input.stationRules);
   const maxAbsences = clampMaxAbsences(input.maxAbsences, workingPeople.length);
-  const baseline = solveScenario(rules, workingPeople, input.qualifications, input.mode, new Set<string>());
+  const baseline = solveScenario(
+    rules,
+    workingPeople,
+    input.qualifications,
+    input.mode,
+    new Set<string>(),
+    ownIds,
+    supportIds
+  );
   const baselineRequired = rules.reduce((sum, rule) => sum + getRuleNeed(rule, input.mode), 0);
   const workerIds = workingPeople.map((person) => person.id).sort((a, b) =>
     a.localeCompare(b, "zh-Hant", { numeric: true })
@@ -385,7 +411,9 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         workingPeople,
         input.qualifications,
         input.mode,
-        new Set(absentIds)
+        new Set(absentIds),
+        ownIds,
+        supportIds
       );
       const addedShortage = Math.max(0, scenario.totalShortage - baseline.totalShortage);
       if (scenario.totalShortage === 0) levelFullyCovered += 1;
@@ -475,7 +503,9 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     riskScenarios,
     stationRisks,
     testedCombinations,
-    fullyCoveredScenarios
+    fullyCoveredScenarios,
+    ownIds,
+    supportIds
   );
 
   return {

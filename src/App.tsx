@@ -4199,6 +4199,15 @@ export default function App() {
           color: #166534 !important;
           border-color: #22c55e !important;
         }
+        .assigned-name-tags .support-assignment-name,
+        .table .assigned-name-tags .support-assignment-name,
+        .table tr.warning-row td .assigned-name-tags .support-assignment-name,
+        .table tr.danger-row td .assigned-name-tags .support-assignment-name {
+          background: #dbeafe !important;
+          color: #1e3a8a !important;
+          border-color: #60a5fa !important;
+          font-weight: 950 !important;
+        }
         .menu-option.active {
           border-color: var(--theme-primary) !important;
           background: color-mix(in srgb, var(--theme-soft) 84%, #ffffff) !important;
@@ -5390,16 +5399,33 @@ export default function App() {
                 <>
                   <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
                     <div className="panel-header">
-                      <h3>全勤基準分析</h3>
-                      <span>{gapCoverageAnalysis.fullyCovered ? "全員出勤時可全面覆蓋" : `全員出勤仍缺 ${gapCoverageAnalysis.shortage} 人`}</span>
+                      <h3>{gapDay === "當班" ? "全勤基準分析" : "支援優先基準分析"}</h3>
+                      <span>
+                        {gapCoverageAnalysis.fullyCovered
+                          ? gapDay === "當班" ? "全員出勤時可全面覆蓋" : "支援先配置、本班補位後可全面覆蓋"
+                          : gapDay === "當班" ? `全員出勤仍缺 ${gapCoverageAnalysis.shortage} 人` : `支援先配置、本班補位後仍缺 ${gapCoverageAnalysis.shortage} 人`}
+                      </span>
                     </div>
                     <div className="detail-grid">
                       <Info label="全站需求" value={String(gapCoverageAnalysis.required)} />
-                      <Info label="作業人力覆蓋" value={String(gapCoverageAnalysis.assigned)} />
+                      {gapDay === "當班" ? (
+                        <Info label="作業人力覆蓋" value={String(gapCoverageAnalysis.assigned)} />
+                      ) : (
+                        <>
+                          <Info label="分析出勤人力" value={String(gapCoverageAnalysis.ownAvailable + gapCoverageAnalysis.supportAvailable)} />
+                          <Info label="支援已配置" value={`${gapCoverageAnalysis.supportAssigned}/${gapCoverageAnalysis.supportAvailable}`} />
+                          <Info label="本班補位" value={String(gapCoverageAnalysis.ownAssigned)} />
+                          <Info label="本班可備援" value={String(gapCoverageAnalysis.ownUnassigned)} />
+                        </>
+                      )}
                       <Info label="排除後缺口" value={String(gapCoverageAnalysis.shortage)} />
                       <Info label="瓶頸站點" value={String(gapCoverageAnalysis.rows.filter((row) => row.bottleneck).length)} />
                     </div>
-                    <p className="muted">進入頁面即依目前班別與日期計算。此區預設排除領班、組長、主任；下方會列出可緊急支援的缺口。</p>
+                    <p className="muted">
+                      {gapDay === "當班"
+                        ? "進入頁面即依目前班別計算全勤覆蓋。此區預設排除領班、組長、主任；下方會列出可緊急支援的缺口。"
+                        : "第一天、第二天會先把對班支援人力配置到合格站點，再由本班人力補位；未被使用的本班人力保留為備援與訓練空間。此區預設排除領班、組長、主任。"}
+                    </p>
                   </div>
 
                   <div className="panel officer-relief-panel">
@@ -5475,6 +5501,7 @@ export default function App() {
                     {gapStressResult ? (
                       <div className="resilience-results">
                         <div className="detail-grid resilience-summary-grid">
+                          <Info label="分析出勤人力" value={String(gapStressResult.activeWorkerCount)} />
                           <Info label="測試組合" value={`${gapStressResult.testedCombinations}/${gapStressResult.totalCombinations}`} />
                           <Info label="風險組合" value={String(gapStressResult.levels.reduce((sum, item) => sum + item.riskScenarios, 0))} />
                           <Info label="風險站點" value={String(gapStressResult.stationRisks.length)} />
@@ -6009,7 +6036,8 @@ export default function App() {
                                 <span className="assigned-name-tags">
                                   {assignedIds.length ? assignedIds.map((id, index) => {
                                     const person = assignedPeople[index];
-                                    return <span key={id} className={person && isSupportOfficerPerson(person) ? "officer-support-name" : ""}>{person?.name || id}</span>;
+                                    const isSupportWorker = gapDisplayAttendanceSupport.some((supportPerson) => supportPerson.id === id);
+                                    return <span key={id} className={person && isSupportOfficerPerson(person) ? "officer-support-name" : isSupportWorker ? "support-assignment-name" : ""}>{person?.name || id}</span>;
                                   }) : "-"}
                                 </span>
                               </td>
@@ -6023,7 +6051,7 @@ export default function App() {
                                 <span className="assigned-name-tags">
                                   {coverage.supportQualifiedIds.length ? coverage.supportQualifiedIds.map((id, index) => {
                                     const person = supportPeople[index];
-                                    return <span key={id}>{person?.name || id}</span>;
+                                    return <span key={id} className="support-assignment-name">{person?.name || id}</span>;
                                   }) : "-"}
                                 </span>
                               </td>
@@ -6044,6 +6072,7 @@ export default function App() {
                       <button type="button" className="manual-modal-close-button" aria-label="關閉說明" onClick={() => setGapHelpOpen(false)}>×</button>
                     </div>
                     <p>「預防性缺勤壓力測試」會從 1 人一路測到你指定的人數，每一種情境都重新安排全站，確認是否能在不重複指派人員的前提下維持全勤基準。</p>
+                    <p>第一天、第二天的全勤基準包含本班與對班支援人力。每次重新排列都會先配置支援人力，再由本班補位，用來檢查支援離開或人員缺勤後，本班是否真的有能力接手。</p>
                     <p>最大缺勤人數設為 1，等同完整測試每一位作業人員單獨缺勤；設為 2，則同時包含所有單人與雙人組合。組合過大時會改採固定抽樣，結果會清楚標示。</p>
                     <p>「指定缺勤模擬」則是每天有人請假時，直接選定實際缺勤名單，立即查看該組合的全站指派與缺口。</p>
                     <p>如果某人或某個組合反覆造成同一站點缺口，代表資格過度集中，補訓建議會優先尋找能真正降低這些風險的人選。</p>
@@ -6148,6 +6177,7 @@ export default function App() {
                 .assigned-name-tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
                 .assigned-name-tags > span { display: inline-flex; align-items: center; min-height: 24px; }
                 .assigned-name-tags .officer-support-name { border-radius: 999px; padding: 2px 8px; background: #fef3c7; color: #92400e; border: 1px solid #f59e0b; font-weight: 950; }
+                .assigned-name-tags .support-assignment-name { border-radius: 999px; padding: 2px 8px; background: #dbeafe; color: #1e3a8a; border: 1px solid #60a5fa; font-weight: 950; }
                 .menu-option.active { border-color: #2563eb !important; background: #dbeafe !important; color: #1d4ed8 !important; }
                 .menu-option.active strong,
                 .menu-option.active span { color: #1d4ed8 !important; }
