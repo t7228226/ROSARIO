@@ -978,6 +978,7 @@ export default function App() {
   const loginAccountRef = useRef<HTMLInputElement | null>(null);
   const loginPasswordRef = useRef<HTMLInputElement | null>(null);
   const loginAutoSubmittedRef = useRef(false);
+  const loginManualInputRef = useRef(false);
   const loginSubmittingRef = useRef(false);
   const currentRole = getSystemPermission(currentUser);
 
@@ -1283,7 +1284,7 @@ export default function App() {
   }, [data.people, currentUser]);
 
   useEffect(() => {
-    if (currentUser || loginSubmitting || loginAutoSubmittedRef.current) return;
+    if (currentUser || loginSubmitting || loginAutoSubmittedRef.current || loginManualInputRef.current) return;
 
     const timer = window.setInterval(() => {
       const accountInput = loginAccountRef.current;
@@ -1294,18 +1295,16 @@ export default function App() {
       const password = passwordInput.value.trim();
       if (!account || !password) return;
 
-      let browserAutofilled = false;
+      let passwordAutofilled = false;
       try {
-        browserAutofilled = browserAutofilled ||
-          accountInput.matches(":-webkit-autofill") ||
+        passwordAutofilled =
           passwordInput.matches(":-webkit-autofill") ||
-          accountInput.matches(":autofill") ||
           passwordInput.matches(":autofill");
       } catch {
         // Some browsers do not support the autofill selectors.
       }
 
-      if (browserAutofilled) {
+      if (passwordAutofilled && !loginManualInputRef.current) {
         loginAutoSubmittedRef.current = true;
         window.clearInterval(timer);
         setLoginForm({ account, password });
@@ -1981,6 +1980,7 @@ export default function App() {
   function logout() {
     setCurrentUser(null);
     loginAutoSubmittedRef.current = false;
+    loginManualInputRef.current = false;
     window.localStorage.removeItem(loginSessionStorageKey);
     setPage("home");
     setFlashMessage("已登出。");
@@ -5161,8 +5161,8 @@ export default function App() {
               </div>
             ) : (
               <form className="login-form" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
-                <input ref={loginAccountRef} name="username" autoComplete="username" disabled={loginSubmitting} placeholder="登入帳號（不分大小寫）" value={loginForm.account} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
-                <input ref={loginPasswordRef} name="password" type="password" autoComplete="current-password" disabled={loginSubmitting} placeholder="登入密碼（不分大小寫）" value={loginForm.password} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
+                <input ref={loginAccountRef} name="username" autoComplete="username" disabled={loginSubmitting} placeholder="登入帳號（不分大小寫）" value={loginForm.account} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
+                <input ref={loginPasswordRef} name="password" type="password" autoComplete="current-password" disabled={loginSubmitting} placeholder="登入密碼（不分大小寫）" value={loginForm.password} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
                 <select value={loginKeep} onChange={(e) => updateLoginKeep(e.target.value as LoginKeepKey)} aria-label="保持登入時間">
                   {loginKeepOptions.map((item) => <option key={item.key} value={item.key}>重新整理保持登入：{item.label}</option>)}
                 </select>
