@@ -5409,7 +5409,11 @@ export default function App() {
                     <div className="detail-grid">
                       <Info label="全站需求" value={String(gapCoverageAnalysis.required)} />
                       {gapDay === "當班" ? (
-                        <Info label="作業人力覆蓋" value={String(gapCoverageAnalysis.assigned)} />
+                        <>
+                          <Info label="可作業人力" value={String(gapCoverageAnalysis.ownAvailable + gapCoverageAnalysis.supportAvailable)} />
+                          <Info label="已配置站點" value={`${gapCoverageAnalysis.assigned}/${gapCoverageAnalysis.required}`} />
+                          <Info label="未配置備援" value={String(gapCoverageAnalysis.ownUnassigned + gapCoverageAnalysis.supportUnassigned)} />
+                        </>
                       ) : (
                         <>
                           <Info label="分析出勤人力" value={String(gapCoverageAnalysis.ownAvailable + gapCoverageAnalysis.supportAvailable)} />
@@ -5421,6 +5425,9 @@ export default function App() {
                       <Info label="排除後缺口" value={String(gapCoverageAnalysis.shortage)} />
                       <Info label="瓶頸站點" value={String(gapCoverageAnalysis.rows.filter((row) => row.bottleneck).length)} />
                     </div>
+                    {gapDay === "當班" && (
+                      <p className="muted">可作業人力為排除領班、組長、主任後的人數；未配置者保留為備援，不代表人員遺失。</p>
+                    )}
                     <p className="muted">
                       {gapDay === "當班"
                         ? "進入頁面即依目前班別計算全勤覆蓋。此區預設排除領班、組長、主任；下方會列出可緊急支援的缺口。"
