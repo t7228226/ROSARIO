@@ -52,7 +52,7 @@ assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operatio
 assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
 assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
 assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
-assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-002'/, "舊版前端不得繞過可靠寫入");
+assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-003'/, "舊版前端不得繞過可靠寫入");
 assert.match(gasSource, /function authorizeWriteAction_\(/, "GAS 寫入前必須執行伺服器端授權");
 assert.match(gasSource, /const session = authorizeWriteAction_\([^;]+;/, "寫入端點不得只依賴前端權限");
 assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工作階段");
@@ -70,5 +70,7 @@ assert.match(gasClientSource, /inFlightWriteRequests/, "前端必須阻擋相同
 assert.match(appSource, /lazy\(\(\) => import\("\.\/features\/gap-analysis\/ResilienceInsights"\)\)/, "大型分析畫面必須延遲載入");
 assert.match(appSource, /if \(!currentUser\) return;[\s\S]+fetchGasBootstrapData\(\)/, "未登入時不得載入 bootstrap 主檔");
 assert.match(appSource, /setCurrentUser\(null\);[\s\S]{0,160}setData\(emptyBootstrap\);/, "登出或 session 逾時後必須清空主檔資料");
+assert.doesNotMatch(appSource, /setPermissionItemStates\(permissionItems\)/, "session 清理不得引用不存在的權限變數");
+assert.doesNotMatch(appSource, /setRolePermissionMapStates\(rolePermissionMaps\)/, "session 清理不得引用不存在的角色權限變數");
 
 console.log(`契約檢查通過：${frontendActions.length} 個寫入動作、session 授權、密碼防護、延遲載入與可靠寫入皆正常。`);

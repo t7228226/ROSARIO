@@ -45,8 +45,8 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-08-10-002',
-  MIN_WRITE_VERSION: '2026-08-10-002',
+  APP_VERSION: '2026-08-10-003',
+  MIN_WRITE_VERSION: '2026-08-10-003',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   WRITE_LOCK_TIMEOUT_MS: 20000,
@@ -442,8 +442,8 @@ function migrateLegacyAccountPasswords() {
 }
 
 function createSession_(accountRow, requestedDurationMs) {
-  const employeeId = normalizeString_(accountRow['工號']);
   const account = normalizeString_(accountRow['登入帳號']);
+  const employeeId = normalizeString_(accountRow['工號']) || account;
   const role = normalizeString_(accountRow['系統權限']) || '技術員';
   const durationMs = clampSessionDuration_(requestedDurationMs);
   const now = Date.now();
@@ -507,7 +507,7 @@ function requireSession_(sessionToken) {
     throw authError_('帳號已停用或不存在，請重新登入。', 'AUTH_REVOKED');
   }
 
-  record.employeeId = normalizeString_(accountRow['工號']) || normalizeString_(record.employeeId);
+  record.employeeId = normalizeString_(accountRow['工號']) || normalizeString_(record.employeeId) || normalizeString_(record.account);
   record.account = normalizeString_(accountRow['登入帳號']) || normalizeString_(record.account);
   record.role = normalizeString_(accountRow['系統權限']) || '技術員';
   return record;
@@ -568,8 +568,11 @@ function findCurrentAccount_(employeeId, account) {
 
 function buildSessionUser_(session) {
   const people = normalizePeople_(getSheetObjects_(SHEETS.PEOPLE));
-  const person = people.find(function (item) { return item.id === session.employeeId; });
+  const employeeId = normalizeString_(session && session.employeeId);
+  const account = normalizeString_(session && session.account);
+  const person = people.find(function (item) { return item.id === employeeId || item.id === account; });
   if (!person) return null;
+  session.employeeId = person.id;
   return Object.assign({}, person, {
     account: session.account,
     accountEnabled: '啟用',

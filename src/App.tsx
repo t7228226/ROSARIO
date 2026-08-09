@@ -933,7 +933,10 @@ export default function App() {
         const result = await postGasAction("session", {
           sessionDurationMs: getLoginKeepMs(loginKeep),
         }) as GasSessionResponse;
-        if (!active || !result.user || !result.sessionExpiresAt) return;
+        if (!active) return;
+        if (!result.user || !result.sessionExpiresAt) {
+          throw new Error("登入工作階段回應不完整。");
+        }
         setCurrentUser(result.user);
         saveStoredLoginSession({
           userId: result.user.id,
@@ -941,8 +944,12 @@ export default function App() {
           expiresAt: result.sessionExpiresAt,
         });
         setFlashMessage(`已恢復登入：${result.user.name}`);
-      } catch {
+      } catch (error) {
         clearStoredLoginSession();
+        if (active) {
+          const message = error instanceof Error ? error.message : "登入工作階段無法驗證。";
+          setFlashMessage(`無法恢復登入：${message}`);
+        }
       } finally {
         if (active) setSessionRestoring(false);
       }
@@ -958,8 +965,8 @@ export default function App() {
       clearStoredLoginSession();
       setCurrentUser(null);
       setData(emptyBootstrap);
-      setPermissionItemStates(permissionItems);
-      setRolePermissionMapStates(rolePermissionMaps);
+      setPermissionItemStates(databasePermissionItems.map((item) => ({ ...item })));
+      setRolePermissionMapStates(databaseRolePermissionMaps.map((item) => ({ ...item })));
       setPersonalPermissionExceptions([]);
       setPage("home");
       setFlashMessage("登入已逾時，請重新登入後繼續操作。");
@@ -1694,8 +1701,8 @@ export default function App() {
     clearStoredLoginSession();
     setCurrentUser(null);
     setData(emptyBootstrap);
-    setPermissionItemStates(permissionItems);
-    setRolePermissionMapStates(rolePermissionMaps);
+    setPermissionItemStates(databasePermissionItems.map((item) => ({ ...item })));
+    setRolePermissionMapStates(databaseRolePermissionMaps.map((item) => ({ ...item })));
     setPersonalPermissionExceptions([]);
     loginAutoSubmittedRef.current = false;
     loginManualInputRef.current = false;

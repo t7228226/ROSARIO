@@ -68,7 +68,7 @@ function createGasContext({ role = "技術員", allowedPermissions = ["PERM_005"
   };
   context.assertWritableAppVersion_ = () => true;
 
-  return { context, properties };
+  return { context, properties, accountRows, peopleRows };
 }
 
 test("login issues a server session without returning the password", () => {
@@ -117,6 +117,19 @@ test("non-admin bootstrap strips account metadata from personnel records", () =>
   assert.equal("systemPermission" in result.people[1], false);
 });
 
+test("session restore falls back to a matching login account when account employee ID is blank", () => {
+  const { context, accountRows } = createGasContext();
+  accountRows[0].工號 = "";
+  accountRows[0].登入帳號 = "P1001";
+
+  const login = context.login_({ account: "P1001", password: "correct-password" });
+  const restored = context.validateSessionResponse_(login.sessionToken, {});
+
+  assert.equal(login.ok, true);
+  assert.equal(restored.ok, true);
+  assert.equal(restored.user.id, "P1001");
+});
+
 test("password hashing verifies the correct password without storing plaintext", () => {
   const { context } = createGasContext();
   const hashed = context.hashPassword_("correct-password", "fixed-salt");
@@ -133,7 +146,7 @@ test("write requests reject missing sessions before executing callbacks", () => 
 
   assert.throws(() => context.executeWriteRequest_(
     "upsertQualification",
-    { appVersion: "2026-08-10-002" },
+    { appVersion: "2026-08-10-003" },
     {},
     () => { writes += 1; return { ok: true }; }
   ), /登入|工作階段/);
@@ -148,7 +161,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   const allowed = context.executeWriteRequest_(
     "upsertQualification",
-    { appVersion: "2026-08-10-002", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
     {},
     () => { qualificationWrites += 1; return { ok: true }; }
   );
@@ -157,7 +170,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-002", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
     {},
     () => { ruleWrites += 1; return { ok: true }; }
   ), /權限不足/);
@@ -171,7 +184,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-002", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
     { team: "翊展班" },
     () => { writes += 1; return { ok: true }; }
   );
@@ -179,7 +192,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-002", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
     { team: "俊志班" },
     () => { writes += 1; return { ok: true }; }
   ), /自己班別/);
