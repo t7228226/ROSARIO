@@ -9,12 +9,14 @@ interface LayoutProps {
 export default function Layout({ title, subtitle, children }: LayoutProps) {
   return (
     <section className="page-section">
-      <div className="page-header">
-        <div>
-          <h2>{title}</h2>
-          {subtitle ? <p>{subtitle}</p> : null}
+      {title ? (
+        <div className="page-header">
+          <div>
+            <h2>{title}</h2>
+            {subtitle ? <p>{subtitle}</p> : null}
+          </div>
         </div>
-      </div>
+      ) : null}
       {children}
     </section>
   );

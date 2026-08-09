@@ -45,14 +45,42 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-08-02-003',
-  MIN_WRITE_VERSION: '2026-08-02-003',
+  APP_VERSION: '2026-08-10-002',
+  MIN_WRITE_VERSION: '2026-08-10-002',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   WRITE_LOCK_TIMEOUT_MS: 20000,
+  SESSION_DEFAULT_TTL_MS: 12 * 60 * 60 * 1000,
+  SESSION_MIN_TTL_MS: 30 * 60 * 1000,
+  SESSION_MAX_TTL_MS: 7 * 24 * 60 * 60 * 1000,
+  SESSION_MAX_RECORDS: 240,
 };
 
 const OPERATION_PROPERTY_PREFIX = 'ROSARIO_OP_';
+const SESSION_PROPERTY_PREFIX = 'ROSARIO_SESSION_';
+const PASSWORD_HASH_PREFIX = 'rosario-v1$';
+const PASSWORD_PEPPER_PROPERTY = 'ROSARIO_PASSWORD_PEPPER';
+
+const ACTION_PERMISSION_MAP = {
+  upsertQualification: 'PERM_005',
+  deleteQualification: 'PERM_005',
+  updateStationRule: 'PERM_012',
+  updatePerson: 'PERM_014',
+  createPerson: 'PERM_014',
+  updatePermissionItem: 'PERM_016',
+  updateRolePermission: 'PERM_016',
+  upsertPersonalPermissionException: 'PERM_016',
+  deletePersonalPermissionException: 'PERM_016',
+  saveScheduleDraft: 'PERM_008',
+  syncQualificationsFromMatrix: 'PERM_005',
+};
+
+const SUPER_ADMIN_ACTIONS = {
+  updatePermissionItem: true,
+  updateRolePermission: true,
+  upsertPersonalPermissionException: true,
+  deletePersonalPermissionException: true,
+};
 
 function doGet(e) {
   try {
@@ -60,23 +88,8 @@ function doGet(e) {
     if (action === 'version') {
       return jsonOutput_(buildVersionStatus_((e && e.parameter && e.parameter.appVersion) || ''));
     }
-    if (action === 'bootstrap') {
-      return jsonOutput_(buildBootstrap_());
-    }
-    if (action === 'syncQualificationsFromMatrix') {
-      return jsonOutput_(syncQualificationsFromMatrix_({ source: 'GET' }));
-    }
-    if (action === 'matrixDebug') {
-      return jsonOutput_(debugQualificationMatrix_());
-    }
-    if (action === 'permissionConfig') {
-      return jsonOutput_(buildPermissionConfig_());
-    }
-    if (action === 'loadScheduleDrafts') {
-      return jsonOutput_(loadScheduleDrafts_((e && e.parameter) || {}));
-    }
-    if (action === 'operationStatus') {
-      return jsonOutput_(getOperationStatus_((e && e.parameter && e.parameter.operationId) || ''));
+    if (action === 'bootstrap' || action === 'syncQualificationsFromMatrix' || action === 'matrixDebug' || action === 'permissionConfig' || action === 'loadScheduleDrafts' || action === 'operationStatus') {
+      return jsonOutput_({ ok: false, code: 'POST_REQUIRED', message: '此操作必須使用已驗證的 POST 請求。' });
     }
     return jsonOutput_({ ok: false, message: 'Unknown GET action', action });
   } catch (error) {
@@ -95,6 +108,10 @@ function doPost(e) {
         return jsonOutput_(buildVersionStatus_(body.appVersion || body.version || payload.appVersion));
       case 'login':
         return jsonOutput_(login_(payload));
+      case 'session':
+        return jsonOutput_(validateSessionResponse_(resolveSessionToken_(body, payload), payload));
+      case 'logout':
+        return jsonOutput_(logout_({ sessionToken: resolveSessionToken_(body, payload) }));
       case 'upsertQualification':
         return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertQualification_(payload); }));
       case 'deleteQualification':
@@ -102,7 +119,7 @@ function doPost(e) {
       case 'updateStationRule':
         return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateStationRule_(payload); }));
       case 'updatePerson':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updatePerson_(payload); }));
+        return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return updatePerson_(payload, session); }));
       case 'createPerson':
         return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return createPerson_(payload); }));
       case 'updatePermissionItem':
@@ -116,17 +133,19 @@ function doPost(e) {
       case 'saveScheduleDraft':
         return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return saveScheduleDraft_(payload); }));
       case 'loadScheduleDrafts':
+        assertReadPermission_(resolveSessionToken_(body, payload), 'PERM_007');
         return jsonOutput_(loadScheduleDrafts_(payload));
       case 'permissionConfig':
-        return jsonOutput_(buildPermissionConfig_());
+        return jsonOutput_(buildPermissionConfigForSession_(requireSession_(resolveSessionToken_(body, payload))));
       case 'syncQualificationsFromMatrix':
         return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return syncQualificationsFromMatrix_(payload); }));
       case 'operationStatus':
-        return jsonOutput_(getOperationStatus_(body.operationId || payload.operationId || ''));
+        return jsonOutput_(getOperationStatus_(body.operationId || payload.operationId || '', requireSession_(resolveSessionToken_(body, payload))));
       case 'matrixDebug':
+        assertSuperAdmin_(requireSession_(resolveSessionToken_(body, payload)));
         return jsonOutput_(debugQualificationMatrix_());
       case 'bootstrap':
-        return jsonOutput_(buildBootstrap_());
+        return jsonOutput_(buildBootstrapForSession_(requireSession_(resolveSessionToken_(body, payload))));
       default:
         return jsonOutput_({ ok: false, message: 'Unknown POST action', action });
     }
@@ -136,12 +155,13 @@ function doPost(e) {
 }
 
 function executeWriteRequest_(action, body, payload, callback) {
+  const session = authorizeWriteAction_(resolveSessionToken_(body, payload), action, payload);
   assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
   const operationId = normalizeString_(body.operationId || payload.operationId);
-  return executeReliableWrite_(action, operationId, callback);
+  return executeReliableWrite_(action, operationId, function () { return callback(session); }, session);
 }
 
-function executeReliableWrite_(action, operationId, callback) {
+function executeReliableWrite_(action, operationId, callback, session) {
   if (!operationId) {
     return withDocumentWriteLock_(callback);
   }
@@ -149,8 +169,10 @@ function executeReliableWrite_(action, operationId, callback) {
     throw new Error('操作編號格式不正確');
   }
 
-  const begin = beginOperation_(action, operationId);
+  const ownerId = session ? normalizeString_(session.employeeId) : '';
+  const begin = beginOperation_(action, operationId, ownerId);
   if (!begin.started) {
+    assertOperationOwner_(begin.record, session);
     return operationRecordResponse_(operationId, begin.record);
   }
 
@@ -179,7 +201,7 @@ function withDocumentWriteLock_(callback) {
   }
 }
 
-function beginOperation_(action, operationId) {
+function beginOperation_(action, operationId, ownerId) {
   const lock = LockService.getScriptLock();
   lock.waitLock(5000);
   try {
@@ -190,6 +212,7 @@ function beginOperation_(action, operationId) {
 
     const record = {
       action: action,
+      ownerId: normalizeString_(ownerId),
       status: 'processing',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -209,6 +232,7 @@ function finishOperation_(operationId, status, result, message) {
     const current = readOperationRecord_(properties, operationId) || { createdAt: Date.now() };
     const record = {
       action: current.action || '',
+      ownerId: current.ownerId || '',
       status: status,
       createdAt: current.createdAt || Date.now(),
       updatedAt: Date.now(),
@@ -221,7 +245,7 @@ function finishOperation_(operationId, status, result, message) {
   }
 }
 
-function getOperationStatus_(operationId) {
+function getOperationStatus_(operationId, session) {
   operationId = normalizeString_(operationId);
   if (!operationId) {
     return { ok: false, message: '缺少操作編號' };
@@ -231,6 +255,7 @@ function getOperationStatus_(operationId) {
   if (!record) {
     return { ok: true, found: false, status: 'unknown', operationId: operationId };
   }
+  assertOperationOwner_(record, session);
   return {
     ok: true,
     found: true,
@@ -305,6 +330,354 @@ function pruneOperationRecords_(properties) {
 }
 
 /** =========================
+ *  Authentication / Authorization
+ *  ========================= */
+
+function resolveSessionToken_(body, payload) {
+  return normalizeString_((body && body.sessionToken) || (payload && payload.sessionToken));
+}
+
+function authError_(message, code) {
+  const error = new Error(message);
+  error.code = code || 'AUTH_REQUIRED';
+  return error;
+}
+
+function sessionPropertyKey_(sessionToken) {
+  return SESSION_PROPERTY_PREFIX + digestText_(normalizeString_(sessionToken));
+}
+
+function digestText_(value) {
+  const digest = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value || ''),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64EncodeWebSafe(digest).replace(/=+$/g, '');
+}
+
+function getPasswordPepper_() {
+  const properties = PropertiesService.getScriptProperties();
+  let pepper = normalizeString_(properties.getProperty(PASSWORD_PEPPER_PROPERTY));
+  if (pepper) return pepper;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    pepper = normalizeString_(properties.getProperty(PASSWORD_PEPPER_PROPERTY));
+    if (!pepper) {
+      pepper = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+      properties.setProperty(PASSWORD_PEPPER_PROPERTY, pepper);
+    }
+    return pepper;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function hashPassword_(password, salt) {
+  const normalizedPassword = String(password == null ? '' : password);
+  const passwordSalt = normalizeString_(salt) || Utilities.getUuid().replace(/-/g, '');
+  const digest = digestText_(passwordSalt + '|' + normalizedPassword + '|' + getPasswordPepper_());
+  return PASSWORD_HASH_PREFIX + passwordSalt + '$' + digest;
+}
+
+function verifyPassword_(password, storedPassword) {
+  const stored = String(storedPassword == null ? '' : storedPassword);
+  if (stored.indexOf(PASSWORD_HASH_PREFIX) !== 0) {
+    return constantTimeEquals_(String(password == null ? '' : password), stored);
+  }
+
+  const parts = stored.slice(PASSWORD_HASH_PREFIX.length).split('$');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return false;
+  return constantTimeEquals_(hashPassword_(password, parts[0]), stored);
+}
+
+function constantTimeEquals_(left, right) {
+  const a = String(left == null ? '' : left);
+  const b = String(right == null ? '' : right);
+  let mismatch = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (a.charCodeAt(index % Math.max(1, a.length)) || 0) ^ (b.charCodeAt(index % Math.max(1, b.length)) || 0);
+  }
+  return mismatch === 0;
+}
+
+function upgradeLegacyPassword_(accountRow, password) {
+  const stored = normalizeString_(accountRow && accountRow['登入密碼']);
+  if (!stored || stored.indexOf(PASSWORD_HASH_PREFIX) === 0) return false;
+  const rowNumber = Number(accountRow.__rowNumber || 0);
+  if (!rowNumber) return false;
+  const accountSheet = getSheet_(SHEETS.ACCOUNTS);
+  const headers = getHeaders_(accountSheet);
+  return setCellIfExists_(accountSheet, headers, rowNumber, '登入密碼', hashPassword_(password));
+}
+
+function migrateLegacyAccountPasswords() {
+  const lock = LockService.getDocumentLock();
+  if (lock) lock.waitLock(SETTINGS.WRITE_LOCK_TIMEOUT_MS);
+  try {
+    const ws = getSheet_(SHEETS.ACCOUNTS);
+    const headerInfo = getSheetHeaderInfo_(ws);
+    const passwordColumn = headerInfo.headers.indexOf('登入密碼') + 1;
+    const firstDataRow = headerInfo.rowIndex + 2;
+    const rowCount = Math.max(0, ws.getLastRow() - firstDataRow + 1);
+    if (!passwordColumn || !rowCount) return { ok: true, migrated: 0, message: '沒有需要轉換的帳號密碼。' };
+
+    const range = ws.getRange(firstDataRow, passwordColumn, rowCount, 1);
+    const values = range.getValues();
+    let migrated = 0;
+    const nextValues = values.map(function (row) {
+      const stored = normalizeString_(row[0]);
+      if (!stored || stored.indexOf(PASSWORD_HASH_PREFIX) === 0) return [row[0]];
+      migrated += 1;
+      return [hashPassword_(stored)];
+    });
+    if (migrated) range.setValues(nextValues);
+    return { ok: true, migrated: migrated, message: '帳號密碼雜湊轉換完成。' };
+  } finally {
+    if (lock) lock.releaseLock();
+  }
+}
+
+function createSession_(accountRow, requestedDurationMs) {
+  const employeeId = normalizeString_(accountRow['工號']);
+  const account = normalizeString_(accountRow['登入帳號']);
+  const role = normalizeString_(accountRow['系統權限']) || '技術員';
+  const durationMs = clampSessionDuration_(requestedDurationMs);
+  const now = Date.now();
+  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  const record = {
+    employeeId: employeeId,
+    account: account,
+    role: role,
+    createdAt: now,
+    updatedAt: now,
+    expiresAt: now + durationMs,
+  };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    const properties = PropertiesService.getScriptProperties();
+    pruneSessionRecords_(properties);
+    properties.setProperty(sessionPropertyKey_(token), JSON.stringify(record));
+  } finally {
+    lock.releaseLock();
+  }
+
+  return { token: token, record: record };
+}
+
+function clampSessionDuration_(value) {
+  const requested = Number(value);
+  if (!isFinite(requested) || requested <= 0) return SETTINGS.SESSION_DEFAULT_TTL_MS;
+  return Math.max(SETTINGS.SESSION_MIN_TTL_MS, Math.min(SETTINGS.SESSION_MAX_TTL_MS, requested));
+}
+
+function requireSession_(sessionToken) {
+  const token = normalizeString_(sessionToken);
+  if (!token) throw authError_('登入工作階段不存在，請重新登入。', 'AUTH_REQUIRED');
+  if (!/^[A-Za-z0-9_-]{40,160}$/.test(token)) {
+    throw authError_('登入工作階段格式不正確，請重新登入。', 'AUTH_INVALID');
+  }
+
+  const properties = PropertiesService.getScriptProperties();
+  const key = sessionPropertyKey_(token);
+  const raw = properties.getProperty(key);
+  if (!raw) throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_REQUIRED');
+
+  let record;
+  try {
+    record = JSON.parse(raw);
+  } catch (error) {
+    properties.deleteProperty(key);
+    throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_INVALID');
+  }
+
+  if (!record.expiresAt || Date.now() >= Number(record.expiresAt)) {
+    properties.deleteProperty(key);
+    throw authError_('登入已逾時，請重新登入。', 'AUTH_EXPIRED');
+  }
+
+  const accountRow = findCurrentAccount_(record.employeeId, record.account);
+  if (!accountRow || normalizeString_(accountRow['啟用狀態']) === '停用') {
+    properties.deleteProperty(key);
+    throw authError_('帳號已停用或不存在，請重新登入。', 'AUTH_REVOKED');
+  }
+
+  record.employeeId = normalizeString_(accountRow['工號']) || normalizeString_(record.employeeId);
+  record.account = normalizeString_(accountRow['登入帳號']) || normalizeString_(record.account);
+  record.role = normalizeString_(accountRow['系統權限']) || '技術員';
+  return record;
+}
+
+function validateSessionResponse_(sessionToken, payload) {
+  const record = requireSession_(sessionToken);
+  const requestedDuration = Number(payload && payload.sessionDurationMs);
+  if (isFinite(requestedDuration) && requestedDuration > 0) {
+    record.expiresAt = Date.now() + clampSessionDuration_(requestedDuration);
+    record.updatedAt = Date.now();
+    PropertiesService.getScriptProperties().setProperty(sessionPropertyKey_(sessionToken), JSON.stringify(record));
+  }
+
+  const user = buildSessionUser_(record);
+  if (!user) throw authError_('找不到登入者的人員主檔，請聯絡管理員。', 'AUTH_REVOKED');
+  return {
+    ok: true,
+    message: '登入工作階段有效',
+    user: user,
+    sessionExpiresAt: Number(record.expiresAt),
+  };
+}
+
+function logout_(payload) {
+  const token = normalizeString_(payload && payload.sessionToken);
+  if (token) PropertiesService.getScriptProperties().deleteProperty(sessionPropertyKey_(token));
+  return { ok: true, message: '已登出' };
+}
+
+function revokeSessionsForEmployee_(employeeId) {
+  const targetId = normalizeString_(employeeId);
+  if (!targetId) return 0;
+  const properties = PropertiesService.getScriptProperties();
+  let revoked = 0;
+  Object.keys(properties.getProperties()).forEach(function (key) {
+    if (key.indexOf(SESSION_PROPERTY_PREFIX) !== 0) return;
+    try {
+      const record = JSON.parse(properties.getProperty(key) || '{}');
+      if (normalizeString_(record.employeeId) !== targetId) return;
+    } catch (error) {
+      // Invalid session records are removed together with matching sessions.
+    }
+    properties.deleteProperty(key);
+    revoked += 1;
+  });
+  return revoked;
+}
+
+function findCurrentAccount_(employeeId, account) {
+  const employeeKey = normalizeString_(employeeId);
+  const accountKey = normalizeString_(account).toLowerCase();
+  return getSheetObjects_(SHEETS.ACCOUNTS).find(function (row) {
+    if (employeeKey && normalizeString_(row['工號']) === employeeKey) return true;
+    return accountKey && normalizeString_(row['登入帳號']).toLowerCase() === accountKey;
+  }) || null;
+}
+
+function buildSessionUser_(session) {
+  const people = normalizePeople_(getSheetObjects_(SHEETS.PEOPLE));
+  const person = people.find(function (item) { return item.id === session.employeeId; });
+  if (!person) return null;
+  return Object.assign({}, person, {
+    account: session.account,
+    accountEnabled: '啟用',
+    accountStatus: '啟用',
+    systemPermission: session.role,
+    permissionLevel: session.role,
+  });
+}
+
+function pruneSessionRecords_(properties) {
+  const now = Date.now();
+  const records = Object.keys(properties.getProperties())
+    .filter(function (key) { return key.indexOf(SESSION_PROPERTY_PREFIX) === 0; })
+    .map(function (key) {
+      try {
+        const record = JSON.parse(properties.getProperty(key) || '{}');
+        return { key: key, expiresAt: Number(record.expiresAt || 0), updatedAt: Number(record.updatedAt || record.createdAt || 0) };
+      } catch (error) {
+        return { key: key, expiresAt: 0, updatedAt: 0 };
+      }
+    })
+    .sort(function (left, right) { return right.updatedAt - left.updatedAt; });
+
+  records.forEach(function (item, index) {
+    if (item.expiresAt <= now || index >= SETTINGS.SESSION_MAX_RECORDS) properties.deleteProperty(item.key);
+  });
+}
+
+function authorizeWriteAction_(sessionToken, action, payload) {
+  const session = requireSession_(sessionToken);
+  const isSensitiveAccountUpdate = action === 'updatePerson' && hasSensitiveAccountFields_(payload);
+  if (SUPER_ADMIN_ACTIONS[action] || isSensitiveAccountUpdate) assertSuperAdmin_(session);
+
+  const permissionId = isSensitiveAccountUpdate ? 'PERM_016' : ACTION_PERMISSION_MAP[action];
+  if (!permissionId || !hasPermission_(session, permissionId)) {
+    throw authError_('權限不足，無法執行此操作。', 'FORBIDDEN');
+  }
+  assertActionScope_(session, action, payload);
+  return session;
+}
+
+function assertActionScope_(session, action, payload) {
+  if (normalizeString_(session.role) === '最高權限') return true;
+  if (action !== 'updateStationRule') return true;
+
+  const user = buildSessionUser_(session);
+  const ownTeam = normalizeString_(user && user.shift);
+  const requestedTeam = normalizeString_(payload && payload.team);
+  if (!ownTeam || !requestedTeam || ownTeam !== requestedTeam) {
+    throw authError_('只能修改自己班別的站點規則。', 'FORBIDDEN');
+  }
+  return true;
+}
+
+function assertReadPermission_(sessionToken, permissionId) {
+  const session = requireSession_(sessionToken);
+  if (!hasPermission_(session, permissionId)) throw authError_('權限不足，無法讀取此資料。', 'FORBIDDEN');
+  return session;
+}
+
+function assertSuperAdmin_(session) {
+  if (!session || normalizeString_(session.role) !== '最高權限') {
+    throw authError_('此操作僅限最高權限管理員。', 'FORBIDDEN');
+  }
+  return true;
+}
+
+function hasPermission_(session, permissionId) {
+  if (normalizeString_(session.role) === '最高權限') return true;
+
+  const permissionItem = getSheetObjects_(SHEETS.PERMISSION_ITEMS).find(function (row) {
+    return normalizeString_(row['權限ID']) === permissionId;
+  });
+  if (!permissionItem || normalizeString_(permissionItem['啟用狀態']) === '停用') return false;
+
+  const exceptions = getSheetObjects_(SHEETS.PERSONAL_PERMISSION_EXCEPTIONS).filter(function (row) {
+    return normalizeString_(row['工號']) === session.employeeId &&
+      normalizeString_(row['權限ID']) === permissionId &&
+      normalizeString_(row['啟用狀態']) !== '停用';
+  });
+  const exception = exceptions.length ? exceptions[exceptions.length - 1] : null;
+  if (exception) return normalizeString_(exception['效果']) !== 'deny';
+
+  const rolePermissions = getSheetObjects_(SHEETS.ROLE_PERMISSIONS).filter(function (row) {
+    return normalizeString_(row['角色']) === session.role &&
+      normalizeString_(row['權限ID']) === permissionId &&
+      normalizeString_(row['啟用狀態']) !== '停用';
+  });
+  const rolePermission = rolePermissions.length ? rolePermissions[rolePermissions.length - 1] : null;
+  return !!rolePermission && normalizeString_(rolePermission['允許']).toUpperCase() === 'Y';
+}
+
+function hasSensitiveAccountFields_(payload) {
+  return !!payload && [
+    'systemPermission', 'permissionLevel', 'isSuperAdmin', 'password', 'loginPassword',
+    'accountPassword', 'accountEnabled', 'accountStatus', 'enabled', '登入密碼',
+  ].some(function (key) { return Object.prototype.hasOwnProperty.call(payload, key); });
+}
+
+function assertOperationOwner_(record, session) {
+  if (!session) return true;
+  const ownerId = normalizeString_(record && record.ownerId);
+  if (ownerId && ownerId === normalizeString_(session.employeeId)) return true;
+  if (!ownerId && normalizeString_(session.role) === '最高權限') return true;
+  throw authError_('無法讀取其他使用者的操作結果。', 'FORBIDDEN');
+}
+
+/** =========================
  *  Bootstrap / Login
  *  ========================= */
 
@@ -340,6 +713,26 @@ function buildBootstrap_() {
   };
 }
 
+function buildBootstrapForSession_(session) {
+  const bootstrap = buildBootstrap_();
+  if (normalizeString_(session.role) === '最高權限') return bootstrap;
+  bootstrap.people = bootstrap.people.map(function (person) {
+    const sanitized = Object.assign({}, person);
+    delete sanitized.account;
+    delete sanitized.accountEnabled;
+    delete sanitized.accountStatus;
+    delete sanitized.systemPermission;
+    delete sanitized.permissionLevel;
+    delete sanitized.isSuperAdmin;
+    if (person.id === session.employeeId) {
+      sanitized.systemPermission = session.role;
+      sanitized.permissionLevel = session.role;
+    }
+    return sanitized;
+  });
+  return bootstrap;
+}
+
 function mergeAccountFieldsIntoPeople_(people, accountRows) {
   const accountMap = {};
   accountRows.forEach(function (row) {
@@ -368,7 +761,6 @@ function login_(payload) {
   const account = normalizeString_(payload.account);
   const password = normalizeString_(payload.password);
   const accountKey = account.toLowerCase();
-  const passwordKey = password.toLowerCase();
 
   if (!account || !password) {
     return { ok: false, message: '請輸入登入帳號與密碼。' };
@@ -379,11 +771,10 @@ function login_(payload) {
   const peopleMap = mapByKey_(normalizePeople_(peopleRows), 'id');
 
   const matched = accountRows.find(function (row) {
-    return normalizeString_(row['登入帳號']).toLowerCase() === accountKey &&
-      normalizeString_(row['登入密碼']).toLowerCase() === passwordKey;
+    return normalizeString_(row['登入帳號']).toLowerCase() === accountKey;
   });
 
-  if (!matched) {
+  if (!matched || !verifyPassword_(password, matched['登入密碼'])) {
     return { ok: false, message: '帳號或密碼錯誤。' };
   }
 
@@ -399,10 +790,6 @@ function login_(payload) {
     return {
       ok: false,
       message: '找不到此帳號對應的人員主檔。',
-      debug: {
-        account: loginAccount,
-        employeeId: employeeId,
-      },
     };
   }
 
@@ -414,10 +801,19 @@ function login_(payload) {
     accountStatus: enabled || '啟用',
   });
 
+  try {
+    upgradeLegacyPassword_(matched, password);
+  } catch (error) {
+    // 舊密碼轉換失敗不阻擋本次合法登入；管理員可執行 migrateLegacyAccountPasswords 補轉。
+  }
+
+  const session = createSession_(matched, payload.sessionDurationMs);
   return {
     ok: true,
     message: '登入成功',
     user,
+    sessionToken: session.token,
+    sessionExpiresAt: session.record.expiresAt,
   };
 }
 
@@ -941,7 +1337,7 @@ function syncReliefDemandToStations_(stationId, reliefValue) {
  *  People / Accounts
  *  ========================= */
 
-function updatePerson_(payload) {
+function updatePerson_(payload, session) {
   const employeeId = normalizeString_(payload.id);
   if (!employeeId) {
     throw new Error('updatePerson 缺少 id');
@@ -972,7 +1368,7 @@ function updatePerson_(payload) {
   setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '在職狀態', payload.employmentStatus);
   setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '備註', payload.note);
 
-  // 若前端有傳系統權限、帳號狀態或密碼，也同步更新 07_帳號管理
+  // 帳號權限、狀態與密碼屬敏感欄位，只允許最高權限工作階段修改。
   if (
     payload.systemPermission !== undefined ||
     payload.permissionLevel !== undefined ||
@@ -983,6 +1379,7 @@ function updatePerson_(payload) {
     payload.accountStatus !== undefined ||
     payload.enabled !== undefined
   ) {
+    assertSuperAdmin_(session);
     const accountSheet = getSheet_(SHEETS.ACCOUNTS, true);
     if (accountSheet) {
       const accountHeaders = getHeaders_(accountSheet);
@@ -1001,11 +1398,12 @@ function updatePerson_(payload) {
           setCellIfExists_(accountSheet, accountHeaders, accountRowNumber, '系統權限', permission);
         }
         if (nextPassword) {
-          setCellIfExists_(accountSheet, accountHeaders, accountRowNumber, '登入密碼', nextPassword);
+          setCellIfExists_(accountSheet, accountHeaders, accountRowNumber, '登入密碼', hashPassword_(nextPassword));
         }
         if (nextStatus) {
           setCellIfExists_(accountSheet, accountHeaders, accountRowNumber, '啟用狀態', nextStatus === '停用' ? '停用' : '啟用');
         }
+        if (nextPassword || nextStatus === '停用') revokeSessionsForEmployee_(employeeId);
       }
     }
   }
@@ -1588,6 +1986,17 @@ function compareVersion_(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'en', { numeric: true });
 }
 
+function buildPermissionConfigForSession_(session) {
+  const config = buildPermissionConfig_();
+  if (normalizeString_(session.role) === '最高權限') return config;
+  return {
+    ok: true,
+    permissionItems: config.permissionItems,
+    rolePermissionMaps: config.rolePermissionMaps.filter(function (item) { return item.role === session.role; }),
+    personalPermissionExceptions: config.personalPermissionExceptions.filter(function (item) { return item.employeeId === session.employeeId; }),
+  };
+}
+
 function parseVersion_(value) {
   const text = String(value || '').trim();
   const dateMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -1745,8 +2154,8 @@ function jsonOutput_(obj) {
 function errorPayload_(error) {
   return {
     ok: false,
+    code: error && error.code ? String(error.code) : 'REQUEST_FAILED',
     message: error && error.message ? error.message : String(error),
-    stack: error && error.stack ? String(error.stack) : '',
   };
 }
 

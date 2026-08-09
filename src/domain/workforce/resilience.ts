@@ -17,8 +17,8 @@ const OFFICER_ROLES = new Set(["領班", "組長", "主任"]);
 const FULL_ENUMERATION_LIMIT = 25_000;
 const SAMPLED_SCENARIOS_PER_LEVEL = 12_000;
 const TRAINING_EVALUATION_LIMIT = 600;
-const TRAINING_STATION_LIMIT = 8;
-const TRAINING_CANDIDATE_LIMIT = 8;
+const TRAINING_STATION_LIMIT = 12;
+const TRAINING_CANDIDATE_LIMIT = 16;
 
 export interface ResilienceInput {
   team: TeamName;
@@ -65,6 +65,22 @@ export interface StationResilienceRisk {
   criticalCombinations: string[][];
 }
 
+export interface SharedQualificationBottleneck {
+  stationIds: string[];
+  requiredSlots: number;
+  qualifiedPeople: number;
+  reserveDepth: number;
+  severity: "已缺人" | "單點脆弱" | "低備援";
+}
+
+export interface SupportDependency {
+  stationId: string;
+  supportAssigned: number;
+  recoverableByOwn: number;
+  shortageWithoutSupport: number;
+  addedShortageWithoutSupport: number;
+}
+
 export interface ResilienceTrainingSuggestion {
   employeeId: string;
   stationId: string;
@@ -93,6 +109,8 @@ export interface CoverageResilienceResult {
   levels: ResilienceLevelResult[];
   criticalCombinations: CriticalAbsenceCombination[];
   stationRisks: StationResilienceRisk[];
+  sharedBottlenecks: SharedQualificationBottleneck[];
+  supportDependencies: SupportDependency[];
   trainingSuggestions: ResilienceTrainingSuggestion[];
 }
 
@@ -109,6 +127,8 @@ interface SolvedScenario {
   totalShortage: number;
   assigned: number;
   shortageByStation: Map<string, number>;
+  assignedByStation: Map<string, string[]>;
+  qualifiedByStation: Map<string, string[]>;
 }
 
 function isOfficer(person: Person) {
@@ -192,7 +212,7 @@ function solveScenario(
   ownIds: Set<string>,
   supportIds: Set<string>
 ): SolvedScenario {
-  const { assignedByStation } = solveCoverageMatching(
+  const { assignedByStation, qualifiedByStation } = solveCoverageMatching(
     rules,
     workingPeople,
     qualifications,
@@ -212,7 +232,95 @@ function solveScenario(
     totalShortage += shortage;
     assigned += stationAssigned;
   }
-  return { totalShortage, assigned, shortageByStation };
+  return { totalShortage, assigned, shortageByStation, assignedByStation, qualifiedByStation };
+}
+
+function buildSharedBottlenecks(
+  rules: StationRule[],
+  qualifiedByStation: Map<string, string[]>,
+  mode: ShiftMode
+): SharedQualificationBottleneck[] {
+  const activeStationIds = rules
+    .filter((rule) => getRuleNeed(rule, mode) > 0)
+    .map((rule) => rule.stationId);
+  const ruleByStation = new Map(rules.map((rule) => [rule.stationId, rule]));
+  const groups = [
+    ...generateAllCombinations(activeStationIds, 2),
+    ...(activeStationIds.length <= 24 ? generateAllCombinations(activeStationIds, 3) : []),
+  ];
+
+  return groups
+    .map((stationIds) => {
+      const qualifiedIds = new Set<string>();
+      stationIds.forEach((stationId) => {
+        (qualifiedByStation.get(stationId) || []).forEach((id) => qualifiedIds.add(id));
+      });
+      const requiredSlots = stationIds.reduce((sum, stationId) => {
+        const rule = ruleByStation.get(stationId);
+        return sum + (rule ? getRuleNeed(rule, mode) : 0);
+      }, 0);
+      const reserveDepth = qualifiedIds.size - requiredSlots;
+      const severity: SharedQualificationBottleneck["severity"] = reserveDepth < 0
+        ? "已缺人"
+        : reserveDepth === 0
+          ? "單點脆弱"
+          : "低備援";
+      return {
+        stationIds,
+        requiredSlots,
+        qualifiedPeople: qualifiedIds.size,
+        reserveDepth,
+        severity,
+      };
+    })
+    .filter((item) => item.qualifiedPeople <= item.requiredSlots + 1)
+    .sort((a, b) =>
+      a.reserveDepth - b.reserveDepth ||
+      b.requiredSlots - a.requiredSlots ||
+      a.stationIds.length - b.stationIds.length ||
+      a.stationIds.join("|").localeCompare(b.stationIds.join("|"), "zh-Hant", { numeric: true })
+    )
+    .filter((item, index, items) => {
+      if (item.stationIds.length === 2) return true;
+      return !items.slice(0, index).some((existing) =>
+        existing.reserveDepth <= item.reserveDepth &&
+        existing.stationIds.every((stationId) => item.stationIds.includes(stationId))
+      );
+    })
+    .slice(0, 12);
+}
+
+function buildSupportDependencies(
+  rules: StationRule[],
+  mode: ShiftMode,
+  baseline: SolvedScenario,
+  withoutSupport: SolvedScenario | null,
+  supportIds: Set<string>
+): SupportDependency[] {
+  if (mode === "當班" || !withoutSupport || !supportIds.size) return [];
+
+  return rules
+    .map((rule) => {
+      const stationId = rule.stationId;
+      const supportAssigned = (baseline.assignedByStation.get(stationId) || [])
+        .filter((id) => supportIds.has(id)).length;
+      const baselineShortage = baseline.shortageByStation.get(stationId) || 0;
+      const shortageWithoutSupport = withoutSupport.shortageByStation.get(stationId) || 0;
+      const addedShortageWithoutSupport = Math.max(0, shortageWithoutSupport - baselineShortage);
+      return {
+        stationId,
+        supportAssigned,
+        recoverableByOwn: Math.max(0, supportAssigned - addedShortageWithoutSupport),
+        shortageWithoutSupport,
+        addedShortageWithoutSupport,
+      };
+    })
+    .filter((item) => item.supportAssigned > 0 || item.addedShortageWithoutSupport > 0)
+    .sort((a, b) =>
+      b.addedShortageWithoutSupport - a.addedShortageWithoutSupport ||
+      b.supportAssigned - a.supportAssigned ||
+      a.stationId.localeCompare(b.stationId, "zh-Hant", { numeric: true })
+    );
 }
 
 function selectTrainingEvaluationScenarios(scenarios: ScenarioSnapshot[]) {
@@ -253,7 +361,8 @@ function buildTrainingSuggestions(
   if (!targetStationIds.length) return [];
 
   const evaluationScenarios = selectTrainingEvaluationScenarios(riskScenarios);
-  const exactRiskEvaluation = evaluationScenarios.length === riskScenarios.length;
+  const exactRiskEvaluation = evaluationScenarios.length === riskScenarios.length
+    && riskScenarios.every((scenario) => scenario.exhaustiveLevel);
   const coverageRateBefore = testedCombinations
     ? (fullyCoveredScenarios / testedCombinations) * 100
     : baseline.totalShortage === 0 ? 100 : 0;
@@ -262,38 +371,56 @@ function buildTrainingSuggestions(
   const trainingPeople = mode === "當班"
     ? workingPeople
     : workingPeople.filter((person) => ownIds.has(person.id));
+  const baselineAssignedIds = new Set([...baseline.assignedByStation.values()].flat());
 
   for (const stationId of targetStationIds) {
-    const stationCandidates = trainingPeople
+    const stationCandidateEvaluations = trainingPeople
       .filter((person) => !qualifications.some((item) =>
         item.employeeId === person.id && item.stationId === stationId && Boolean(item.status)
       ))
+      .map((person) => {
+        const simulatedQualifications: Qualification[] = [
+          ...qualifications,
+          {
+            employeeId: person.id,
+            employeeName: person.name,
+            stationId,
+            status: "合格",
+          },
+        ];
+        const simulatedBaseline = solveScenario(
+          rules,
+          workingPeople,
+          simulatedQualifications,
+          mode,
+          new Set<string>(),
+          ownIds,
+          supportIds
+        );
+        return {
+          person,
+          simulatedQualifications,
+          simulatedBaseline,
+          baselineShortageReduced: Math.max(0, baseline.totalShortage - simulatedBaseline.totalShortage),
+          currentlyUnassigned: !baselineAssignedIds.has(person.id),
+        };
+      });
+    const stationCandidates = [
+      ...stationCandidateEvaluations.filter((item) => item.baselineShortageReduced > 0),
+      ...stationCandidateEvaluations.filter((item) => item.currentlyUnassigned),
+      ...stationCandidateEvaluations,
+    ]
       .sort((a, b) =>
-        (qualificationCountMap.get(a.id) || 0) - (qualificationCountMap.get(b.id) || 0) ||
-        a.name.localeCompare(b.name, "zh-Hant", { numeric: true })
+        b.baselineShortageReduced - a.baselineShortageReduced ||
+        Number(b.currentlyUnassigned) - Number(a.currentlyUnassigned) ||
+        (qualificationCountMap.get(a.person.id) || 0) - (qualificationCountMap.get(b.person.id) || 0) ||
+        a.person.name.localeCompare(b.person.name, "zh-Hant", { numeric: true })
       )
+      .filter((item, index, items) => items.findIndex((candidate) => candidate.person.id === item.person.id) === index)
       .slice(0, TRAINING_CANDIDATE_LIMIT);
 
-    for (const person of stationCandidates) {
-      const simulatedQualifications: Qualification[] = [
-        ...qualifications,
-        {
-          employeeId: person.id,
-          employeeName: person.name,
-          stationId,
-          status: "合格",
-        },
-      ];
-      const simulatedBaseline = solveScenario(
-        rules,
-        workingPeople,
-        simulatedQualifications,
-        mode,
-        new Set<string>(),
-        ownIds,
-        supportIds
-      );
-      const baselineShortageReduced = Math.max(0, baseline.totalShortage - simulatedBaseline.totalShortage);
+    for (const candidate of stationCandidates) {
+      const { person, simulatedQualifications, simulatedBaseline, baselineShortageReduced } = candidate;
       let riskScenariosResolved = 0;
       let shortageSlotsReduced = 0;
       let evaluated = 0;
@@ -383,6 +510,17 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     ownIds,
     supportIds
   );
+  const withoutSupport = supportIds.size
+    ? solveScenario(
+        rules,
+        workingPeople,
+        input.qualifications,
+        input.mode,
+        new Set(supportIds),
+        ownIds,
+        supportIds
+      )
+    : null;
   const baselineRequired = rules.reduce((sum, rule) => sum + getRuleNeed(rule, input.mode), 0);
   const workerIds = workingPeople.map((person) => person.id).sort((a, b) =>
     a.localeCompare(b, "zh-Hant", { numeric: true })
@@ -487,6 +625,14 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     b.riskScenarioCount - a.riskScenarioCount ||
     b.maxAddedShortage - a.maxAddedShortage
   );
+  const sharedBottlenecks = buildSharedBottlenecks(rules, baseline.qualifiedByStation, input.mode);
+  const supportDependencies = buildSupportDependencies(
+    rules,
+    input.mode,
+    baseline,
+    withoutSupport,
+    supportIds
+  );
   const criticalCombinations: CriticalAbsenceCombination[] = minimalRiskScenarios
     .sort((a, b) =>
       a.absenceCount - b.absenceCount ||
@@ -522,6 +668,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     levels,
     criticalCombinations,
     stationRisks,
+    sharedBottlenecks,
+    supportDependencies,
     trainingSuggestions,
   };
 }

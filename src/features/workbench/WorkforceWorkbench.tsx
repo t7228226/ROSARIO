@@ -62,10 +62,10 @@ export default function WorkforceWorkbench({
     : result.rows.filter((row) => row.bottleneck).slice(0, 6);
 
   return (
-    <section className="workforce-workbench" aria-label="今日人力工作台">
+    <section className="workforce-workbench" aria-label="今日人力概況">
       <div className="workforce-context-bar">
         <div>
-          <span className="workforce-eyebrow">今日人力工作台</span>
+          <span className="workforce-eyebrow">今日人力概況</span>
           <strong>{team}・{mode}</strong>
         </div>
         <div className="workforce-context-controls">
@@ -96,16 +96,16 @@ export default function WorkforceWorkbench({
       </div>
 
       <div className="workforce-action-row" aria-label="常用操作">
-        <button type="button" className="primary" onClick={() => onNavigate("gap-analysis")}>開始分析與模擬</button>
-        <button type="button" className="ghost" onClick={() => onNavigate("manual-schedule")}>進入站點試排</button>
-        <button type="button" className="ghost" onClick={() => onNavigate("person-query")}>快速查詢人員</button>
+        <button type="button" className="primary" onClick={() => onNavigate("gap-analysis")}>開啟覆蓋分析</button>
+        <button type="button" className="ghost" onClick={() => onNavigate("manual-schedule")}>進入班表試排</button>
+        <button type="button" className="ghost" onClick={() => onNavigate("person-query")}>查詢人員資格</button>
       </div>
 
       <section className="workforce-attention-section">
         <div className="workforce-section-heading">
           <div>
-            <h3>{shortageRows.length ? "目前缺口" : "需要注意的瓶頸"}</h3>
-            <p>領班、組長、主任已從基礎作業人力排除；站長正常計入。</p>
+            <h3>{shortageRows.length ? "目前站點缺口" : "資格配置瓶頸"}</h3>
+            <p>基礎作業人力排除領班、組長與主任；站長依資格正常計入。</p>
           </div>
           <span className={result.analysis.shortage > 0 ? "workforce-status danger" : "workforce-status success"}>
             {result.analysis.shortage > 0 ? `仍缺 ${result.analysis.shortage} 人` : "最低需求已覆蓋"}

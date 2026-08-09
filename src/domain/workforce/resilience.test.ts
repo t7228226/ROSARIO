@@ -126,4 +126,59 @@ describe("analyzeCoverageResilience", () => {
     assert.equal(result.trainingSuggestions[0]?.employeeId, "P-OWN");
     assert.equal(result.trainingSuggestions.some((item) => item.employeeId === "P-SUPPORT"), false);
   });
+
+  it("辨識多個站點共用同一小群人員的共享瓶頸", () => {
+    const people = [person("P-1"), person("P-2"), person("P-3")];
+    const result = analyzeCoverageResilience({
+      team,
+      mode: "當班",
+      people,
+      stationRules: [rule("A"), rule("B")],
+      qualifications: people.flatMap((item) => [
+        qualification(item.id, "A"),
+        qualification(item.id, "B"),
+      ]),
+      maxAbsences: 1,
+    });
+
+    const shared = result.sharedBottlenecks.find((item) =>
+      item.stationIds.length === 2 && item.stationIds.includes("A") && item.stationIds.includes("B")
+    );
+    assert.equal(shared?.requiredSlots, 2);
+    assert.equal(shared?.qualifiedPeople, 3);
+    assert.equal(shared?.reserveDepth, 1);
+    assert.equal(shared?.severity, "低備援");
+  });
+
+  it("第一天支援優先配置後，顯示本班能否接手支援站點", () => {
+    const result = analyzeCoverageResilience({
+      team,
+      mode: "第一天",
+      people: [firstDayPerson("P-OWN", team), firstDayPerson("P-SUPPORT", "俊志班")],
+      stationRules: [rule("A")],
+      qualifications: [qualification("P-OWN", "A"), qualification("P-SUPPORT", "A")],
+      maxAbsences: 1,
+    });
+
+    assert.equal(result.supportDependencies.length, 1);
+    assert.equal(result.supportDependencies[0]?.supportAssigned, 1);
+    assert.equal(result.supportDependencies[0]?.recoverableByOwn, 1);
+    assert.equal(result.supportDependencies[0]?.addedShortageWithoutSupport, 0);
+  });
+
+  it("原始缺勤組合採抽樣時，補訓成效必須標示為估算", () => {
+    const people = Array.from({ length: 25 }, (_, index) => person(`P-${String(index + 1).padStart(2, "0")}`));
+    const result = analyzeCoverageResilience({
+      team,
+      mode: "當班",
+      people,
+      stationRules: [rule("A")],
+      qualifications: people.slice(0, 3).map((item) => qualification(item.id, "A")),
+      maxAbsences: 5,
+    });
+
+    assert.equal(result.exhaustive, false);
+    assert.equal(result.trainingSuggestions.length > 0, true);
+    assert.equal(result.trainingSuggestions.every((item) => item.estimated), true);
+  });
 });

@@ -2,14 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
-import "./schedule-overrides.css";
-import { installScheduleTipRuntime } from "./schedule-tip-runtime";
-import { installScheduleColorRuntime } from "./schedule-color-runtime";
+import "./upgrade.css";
 
 declare global {
   interface Window {
     __hideBootStatus?: () => void;
-    __scheduleRuntimePausedUntil?: number;
   }
 }
 
@@ -30,48 +27,11 @@ function formatError(error: unknown) {
   return String(error);
 }
 
-function isOptionalRuntimeDomError(message: string) {
-  return (
-    message.includes("Failed to execute 'insertBefore'") ||
-    message.includes("The node before which the new node is to be inserted is not a child of this node") ||
-    message.includes("Failed to execute 'removeChild'") ||
-    message.includes("The node to be removed is not a child of this node") ||
-    message.includes("Cannot read properties of null") ||
-    message.includes("Cannot read properties of undefined")
-  );
-}
-
-function installOptionalRuntime(name: string, installer: () => void) {
-  try {
-    installer();
-  } catch (error) {
-    console.warn(`${name} 載入失敗，已略過，不影響主系統。`, error);
-  }
-}
-
-function installRuntimePauseGate() {
-  const originalSetTimeout = window.setTimeout.bind(window);
-  window.setTimeout = ((handler: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    const guardedHandler = typeof handler === "function"
-      ? (() => {
-          if (Date.now() < (window.__scheduleRuntimePausedUntil || 0)) return;
-          try {
-            (handler as (...innerArgs: unknown[]) => void)(...args);
-          } catch (error) {
-            console.warn("runtime timeout 已略過錯誤", error);
-          }
-        })
-      : handler;
-    return originalSetTimeout(guardedHandler as TimerHandler, timeout);
-  }) as typeof window.setTimeout;
-}
-
 window.addEventListener("error", (event) => {
   const message = String(event.message || "");
   const target = String(event.filename || "");
   const isBrowserExtensionOrCrossOriginError = message === "Script error." || message.includes("The object can not be found here") || !target;
-  const isOptionalDomError = target.includes("/assets/index-") && isOptionalRuntimeDomError(message);
-  if (isBrowserExtensionOrCrossOriginError || isOptionalDomError) {
+  if (isBrowserExtensionOrCrossOriginError) {
     console.warn("非核心腳本錯誤已略過：", message, target);
     event.preventDefault();
     return;
@@ -80,11 +40,8 @@ window.addEventListener("error", (event) => {
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  console.warn("非核心非同步錯誤已略過：", event.reason);
-  event.preventDefault();
+  console.error("未處理的非同步錯誤：", event.reason);
 });
-
-installRuntimePauseGate();
 
 try {
   const root = document.getElementById("root");
@@ -104,6 +61,3 @@ try {
 } catch (error) {
   showFatalError("系統載入失敗", formatError(error));
 }
-
-window.setTimeout(() => installOptionalRuntime("站點浮動提示窗", installScheduleTipRuntime), 550);
-window.setTimeout(() => installOptionalRuntime("站點顏色標籤", installScheduleColorRuntime), 650);

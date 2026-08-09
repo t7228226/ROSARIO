@@ -1,11 +1,22 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, ReactNode, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Layout from "./components/Layout";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
+import AppDialog, { DialogShell } from "./components/ui/AppDialog";
 import { appEnvironment } from "./config/environment";
-import { FRONT_WRITE_ACTIONS } from "./config/writeActions";
 import { prepareNewPerson } from "./domain/people/newPerson";
 import type { CoverageResilienceResult } from "./domain/workforce/resilience";
-import WorkforceWorkbench from "./features/workbench/WorkforceWorkbench";
+import { auditScheduleSafety } from "./domain/workforce/scheduleSafety";
+import {
+  clearGasSessionToken,
+  fetchGasBootstrapData,
+  fetchGasPermissionConfig,
+  fetchGasVersionStatus,
+  fetchWithTimeout,
+  postGasAction,
+  setGasSessionToken,
+  type GasResponse as GasWriteResponse,
+  type GasSessionResponse,
+} from "./lib/gasClient";
 import {
   analyzeStationCoverage,
   buildSmartAssignments,
@@ -33,6 +44,9 @@ import type {
   UserRole,
 } from "./types";
 
+const ResilienceInsights = lazy(() => import("./features/gap-analysis/ResilienceInsights"));
+const WorkforceWorkbench = lazy(() => import("./features/workbench/WorkforceWorkbench"));
+
 type PageKey =
   | "home"
   | "person-query"
@@ -52,9 +66,12 @@ type MobileDetailModal =
   | null;
 
 type ViewMode = "desktop" | "mobile";
-type GlobalThemeKey = "glass" | "kawaii" | "cyber" | "premium" | "comic" | "random";
-type GlobalFontKey = "system" | "rounded" | "serif" | "mono" | "hand" | "random";
 type LoginKeepKey = "8h" | "12h" | "24h" | "7d";
+type StoredLoginSession = {
+  userId: string;
+  sessionToken: string;
+  expiresAt: number;
+};
 
 const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> = [
   { key: "8h", label: "8小時", ms: 8 * 60 * 60 * 1000 },
@@ -66,14 +83,7 @@ const loginKeepOptions: Array<{ key: LoginKeepKey; label: string; ms: number }> 
 const loginSessionStorageKey = "stationAppLoginSession";
 const loginKeepStorageKey = "stationAppLoginKeep";
 const appVersionStorageKey = "stationAppVersion";
-const GAS_WRITE_ENDPOINT = appEnvironment.gasEndpoint;
 const APP_VERSION = appEnvironment.version;
-const GAS_READ_TIMEOUT_MS = 20_000;
-const GAS_BOOTSTRAP_TIMEOUT_MS = 60_000;
-const GAS_WRITE_TIMEOUT_MS = 60_000;
-const GAS_WRITE_STATUS_TIMEOUT_MS = 12_000;
-const PENDING_WRITE_TTL_MS = 15 * 60 * 1000;
-const pendingWriteStorageKey = "stationAppPendingWrites";
 function createEmptyPersonDraft(): Person {
   return {
     id: "",
@@ -87,348 +97,6 @@ function createEmptyPersonDraft(): Person {
     aDay2: "",
     bDay1: "",
     bDay2: "",
-  };
-}
-
-type GasWriteResponse = {
-  ok?: boolean;
-  message?: string;
-  [key: string]: unknown;
-};
-
-type GlobalProcessingKind = "save" | "delete";
-
-function showGlobalProcessingOverlay(kind: GlobalProcessingKind) {
-  if (typeof document === "undefined") return;
-
-  const title = kind === "delete" ? "資料刪除中" : "資料處理中";
-  const detail = kind === "delete"
-    ? "正在更新系統資料，請勿關閉頁面或重複操作。"
-    : "正在寫入系統，請勿關閉頁面或重複操作。";
-
-  let overlay = document.getElementById("global-processing-overlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "global-processing-overlay";
-    overlay.setAttribute("role", "alertdialog");
-    overlay.setAttribute("aria-live", "assertive");
-    overlay.innerHTML = `
-      <div class="global-processing-card">
-        <div class="global-processing-spinner" aria-hidden="true"></div>
-        <h2 class="global-processing-title"></h2>
-        <p class="global-processing-detail"></p>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  overlay.className = `global-processing-overlay ${kind === "delete" ? "is-delete" : "is-save"}`;
-  const titleEl = overlay.querySelector(".global-processing-title");
-  const detailEl = overlay.querySelector(".global-processing-detail");
-  if (titleEl) titleEl.textContent = title;
-  if (detailEl) detailEl.textContent = detail;
-}
-
-function hideGlobalProcessingOverlay() {
-  if (typeof document === "undefined") return;
-  const overlay = document.getElementById("global-processing-overlay");
-  if (overlay) overlay.remove();
-}
-
-function updateGlobalProcessingOverlay(title: string, detail: string) {
-  if (typeof document === "undefined") return;
-  const overlay = document.getElementById("global-processing-overlay");
-  if (!overlay) return;
-  const titleEl = overlay.querySelector(".global-processing-title");
-  const detailEl = overlay.querySelector(".global-processing-detail");
-  if (titleEl) titleEl.textContent = title;
-  if (detailEl) detailEl.textContent = detail;
-}
-
-class RequestTimeoutError extends Error {
-  constructor(timeoutMs: number) {
-    super(`連線逾時（${Math.round(timeoutMs / 1000)} 秒）。`);
-    this.name = "RequestTimeoutError";
-  }
-}
-
-class GasWriteRejectedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GasWriteRejectedError";
-  }
-}
-
-type PendingWriteOperation = {
-  operationId: string;
-  createdAt: number;
-};
-
-type GasOperationStatus = GasWriteResponse & {
-  found?: boolean;
-  status?: "processing" | "success" | "failed" | "unknown";
-  result?: GasWriteResponse;
-};
-
-const inFlightWriteRequests = new Map<string, Promise<GasWriteResponse>>();
-
-function stableSerialize(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function hashText(value: string) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function getWriteFingerprint(action: string, payload: Record<string, unknown>) {
-  const serialized = stableSerialize(payload);
-  return `${action}:${serialized.length}:${hashText(serialized)}`;
-}
-
-function readPendingWrites(): Record<string, PendingWriteOperation> {
-  try {
-    const parsed = JSON.parse(window.sessionStorage.getItem(pendingWriteStorageKey) || "{}") as Record<string, PendingWriteOperation>;
-    const now = Date.now();
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([, item]) => item?.operationId && now - Number(item.createdAt || 0) < PENDING_WRITE_TTL_MS)
-    );
-  } catch {
-    return {};
-  }
-}
-
-function rememberPendingWrite(fingerprint: string, operation: PendingWriteOperation) {
-  try {
-    const pending = readPendingWrites();
-    pending[fingerprint] = operation;
-    window.sessionStorage.setItem(pendingWriteStorageKey, JSON.stringify(pending));
-  } catch {
-    // sessionStorage unavailable; the current in-flight request is still deduplicated.
-  }
-}
-
-function clearPendingWrite(fingerprint: string) {
-  try {
-    const pending = readPendingWrites();
-    delete pending[fingerprint];
-    window.sessionStorage.setItem(pendingWriteStorageKey, JSON.stringify(pending));
-  } catch {
-    // Cleanup failure does not change the write result.
-  }
-}
-
-function createOperationId(action: string) {
-  const randomPart = typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID().replace(/-/g, "")
-    : Math.random().toString(36).slice(2);
-  return `OP_${action}_${Date.now()}_${randomPart}`.slice(0, 120);
-}
-
-function wait(ms: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
-}
-
-async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = GAS_READ_TIMEOUT_MS) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new RequestTimeoutError(timeoutMs);
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
-async function fetchGasOperationStatus(operationId: string): Promise<GasOperationStatus> {
-  const url = new URL(GAS_WRITE_ENDPOINT);
-  url.searchParams.set("action", "operationStatus");
-  url.searchParams.set("operationId", operationId);
-  url.searchParams.set("appVersion", APP_VERSION);
-  const response = await fetchWithTimeout(url.toString(), { cache: "no-store" }, GAS_WRITE_STATUS_TIMEOUT_MS);
-  const result = (await response.json()) as GasOperationStatus;
-  if (!response.ok || result.ok === false) {
-    throw new Error(String(result.message || "無法確認儲存結果。"));
-  }
-  return result;
-}
-
-async function pollGasOperation(operationId: string, delays = [700, 1400, 2500, 4000]): Promise<GasWriteResponse | null> {
-  for (const delay of delays) {
-    await wait(delay);
-    try {
-      const status = await fetchGasOperationStatus(operationId);
-      if (status.status === "success" && status.result) return status.result;
-      if (status.status === "failed") {
-        throw new GasWriteRejectedError(String(status.message || "資料寫入失敗。"));
-      }
-      if (!status.found || status.status === "unknown") return null;
-    } catch (error) {
-      if (error instanceof GasWriteRejectedError) throw error;
-      // 狀態查詢短暫失敗時，繼續下一輪確認。
-    }
-  }
-  return null;
-}
-
-function isTransientWriteError(error: unknown) {
-  return error instanceof RequestTimeoutError ||
-    error instanceof TypeError ||
-    (error instanceof Error && /network|fetch|連線|逾時/i.test(error.message));
-}
-
-async function sendGasAction(action: string, payload: Record<string, unknown>, operationId?: string) {
-  const response = await fetchWithTimeout(GAS_WRITE_ENDPOINT, {
-    method: "POST",
-    body: JSON.stringify({ action, appVersion: APP_VERSION, operationId, payload }),
-  }, operationId ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
-  const result = (await response.json()) as GasWriteResponse;
-  if (!response.ok || result.ok === false) {
-    throw new GasWriteRejectedError(String(result.message || `GAS ${action} 儲存失敗`));
-  }
-  return result;
-}
-
-async function performReliableGasWrite(
-  action: string,
-  payload: Record<string, unknown>,
-  fingerprint: string,
-  operationId: string
-): Promise<GasWriteResponse> {
-  const processingKind: GlobalProcessingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
-  showGlobalProcessingOverlay(processingKind);
-  rememberPendingWrite(fingerprint, { operationId, createdAt: Date.now() });
-
-  try {
-    try {
-      const result = await sendGasAction(action, payload, operationId);
-      if (!result.pending) {
-        clearPendingWrite(fingerprint);
-        return result;
-      }
-    } catch (error) {
-      if (error instanceof GasWriteRejectedError) {
-        clearPendingWrite(fingerprint);
-        throw error;
-      }
-      if (!isTransientWriteError(error)) throw error;
-    }
-
-    updateGlobalProcessingOverlay("正在確認儲存結果", "連線較慢，系統正在確認資料是否已經寫入，請勿重複操作。");
-    const confirmed = await pollGasOperation(operationId);
-    if (confirmed) {
-      clearPendingWrite(fingerprint);
-      return confirmed;
-    }
-
-    updateGlobalProcessingOverlay("正在安全重送", "尚未找到原請求，將使用相同操作編號再送一次，不會重複新增。");
-    try {
-      const retried = await sendGasAction(action, payload, operationId);
-      if (!retried.pending) {
-        clearPendingWrite(fingerprint);
-        return retried;
-      }
-    } catch (error) {
-      if (error instanceof GasWriteRejectedError) {
-        clearPendingWrite(fingerprint);
-        throw error;
-      }
-      if (!isTransientWriteError(error)) throw error;
-    }
-
-    updateGlobalProcessingOverlay("仍在確認中", "伺服器仍在處理，系統會再次核對結果。");
-    const retriedConfirmation = await pollGasOperation(operationId, [1000, 2000, 4000, 6000]);
-    if (retriedConfirmation) {
-      clearPendingWrite(fingerprint);
-      return retriedConfirmation;
-    }
-
-    throw new Error(`資料可能仍在處理，請先重新整理確認；再次操作時系統會沿用同一筆請求。操作編號：${operationId}`);
-  } finally {
-    hideGlobalProcessingOverlay();
-  }
-}
-
-async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasWriteResponse> {
-  const isWriteAction = FRONT_WRITE_ACTIONS.has(action);
-  if (!isWriteAction) return sendGasAction(action, payload);
-  if (!appEnvironment.writesEnabled) {
-    throw new Error("升級測試環境目前為唯讀，已阻擋寫入正式資料。");
-  }
-
-  const fingerprint = getWriteFingerprint(action, payload);
-  const currentRequest = inFlightWriteRequests.get(fingerprint);
-  if (currentRequest) return currentRequest;
-
-  const pending = readPendingWrites()[fingerprint];
-  const operationId = pending?.operationId || createOperationId(action);
-  const request = performReliableGasWrite(action, payload, fingerprint, operationId)
-    .finally(() => inFlightWriteRequests.delete(fingerprint));
-  inFlightWriteRequests.set(fingerprint, request);
-  return request;
-}
-
-async function fetchGasBootstrapData(): Promise<AppBootstrap> {
-  const response = await fetchWithTimeout(
-    `${GAS_WRITE_ENDPOINT}?action=bootstrap&appVersion=${encodeURIComponent(APP_VERSION)}`,
-    { cache: "no-store" },
-    GAS_BOOTSTRAP_TIMEOUT_MS
-  );
-  const result = (await response.json()) as AppBootstrap & GasWriteResponse;
-  if (!response.ok || result.ok === false) {
-    throw new Error(String(result.message || "GAS bootstrap 讀取失敗"));
-  }
-  return result;
-}
-
-async function fetchGasPermissionConfig(): Promise<{
-  permissionItems?: PermissionItemDefinition[];
-  rolePermissionMaps?: RolePermissionMapDefinition[];
-  personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
-}> {
-  const response = await fetchWithTimeout(
-    `${GAS_WRITE_ENDPOINT}?action=permissionConfig&appVersion=${encodeURIComponent(APP_VERSION)}`,
-    { cache: "no-store" },
-    GAS_BOOTSTRAP_TIMEOUT_MS
-  );
-  const result = (await response.json()) as GasWriteResponse & {
-    permissionItems?: PermissionItemDefinition[];
-    rolePermissionMaps?: RolePermissionMapDefinition[];
-    personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
-  };
-  if (!response.ok || result.ok === false) {
-    throw new Error(String(result.message || "權限設定讀取失敗"));
-  }
-  return result;
-}
-
-async function fetchGasVersionStatus(): Promise<{ latestVersion: string; minWriteVersion: string; outdated: boolean; writeBlocked: boolean; message?: string }> {
-  const response = await fetchWithTimeout(`${GAS_WRITE_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`, { cache: "no-store" }, 10_000);
-  const result = (await response.json()) as GasWriteResponse & { latestVersion?: string; minWriteVersion?: string; outdated?: boolean; writeBlocked?: boolean; message?: string };
-  if (!response.ok || result.ok === false) {
-    throw new Error(String(result.message || "版本檢查失敗"));
-  }
-  return {
-    latestVersion: String(result.latestVersion || APP_VERSION),
-    minWriteVersion: String(result.minWriteVersion || result.latestVersion || APP_VERSION),
-    outdated: !!result.outdated,
-    writeBlocked: !!result.writeBlocked,
-    message: result.message,
   };
 }
 
@@ -479,39 +147,25 @@ function getLoginKeepMs(key: LoginKeepKey) {
   return loginKeepOptions.find((item) => item.key === key)?.ms || loginKeepOptions[1].ms;
 }
 
-const globalThemeOptions: Array<{ key: GlobalThemeKey; label: string; note: string }> = [
-  { key: "glass", label: "極簡玻璃", note: "清爽、乾淨、最適合日常使用" },
-  { key: "kawaii", label: "甜心柔和", note: "柔和可愛、提示較親切" },
-  { key: "cyber", label: "霓虹科技", note: "高對比、醒目、科技感強" },
-  { key: "premium", label: "精品典雅", note: "深藍金色、正式感高" },
-  { key: "comic", label: "漫畫活力", note: "活潑、辨識度最高" },
-  { key: "random", label: "隨機樣式", note: "每次重新整理自動抽一款" },
-];
-
-const globalFontOptions: Array<{ key: GlobalFontKey; label: string; note: string }> = [
-  { key: "system", label: "黑體清晰", note: "繁中手機最穩定，適合正式操作" },
-  { key: "rounded", label: "圓體柔和", note: "圓潤感明顯，適合可愛柔和樣式" },
-  { key: "serif", label: "明體典雅", note: "筆畫有襯線，標題正式感強" },
-  { key: "mono", label: "等寬科技", note: "每個字寬接近一致，數字代碼整齊" },
-  { key: "hand", label: "楷體手寫", note: "繁中楷體感，和黑體差異明顯" },
-  { key: "random", label: "隨機字型", note: "每次重新整理自動抽一款" },
-];
-
-const concreteThemeKeys = globalThemeOptions.filter((item) => item.key !== "random").map((item) => item.key) as Exclude<GlobalThemeKey, "random">[];
-const concreteFontKeys = globalFontOptions.filter((item) => item.key !== "random").map((item) => item.key) as Exclude<GlobalFontKey, "random">[];
-
-function pickRandomItem<T>(items: T[]): T {
-  return items[Math.floor(Math.random() * items.length)] || items[0];
+function readStoredLoginSession(): StoredLoginSession | null {
+  try {
+    const raw = window.localStorage.getItem(loginSessionStorageKey);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as Partial<StoredLoginSession>;
+    if (!session.userId || !session.sessionToken || !session.expiresAt || Date.now() >= session.expiresAt) return null;
+    return session as StoredLoginSession;
+  } catch {
+    return null;
+  }
 }
 
-function getStoredThemeOption(): GlobalThemeKey {
-  const stored = typeof window !== "undefined" ? window.localStorage.getItem("globalThemeOption") : "";
-  return globalThemeOptions.some((item) => item.key === stored) ? (stored as GlobalThemeKey) : "glass";
+function saveStoredLoginSession(session: StoredLoginSession) {
+  window.localStorage.setItem(loginSessionStorageKey, JSON.stringify(session));
 }
 
-function getStoredFontOption(): GlobalFontKey {
-  const stored = typeof window !== "undefined" ? window.localStorage.getItem("globalFontOption") : "";
-  return globalFontOptions.some((item) => item.key === stored) ? (stored as GlobalFontKey) : "system";
+function clearStoredLoginSession() {
+  window.localStorage.removeItem(loginSessionStorageKey);
+  clearGasSessionToken();
 }
 
 const emptyBootstrap: AppBootstrap = {
@@ -590,6 +244,22 @@ function sanitizeBootstrapData(source: AppBootstrap): AppBootstrap {
   return { ...source, people, stations, qualifications, stationRules };
 }
 
+function buildPersonProfilePayload(person: Person): Record<string, unknown> {
+  return {
+    id: person.id,
+    name: person.name,
+    shift: person.shift,
+    role: person.role,
+    nationality: person.nationality,
+    employmentStatus: person.employmentStatus,
+    note: person.note || "",
+    aDay1: person.aDay1 || "",
+    aDay2: person.aDay2 || "",
+    bDay1: person.bDay1 || "",
+    bDay2: person.bDay2 || "",
+  };
+}
+
 const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不可排", ""];
 const dayOptions: ShiftMode[] = DAY_OPTIONS;
 const permissionOptions: UserRole[] = ["技術員", "領班", "組長", "主任", "站長", "最高權限"];
@@ -598,15 +268,15 @@ const officerRoleOrder = ["主任", "組長", "領班", "站長"] as const;
 type OfficerRole = (typeof officerRoleOrder)[number];
 type SchedulePreviewStyle = "card" | "table" | "share" | "section" | "matrix";
 type ManualExtraWork = { id: string; workName: string; personIds: string[] };
-type SchedulePreviewPerson = { name: string; isOfficer?: boolean };
+type SchedulePreviewPerson = { name: string; isOfficer?: boolean; isTraining?: boolean };
 
 
 const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: string }> = [
-  { key: "card", label: "卡片版" },
-  { key: "table", label: "表格版" },
-  { key: "share", label: "可愛圖卡" },
-  { key: "section", label: "海報版" },
-  { key: "matrix", label: "橫版班表" },
+  { key: "card", label: "清單卡片" },
+  { key: "table", label: "標準表格" },
+  { key: "share", label: "分享圖卡" },
+  { key: "section", label: "分區海報" },
+  { key: "matrix", label: "橫向矩陣" },
 ];
 
 const initialManualExtraWorks: ManualExtraWork[] = [
@@ -910,17 +580,17 @@ function getViewportMode(): ViewMode {
 type EntranceKey = PageKey | "login-required";
 
 const entranceMeta: Record<EntranceKey, { title: string; subtitle: string }> = {
-  home: { title: "首頁", subtitle: "全站入口、系統摘要與個人外觀設定。" },
-  "person-query": { title: "查詢人員資格", subtitle: "可依班別快速篩選，只找自己班的人，右側顯示班別與出勤資料。" },
-  "station-query": { title: "查詢站點人選", subtitle: "新增班別選項與日別選項，可快速檢視當班與對班支援人力。" },
-  "qualification-review": { title: "站點考核", subtitle: "(A)/(B)為班別，第一天/第二天為出勤；切換班別時清空輸入框並顯示該班人員。" },
-  "gap-analysis": { title: "站點缺口分析", subtitle: "切換班別與日別時即時刷新，出勤人力與該班規則會重新計算。" },
-  "manual-schedule": { title: "站點試排", subtitle: "正式 React 版站點試排：一鍵安排、模式、分區、顏色、重複更換、自訂人選與分享。" },
-  "smart-schedule": { title: "智能試排", subtitle: "智能試排目前停用，避免干涉站點試排。" },
-  "station-rules": { title: "站點規則設定", subtitle: "此頁僅依班別設定規則，設定完成後會對應該班缺口分析與規則使用頁面。" },
-  "people-management": { title: "人員名單管理", subtitle: "職務標籤與系統權限已分離；此頁只維護人員資料，系統權限請至權限管理。" },
-  "permission-admin": { title: "權限管理", subtitle: "最高權限可直接調整角色權限、帳號密碼、功能啟用與個人例外權限。" },
-  "login-required": { title: "尚未登入", subtitle: "請先登入後開啟對應功能。" },
+  home: { title: "今日總覽", subtitle: "查看出勤、站點需求、覆蓋狀態與需要優先處理的風險。" },
+  "person-query": { title: "人員資格查詢", subtitle: "依班別、工號或姓名查詢個人資料與站點資格。" },
+  "station-query": { title: "站點人選查詢", subtitle: "依班別與日別查看各站點可用的本班及支援人力。" },
+  "qualification-review": { title: "資格考核管理", subtitle: "登錄與維護人員的合格、訓練中及不可排狀態。" },
+  "gap-analysis": { title: "人力覆蓋分析", subtitle: "以目前出勤與站點規則計算全站覆蓋、缺勤風險及補訓效益。" },
+  "manual-schedule": { title: "班表試排", subtitle: "依資格與站點需求安排人員，並在輸出前完成全站安全檢核。" },
+  "smart-schedule": { title: "智慧試排", subtitle: "此功能目前停用，所有試排作業統一由班表試排處理。" },
+  "station-rules": { title: "站點規則", subtitle: "設定最低需求、可排滿人數、備援目標與排站優先順序。" },
+  "people-management": { title: "人員名單", subtitle: "維護人員基本資料與班別；系統權限請至權限設定管理。" },
+  "permission-admin": { title: "權限設定", subtitle: "管理角色權限、帳號、功能啟用狀態與個人例外。" },
+  "login-required": { title: "需要登入", subtitle: "請先完成帳號登入，系統將依權限顯示可用功能。" },
 };
 
 function EntranceHeader({ pageKey }: { pageKey: EntranceKey }) {
@@ -944,20 +614,10 @@ function EntranceLayout({ pageKey, children }: { pageKey: EntranceKey; children:
 
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [bootstrapError, setBootstrapError] = useState("");
   const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
   const [page, setPage] = useState<PageKey>("home");
-  const [globalThemeOption, setGlobalThemeOption] = useState<GlobalThemeKey>(() => getStoredThemeOption());
-  const [globalFontOption, setGlobalFontOption] = useState<GlobalFontKey>(() => getStoredFontOption());
-  const [effectiveTheme, setEffectiveTheme] = useState<Exclude<GlobalThemeKey, "random">>(() => {
-    const option = getStoredThemeOption();
-    return option === "random" ? pickRandomItem(concreteThemeKeys) : option;
-  });
-  const [effectiveFont, setEffectiveFont] = useState<Exclude<GlobalFontKey, "random">>(() => {
-    const option = getStoredFontOption();
-    return option === "random" ? pickRandomItem(concreteFontKeys) : option;
-  });
   const [flash, setFlash] = useState("");
   const [appVersionBlocked, setAppVersionBlocked] = useState(false);
   const [appVersionMessage, setAppVersionMessage] = useState("");
@@ -973,6 +633,7 @@ export default function App() {
 
   const [loginForm, setLoginForm] = useState({ account: "", password: "" });
   const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [sessionRestoring, setSessionRestoring] = useState(true);
   const [loginKeep, setLoginKeep] = useState<LoginKeepKey>(() => getStoredLoginKeep());
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
   const loginAccountRef = useRef<HTMLInputElement | null>(null);
@@ -1033,6 +694,8 @@ export default function App() {
   const [manualExtraWorks, setManualExtraWorks] = useState<ManualExtraWork[]>(() => initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
   const [manualExtraDialog, setManualExtraDialog] = useState<null | { extraId: string }>(null);
   const [manualExtraKeyword, setManualExtraKeyword] = useState("");
+  const [manualSafetyOpen, setManualSafetyOpen] = useState(false);
+  const [manualSafetyAcknowledged, setManualSafetyAcknowledged] = useState(false);
   const [manualPreviewOpen, setManualPreviewOpen] = useState(false);
   const [manualPreviewStyle, setManualPreviewStyle] = useState<SchedulePreviewStyle>("card");
 
@@ -1047,6 +710,8 @@ export default function App() {
     setManualExtraWorks(initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
     setManualExtraDialog(null);
     setManualExtraKeyword("");
+    setManualSafetyOpen(false);
+    setManualSafetyAcknowledged(false);
     setManualPreviewOpen(false);
     if (type === "shift") setManualShift(value as TeamName);
     if (type === "day") setManualDay(value as ShiftMode);
@@ -1096,7 +761,6 @@ export default function App() {
   const [permissionItemStates, setPermissionItemStates] = useState<PermissionItemDefinition[]>(() => databasePermissionItems.map((item) => ({ ...item })));
   const [rolePermissionMapStates, setRolePermissionMapStates] = useState<RolePermissionMapDefinition[]>(() => databaseRolePermissionMaps.map((item) => ({ ...item })));
   const [accountStatusById, setAccountStatusById] = useState<Record<string, string>>({});
-  const [accountPasswordById, setAccountPasswordById] = useState<Record<string, string>>({});
   const [accountPasswordDrafts, setAccountPasswordDrafts] = useState<Record<string, string>>({});
   const [permissionExceptionKeyword, setPermissionExceptionKeyword] = useState("");
 
@@ -1160,20 +824,6 @@ export default function App() {
     };
   }, []);
 
-  function updateGlobalTheme(option: GlobalThemeKey) {
-    setGlobalThemeOption(option);
-    window.localStorage.setItem("globalThemeOption", option);
-    setEffectiveTheme(option === "random" ? pickRandomItem(concreteThemeKeys) : option);
-    setFlashMessage(option === "random" ? "已套用隨機全站樣式。" : `已套用全站樣式：${globalThemeOptions.find((item) => item.key === option)?.label || option}`);
-  }
-
-  function updateGlobalFont(option: GlobalFontKey) {
-    setGlobalFontOption(option);
-    window.localStorage.setItem("globalFontOption", option);
-    setEffectiveFont(option === "random" ? pickRandomItem(concreteFontKeys) : option);
-    setFlashMessage(option === "random" ? "已套用隨機字型。" : `已套用字型：${globalFontOptions.find((item) => item.key === option)?.label || option}`);
-  }
-
   function scrollToTop(behavior: ScrollBehavior = "smooth") {
     if (contentRef.current && !isMobileView) {
       contentRef.current.scrollTo({ top: 0, behavior });
@@ -1213,6 +863,7 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!currentUser) return;
     let active = true;
     async function loadBootstrap() {
       setLoading(true);
@@ -1238,14 +889,18 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [bootstrapRetryKey]);
+  }, [bootstrapRetryKey, currentUser?.id]);
 
   useEffect(() => {
-    if (!data.people.length) return;
+    if (!currentUser) return;
     let active = true;
     async function loadPermissionConfig() {
       try {
-        const permissionConfig = await fetchGasPermissionConfig();
+        const permissionConfig = await fetchGasPermissionConfig<{
+          permissionItems?: PermissionItemDefinition[];
+          rolePermissionMaps?: RolePermissionMapDefinition[];
+          personalPermissionExceptions?: PersonalPermissionExceptionDefinition[];
+        }>();
         if (!active) return;
         const nextPermissionItems = mergePermissionItemsWithSaved(permissionConfig.permissionItems);
         setPermissionItemStates(nextPermissionItems);
@@ -1261,30 +916,60 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [bootstrapRetryKey, data.people.length]);
+  }, [bootstrapRetryKey, currentUser]);
 
   useEffect(() => {
-    if (!data.people.length || currentUser) return;
-    try {
-      const raw = window.localStorage.getItem(loginSessionStorageKey);
-      if (!raw) return;
-      const session = JSON.parse(raw) as { userId?: string; expiresAt?: number };
-      if (!session.userId || !session.expiresAt || Date.now() > session.expiresAt) {
-        window.localStorage.removeItem(loginSessionStorageKey);
+    let active = true;
+    async function restoreSession() {
+      const stored = readStoredLoginSession();
+      if (!stored) {
+        clearStoredLoginSession();
+        if (active) setSessionRestoring(false);
         return;
       }
-      const restoredUser = data.people.find((person) => person.id === session.userId);
-      if (restoredUser) {
-        setCurrentUser(restoredUser);
-        setFlashMessage(`已恢復登入：${restoredUser.name}`);
+
+      setGasSessionToken(stored.sessionToken);
+      try {
+        const result = await postGasAction("session", {
+          sessionDurationMs: getLoginKeepMs(loginKeep),
+        }) as GasSessionResponse;
+        if (!active || !result.user || !result.sessionExpiresAt) return;
+        setCurrentUser(result.user);
+        saveStoredLoginSession({
+          userId: result.user.id,
+          sessionToken: stored.sessionToken,
+          expiresAt: result.sessionExpiresAt,
+        });
+        setFlashMessage(`已恢復登入：${result.user.name}`);
+      } catch {
+        clearStoredLoginSession();
+      } finally {
+        if (active) setSessionRestoring(false);
       }
-    } catch {
-      window.localStorage.removeItem(loginSessionStorageKey);
     }
-  }, [data.people, currentUser]);
+    void restoreSession();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
-    if (currentUser || loginSubmitting || loginAutoSubmittedRef.current || loginManualInputRef.current) return;
+    const handleSessionExpired = () => {
+      clearStoredLoginSession();
+      setCurrentUser(null);
+      setData(emptyBootstrap);
+      setPermissionItemStates(permissionItems);
+      setRolePermissionMapStates(rolePermissionMaps);
+      setPersonalPermissionExceptions([]);
+      setPage("home");
+      setFlashMessage("登入已逾時，請重新登入後繼續操作。");
+    };
+    window.addEventListener("rosario:session-expired", handleSessionExpired);
+    return () => window.removeEventListener("rosario:session-expired", handleSessionExpired);
+  }, []);
+
+  useEffect(() => {
+    if (currentUser || loginSubmitting || sessionRestoring || loginAutoSubmittedRef.current || loginManualInputRef.current) return;
 
     const timer = window.setInterval(() => {
       const accountInput = loginAccountRef.current;
@@ -1314,7 +999,7 @@ export default function App() {
     }, 400);
 
     return () => window.clearInterval(timer);
-  }, [currentUser, loginSubmitting]);
+  }, [currentUser, loginSubmitting, sessionRestoring]);
 
   useEffect(() => {
     const syncViewportMode = () => setViewMode(getViewportMode());
@@ -1656,21 +1341,37 @@ export default function App() {
   }, [data.people, manualOfficerGroups, manualShift]);
 
   const manualOfficerIds = useMemo(() => new Set(manualOfficerPeople.map((person) => person.id)), [manualOfficerPeople]);
-  const manualCountedOfficerCount = useMemo(() => {
-    return manualOfficerPeople.filter((person) => normalizeOfficerRole(person.role) !== "主任").length;
-  }, [manualOfficerPeople]);
-  const manualDirectorCount = manualOfficerDisplayGroups.主任.length;
-
   const smartAttendance = useMemo(() => getAttendanceForTeam(data.people, smartShift, smartDay), [data.people, smartShift, smartDay]);
   const smartRules = useMemo(() => getApplicableRules(smartShift, smartDay, data.stationRules || []), [data.stationRules, smartShift, smartDay]);
 
   const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, "當班", data.stationRules || []), [rulesTeam, data.stationRules]);
 
-  const manualSummary = useMemo(() => getAssignmentSummary(manualAssignments, manualRules), [manualAssignments, manualRules]);
-  const manualExtraAssignedCount = useMemo(() => new Set(manualExtraWorks.flatMap((item) => item.personIds)).size, [manualExtraWorks]);
-  const manualEffectiveAssigned = manualSummary.assigned + manualCountedOfficerCount + manualExtraAssignedCount;
-  const manualCountableTotal = Math.max(0, manualAttendance.totalCount - manualDirectorCount);
-  const manualPendingCount = Math.max(0, manualCountableTotal - manualEffectiveAssigned);
+  const manualCountableIds = useMemo(() => Array.from(new Set(
+    manualAttendance.all
+      .filter((person) => normalizeOfficerRole(person.role) !== "主任")
+      .map((person) => person.id)
+  )), [manualAttendance.all]);
+  const manualCountableTotal = manualCountableIds.length;
+  const manualTrainingAssignments = useMemo(() => {
+    return Object.entries(manualAssignments).flatMap(([stationId, personIds]) =>
+      personIds
+        .filter((employeeId) => getStationQualificationStatus(data.qualifications, employeeId, stationId) === "訓練中")
+        .map((employeeId) => ({ employeeId, stationId }))
+    );
+  }, [data.qualifications, manualAssignments]);
+  const manualSafety = useMemo(() => auditScheduleSafety({
+    assignments: manualAssignments,
+    rules: manualRules,
+    officerStations: manualOfficerStations,
+    extraWorks: manualExtraWorks,
+    trainingAssignments: manualTrainingAssignments,
+    attendanceIds: manualCountableIds,
+    reservedDutyIds: manualOfficerPeople
+      .filter((person) => normalizeOfficerRole(person.role) !== "主任")
+      .map((person) => person.id),
+  }), [manualAssignments, manualCountableIds, manualExtraWorks, manualOfficerPeople, manualOfficerStations, manualRules, manualTrainingAssignments]);
+  const manualPendingCount = manualSafety.unassignedIds.length;
+  const manualEffectiveAssigned = Math.max(0, manualCountableTotal - manualPendingCount);
   const manualSchedulePreview = useMemo(() => {
     const peopleById = new Map(data.people.map((person) => [person.id, person]));
     const uniqueNames = (names: string[]) => Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
@@ -1680,13 +1381,17 @@ export default function App() {
         const name = person.name.trim();
         if (!name) return;
         const current = map.get(name);
-        map.set(name, { name, isOfficer: Boolean(current?.isOfficer || person.isOfficer) });
+        map.set(name, {
+          name,
+          isOfficer: Boolean(current?.isOfficer || person.isOfficer),
+          isTraining: Boolean(current?.isTraining || person.isTraining),
+        });
       });
       return Array.from(map.values());
     };
-    const toPreviewPerson = (person?: Person | null, forceOfficer = false): SchedulePreviewPerson | null => {
+    const toPreviewPerson = (person?: Person | null, forceOfficer = false, isTraining = false): SchedulePreviewPerson | null => {
       if (!person?.name) return null;
-      return { name: person.name, isOfficer: forceOfficer || normalizeOfficerRole(person.role) !== null };
+      return { name: person.name, isOfficer: forceOfficer || normalizeOfficerRole(person.role) !== null, isTraining };
     };
     const activeTeamPeople = data.people.filter((person) => {
       const employment = String(person.employmentStatus || "").trim();
@@ -1739,7 +1444,11 @@ export default function App() {
         ...orderedManualRules.map((rule) => {
           const station = data.stations.find((item) => item.id === rule.stationId);
           const assignedPeople = (manualAssignments[rule.stationId] || [])
-            .map((id) => toPreviewPerson(peopleById.get(id)))
+            .map((id) => toPreviewPerson(
+              peopleById.get(id),
+              false,
+              getStationQualificationStatus(data.qualifications, id, rule.stationId) === "訓練中"
+            ))
             .filter((person): person is SchedulePreviewPerson => Boolean(person));
           const selectedOfficerPeople = manualOfficerPeople
             .filter((person) => manualOfficerStations[person.id] === rule.stationId)
@@ -1753,7 +1462,7 @@ export default function App() {
         }),
         ...manualExtraWorks
           .map((item, index) => {
-            const stationName = item.workName.trim() || `自訂工作 ${index + 1}`;
+            const stationName = item.workName.trim() || `臨時勤務 ${index + 1}`;
             const people = item.personIds
               .map((id) => toPreviewPerson(peopleById.get(id)))
               .filter((person): person is SchedulePreviewPerson => Boolean(person));
@@ -1766,7 +1475,7 @@ export default function App() {
           .filter((row) => row.stationName || row.people.length > 0),
       ],
     };
-  }, [data.people, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
+  }, [data.people, data.qualifications, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
   const visibleRulesTeams = useMemo(() => {
     if (!currentUser) return [];
@@ -1969,19 +1678,28 @@ export default function App() {
     setLoginKeep(option);
     window.localStorage.setItem(loginKeepStorageKey, option);
     setFlashMessage(`重新整理保持登入時間已設定為：${loginKeepOptions.find((item) => item.key === option)?.label || option}`);
-    if (currentUser) {
-      window.localStorage.setItem(loginSessionStorageKey, JSON.stringify({
-        userId: currentUser.id,
-        expiresAt: Date.now() + getLoginKeepMs(option),
-      }));
+    const stored = readStoredLoginSession();
+    if (currentUser && stored) {
+      void postGasAction("session", { sessionDurationMs: getLoginKeepMs(option) })
+        .then((result) => {
+          const expiresAt = Number(result.sessionExpiresAt || 0);
+          if (expiresAt) saveStoredLoginSession({ ...stored, expiresAt });
+        })
+        .catch((error) => setFlashMessage(`保持登入時間更新失敗：${error instanceof Error ? error.message : String(error)}`));
     }
   }
 
   function logout() {
+    const request = postGasAction("logout", {});
+    clearStoredLoginSession();
     setCurrentUser(null);
+    setData(emptyBootstrap);
+    setPermissionItemStates(permissionItems);
+    setRolePermissionMapStates(rolePermissionMaps);
+    setPersonalPermissionExceptions([]);
     loginAutoSubmittedRef.current = false;
     loginManualInputRef.current = false;
-    window.localStorage.removeItem(loginSessionStorageKey);
+    void request.catch(() => undefined);
     setPage("home");
     setFlashMessage("已登出。");
     setMobileDetailModal(null);
@@ -2008,20 +1726,30 @@ export default function App() {
     setFlashMessage("正在驗證帳號，請稍候...");
 
     try {
-      const result = await postGasAction("login", { account, password }) as GasWriteResponse & { user?: Person };
-      if (!result.ok || !result.user) {
-        setFlashMessage(result.message || "登入失敗。");
+      const result = await postGasAction("login", {
+        account,
+        password,
+        sessionDurationMs: getLoginKeepMs(loginKeep),
+      }) as GasSessionResponse;
+      if (!result.ok || !result.user || !result.sessionToken || !result.sessionExpiresAt) {
+        setFlashMessage(
+          result.ok && result.user
+            ? "登入服務尚未完成安全更新，請部署最新 GAS 後再試。"
+            : result.message || "登入失敗。",
+        );
         return;
       }
 
       const bootstrapUser = data.people.find((person) => person.id === result.user?.id);
       const mergedUser = bootstrapUser ? { ...bootstrapUser, ...result.user } : result.user;
 
+      setGasSessionToken(result.sessionToken);
       setCurrentUser(mergedUser);
-      window.localStorage.setItem(loginSessionStorageKey, JSON.stringify({
+      saveStoredLoginSession({
         userId: mergedUser.id,
-        expiresAt: Date.now() + getLoginKeepMs(loginKeep),
-      }));
+        sessionToken: result.sessionToken,
+        expiresAt: result.sessionExpiresAt,
+      });
       setLoginForm({ account: "", password: "" });
       setPage("home");
       setFlashMessage(`登入成功：${mergedUser.name}，重新整理仍會保留登入。`);
@@ -2100,7 +1828,7 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await postGasAction("updatePerson", next as unknown as Record<string, unknown>);
+    await postGasAction("updatePerson", buildPersonProfilePayload(next));
     setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
     if (currentUser?.id === person.id) setCurrentUser(next);
     setFlashMessage(`人員 ${person.name} 已寫入試算表。`);
@@ -2156,7 +1884,15 @@ export default function App() {
       permissionLevel: permission,
       isSuperAdmin: permission === "最高權限" || person.id === "P0033",
     };
-    await handleUpdatePerson(person, patch);
+    if (!confirmAction(`確認將 ${person.name}（${person.id}）的系統權限調整為「${permission}」？`)) {
+      setFlashMessage("已取消修改。");
+      return;
+    }
+    await postGasAction("updatePerson", { id: person.id, ...patch });
+    const next = { ...person, ...patch };
+    setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
+    if (currentUser?.id === person.id) setCurrentUser(next);
+    setFlashMessage(`已更新 ${person.name} 的系統權限。`);
   }
 
   async function handleUpdateRule(rule: StationRule, patch: Partial<StationRule>) {
@@ -2232,7 +1968,7 @@ export default function App() {
       next[row.stationId] = row.assigned.filter((person) => !manualOfficerIds.has(person.id)).map((person) => person.id);
     });
     setManualAssignments(next);
-    setFlashMessage(`一鍵安排已完成：${manualMode}；幹部站位已保留。`);
+    setFlashMessage(`自動安排已完成：${manualMode}；幹部勤務與站長站位維持不變。`);
   }
 
   const manualCustomCandidates = useMemo(() => {
@@ -2379,13 +2115,21 @@ export default function App() {
     lines.push("");
     manualSchedulePreview.rows.forEach((row) => {
       lines.push(row.stationName);
-      lines.push(row.people.map((person) => person.name).join("、") || "-");
+      lines.push(row.people.map((person) => person.isTraining ? `${person.name}（訓練人員）` : person.name).join("、") || "-");
       lines.push("");
     });
     return lines.join("\n").trim();
   }
 
   function completeManualSchedule() {
+    setManualSafetyAcknowledged(false);
+    setManualSafetyOpen(true);
+  }
+
+  function confirmManualScheduleSafety() {
+    if (!manualSafety.canPreview) return;
+    if (manualSafety.requiresAcknowledgement && !manualSafetyAcknowledged) return;
+    setManualSafetyOpen(false);
     setManualPreviewOpen(true);
   }
 
@@ -2418,7 +2162,7 @@ export default function App() {
           employeeId,
           type: "自訂",
           order: workIndex * 100 + personIndex + 1,
-          note: work.workName.trim() || `自訂工作 ${workIndex + 1}`,
+          note: work.workName.trim() || `臨時勤務 ${workIndex + 1}`,
         }))
       ),
     ];
@@ -2495,7 +2239,8 @@ export default function App() {
     const leftWidth = 300;
     const colWidth = 136;
     const headerHeight = 190;
-    const personRowHeight = 46;
+    const hasTrainingPeople = rows.some((row) => row.people.some((person) => person.isTraining));
+    const personRowHeight = hasTrainingPeople ? 58 : 46;
     const footerHeight = 40;
     const rows = manualSchedulePreview.rows;
     const maxPeople = Math.max(4, ...rows.map((row) => row.people.length));
@@ -2605,22 +2350,30 @@ export default function App() {
         const chipX = x + 8;
         const chipY = y + 7;
         const chipW = colWidth - 16;
-        const chipH = 32;
+        const chipH = person.isTraining ? 44 : 32;
         ctx.beginPath();
         ctx.roundRect(chipX, chipY, chipW, chipH, 12);
-        ctx.fillStyle = person.isOfficer ? "#bbf7d0" : "#f1f5f9";
+        ctx.fillStyle = person.isTraining ? "#fef3c7" : person.isOfficer ? "#bbf7d0" : "#f1f5f9";
         ctx.fill();
-        ctx.lineWidth = person.isOfficer ? 2 : 1;
-        ctx.strokeStyle = person.isOfficer ? "#16a34a" : "#cbd5e1";
+        ctx.lineWidth = person.isOfficer || person.isTraining ? 2 : 1;
+        ctx.strokeStyle = person.isTraining ? "#f59e0b" : person.isOfficer ? "#16a34a" : "#cbd5e1";
         ctx.stroke();
-        ctx.fillStyle = person.isOfficer ? "#166534" : "#334155";
-        ctx.fillText(person.name, chipX + 10, chipY + 22);
+        ctx.fillStyle = person.isTraining ? "#92400e" : person.isOfficer ? "#166534" : "#334155";
+        if (person.isTraining) {
+          ctx.font = "900 16px 'Noto Sans TC', 'PingFang TC', sans-serif";
+          ctx.fillText(person.name, chipX + 10, chipY + 18);
+          ctx.font = "700 11px 'Noto Sans TC', 'PingFang TC', sans-serif";
+          ctx.fillText("訓練人員", chipX + 10, chipY + 34);
+          ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
+        } else {
+          ctx.fillText(person.name, chipX + 10, chipY + 22);
+        }
       });
     }
 
     ctx.fillStyle = "#64748b";
     ctx.font = "700 15px 'Noto Sans TC', 'PingFang TC', sans-serif";
-    ctx.fillText("※ 綠色人名為站長以上／幹部站位。", x0, height - 16);
+    ctx.fillText("※ 綠色為站長站位；黃色為訓練人員。", x0, height - 16);
 
     const link = document.createElement("a");
     const date = new Date().toISOString().slice(0, 10);
@@ -2651,7 +2404,7 @@ export default function App() {
 
     ctx.font = "30px 'Noto Sans TC', 'PingFang TC', sans-serif";
     const rowHeights = manualSchedulePreview.rows.map((row) => {
-      const lines = wrapCanvasText(ctx, row.people.map((person) => person.name).join("、") || "-", width - padding * 2 - 36);
+      const lines = wrapCanvasText(ctx, row.people.map((person) => person.isTraining ? `${person.name}（訓練）` : person.name).join("、") || "-", width - padding * 2 - 36);
       return Math.max(88, 56 + lines.length * 36);
     });
     const height = Math.max(860, 260 + rowHeights.reduce((sum, item) => sum + item + rowGap, 0));
@@ -2720,7 +2473,7 @@ export default function App() {
       const chipMaxX = x + w - 28;
       const people = row.people.length ? row.people : [{ name: "-", isOfficer: false }];
       people.forEach((person) => {
-        const text = person.name;
+        const text = person.isTraining ? `${person.name} 訓練` : person.name;
         const chipWidth = Math.min(Math.max(58, ctx.measureText(text).width + 24), chipMaxX - x - 56);
         if (chipX + chipWidth > chipMaxX && chipX > x + 28) {
           chipX = x + 28;
@@ -2728,12 +2481,12 @@ export default function App() {
         }
         ctx.beginPath();
         ctx.roundRect(chipX, chipY, chipWidth, chipHeight, 16);
-        ctx.fillStyle = person.isOfficer ? "#dcfce7" : (isPoster ? "rgba(255,255,255,.16)" : "#f1f5f9");
+        ctx.fillStyle = person.isTraining ? "#fef3c7" : person.isOfficer ? "#dcfce7" : (isPoster ? "rgba(255,255,255,.16)" : "#f1f5f9");
         ctx.fill();
-        ctx.lineWidth = person.isOfficer ? 2 : 1;
-        ctx.strokeStyle = person.isOfficer ? "#22c55e" : (isPoster ? "rgba(255,255,255,.24)" : "#e2e8f0");
+        ctx.lineWidth = person.isOfficer || person.isTraining ? 2 : 1;
+        ctx.strokeStyle = person.isTraining ? "#f59e0b" : person.isOfficer ? "#22c55e" : (isPoster ? "rgba(255,255,255,.24)" : "#e2e8f0");
         ctx.stroke();
-        ctx.fillStyle = person.isOfficer ? "#166534" : (isPoster ? "#e2e8f0" : "#334155");
+        ctx.fillStyle = person.isTraining ? "#92400e" : person.isOfficer ? "#166534" : (isPoster ? "#e2e8f0" : "#334155");
         ctx.fillText(text, chipX + 12, chipY + 24);
         chipX += chipWidth + chipGap;
       });
@@ -2760,8 +2513,9 @@ export default function App() {
     return (
       <span className={`schedule-name-tags ${joinMode === "space" ? "space" : "comma"}`}>
         {people.map((person, index) => (
-          <span key={`${person.name}-${index}`} className={`schedule-person-tag${person.isOfficer ? " officer" : ""}`}>
+          <span key={`${person.name}-${index}`} className={`schedule-person-tag${person.isOfficer ? " officer" : ""}${person.isTraining ? " training" : ""}`}>
             {person.name}
+            {person.isTraining ? <small>訓練人員</small> : null}
           </span>
         ))}
       </span>
@@ -2824,7 +2578,7 @@ export default function App() {
       next[row.stationId] = row.assigned.map((person) => person.id);
     });
     setSmartAssignments(next);
-    setFlashMessage(`一鍵試排已完成：${smartMode}`);
+    setFlashMessage(`自動試排已完成：${smartMode}`);
     window.setTimeout(releaseActiveControl, 0);
     window.setTimeout(releaseActiveControl, 120);
   }
@@ -2833,13 +2587,6 @@ export default function App() {
     const permissionItemMap = new Map(permissionItemStates.map((item) => [item.id, item]));
     const getAccountStatus = (person: Person) =>
       accountStatusById[person.id] || (String((person as Person & Record<string, unknown>).accountStatus || (person as Person & Record<string, unknown>).enabled || "啟用").includes("停") ? "停用" : "啟用");
-    const getAccountPassword = (person: Person) => String(
-      accountPasswordById[person.id] ??
-        (person as Person & Record<string, unknown>).password ??
-        (person as Person & Record<string, unknown>).loginPassword ??
-        (person as Person & Record<string, unknown>)["登入密碼"] ??
-        ""
-    );
     const enabledAccountCount = permissionRows.filter((person) => getAccountStatus(person) === "啟用").length;
     const visiblePermissions = permissionItemStates.filter((item) => permissionSearchMatches([item.id, item.name, item.category, item.page, item.action, item.enabled, item.note], permissionSearchKeyword));
     const availablePermissions = permissionItemStates.filter((item) => item.enabled !== "停用");
@@ -2979,7 +2726,7 @@ export default function App() {
       setAccountStatusById((current) => ({ ...current, [person.id]: nextStatus }));
       try {
         const payload = {
-          ...person,
+          id: person.id,
           accountStatus: nextStatus,
           accountEnabled: nextStatus,
           enabled: nextStatus === "啟用" ? "Y" : "N",
@@ -3006,20 +2753,12 @@ export default function App() {
       }
       try {
         const payload = {
-          ...person,
+          id: person.id,
           password: nextPassword,
-          loginPassword: nextPassword,
-          accountPassword: nextPassword,
         } as Person & Record<string, unknown>;
         await postGasAction("updatePerson", payload);
-        setAccountPasswordById((current) => ({ ...current, [person.id]: nextPassword }));
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));
-        setData((current) => ({
-          ...current,
-          people: current.people.map((item) => item.id === person.id ? { ...item, ...payload } as Person : item),
-        }));
-        if (currentUser?.id === person.id) setCurrentUser((current) => current ? ({ ...current, ...payload } as Person) : current);
-        setFlashMessage(`已更新 ${person.name} 的密碼並寫入試算表；重新整理後應維持新密碼。`);
+        setFlashMessage(`已重設 ${person.name} 的登入密碼。系統不會顯示或回傳密碼內容。`);
       } catch (error) {
         setFlashMessage(`密碼儲存失敗：${error instanceof Error ? error.message : String(error)}`);
       }
@@ -3134,12 +2873,11 @@ export default function App() {
 
         {permissionAdminTab === "account" ? (
           <div className="panel">
-            <div className="panel-header"><h3>07_帳號管理</h3><span>緊湊版：角色 / 密碼 / 啟用狀態</span></div>
+            <div className="panel-header"><h3>帳號管理</h3><span>角色、密碼重設與啟用狀態</span></div>
             <div style={{ display: "grid", gap: 8 }}>
               {permissionRows.map((person) => {
                 const permission = String(getSystemPermission(person) || "技術員");
                 const accountStatus = getAccountStatus(person);
-                const currentPassword = getAccountPassword(person);
                 return (
                   <div
                     key={person.id}
@@ -3163,31 +2901,24 @@ export default function App() {
                     ) : (
                       <ConfirmSelect value={permission} options={permissionOptions.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePermission(person, value as UserRole)} />
                     )}
-                    <div style={{ display: "grid", gap: 5 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 5 }}>
                       <input
-                        type="text"
-                        readOnly
-                        value={currentPassword || "未讀取"}
-                        title="目前密碼"
-                        style={{ minHeight: 32, fontSize: 13, background: "#f8fafc" }}
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="輸入新密碼"
+                        aria-label={`重設 ${person.name} 的登入密碼`}
+                        value={accountPasswordDrafts[person.id] || ""}
+                        onChange={(e) => setAccountPasswordDrafts((current) => ({ ...current, [person.id]: e.target.value }))}
+                        style={{ minHeight: 32, fontSize: 13 }}
                       />
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 5 }}>
-                        <input
-                          type="text"
-                          placeholder="新密碼"
-                          value={accountPasswordDrafts[person.id] || ""}
-                          onChange={(e) => setAccountPasswordDrafts((current) => ({ ...current, [person.id]: e.target.value }))}
-                          style={{ minHeight: 32, fontSize: 13 }}
-                        />
-                        <button className="primary" type="button" onClick={() => updateAccountPassword(person)} style={{ borderRadius: 12, minHeight: 32, padding: "0 9px", fontSize: 13 }}>改</button>
-                      </div>
+                      <button className="primary" type="button" onClick={() => updateAccountPassword(person)} style={{ borderRadius: 12, minHeight: 32, padding: "0 9px", fontSize: 13 }}>重設</button>
                     </div>
                     {enabledToggleButton(accountStatus === "啟用", () => toggleAccountEnabled(person))}
                   </div>
                 );
               })}
             </div>
-            <p className="muted">目前密碼會讀取 07_帳號管理；若剛修改成功，畫面會立即顯示新密碼。若仍顯示未讀取，請同步更新 GAS 與 api.ts。</p>
+            <p className="muted">基於帳號安全，系統不會讀回或顯示現有密碼；需要變更時請直接設定新密碼。</p>
           </div>
         ) : null}
 
@@ -3294,15 +3025,15 @@ export default function App() {
   }
 
   const navItems: Array<{ key: PageKey; label: string }> = [
-    { key: "home", label: "首頁" },
-    { key: "person-query", label: "查詢人員資格" },
-    { key: "station-query", label: "查詢站點人選" },
-    { key: "qualification-review", label: "站點考核" },
-    { key: "gap-analysis", label: "站點缺口分析" },
-    { key: "manual-schedule", label: "站點試排" },
-    { key: "station-rules", label: "站點規則設定" },
-    { key: "people-management", label: "人員名單管理" },
-    { key: "permission-admin", label: "權限管理" },
+    { key: "home", label: "今日總覽" },
+    { key: "person-query", label: "人員資格" },
+    { key: "station-query", label: "站點人選" },
+    { key: "qualification-review", label: "資格考核" },
+    { key: "gap-analysis", label: "覆蓋分析" },
+    { key: "manual-schedule", label: "班表試排" },
+    { key: "station-rules", label: "站點規則" },
+    { key: "people-management", label: "人員名單" },
+    { key: "permission-admin", label: "權限設定" },
   ];
 
   const allowedNav = navItems.filter((item) => canUsePage(item.key));
@@ -3339,7 +3070,7 @@ export default function App() {
             <span className="status-pill">{currentRole === "最高權限" ? "最高權限：可查看四班" : "主任：僅限自己班"}</span>
           </div>
           <button type="button" className="rules-summary-card" onClick={() => setRulesPreviewOpen(true)}>
-            <strong>{rulesTeam} 規則總預覽</strong>
+            <strong>{rulesTeam} 規則總覽</strong>
             <span>站點 {visibleStationRuleRows.length}｜最低需求 {totalMin}｜可排滿 {totalMaxAssignable || "未設定"}｜必站 {mandatoryCount}｜訓練補位 {trainingCount}｜支援補位 {shareCount}</span>
             <small>點擊查看總表，可切換編輯模式一次核對修正</small>
           </button>
@@ -3376,16 +3107,22 @@ export default function App() {
           ) : <Empty text="找不到此班別的正式站點規則，請先至資料端補齊。" />}
         </div>
         {rulesPreviewOpen ? (
-          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setRulesPreviewOpen(false)}>
-            <div className="mobile-modal compact-preview-modal upgraded-modal-card rules-overview-modal" onClick={(e) => e.stopPropagation()}>
-              <button type="button" className="mobile-modal-floating-close" aria-label="關閉總預覽" onClick={() => setRulesPreviewOpen(false)}>×</button>
+          <DialogShell
+            open={rulesPreviewOpen}
+            title={`${rulesTeam} 規則總覽`}
+            onClose={() => setRulesPreviewOpen(false)}
+            backdropClassName="mobile-modal-backdrop upgraded-modal-backdrop"
+            panelClassName="mobile-modal compact-preview-modal upgraded-modal-card rules-overview-modal"
+            closeOnBackdrop
+          >
+              <button type="button" className="mobile-modal-floating-close" aria-label="關閉規則總覽" onClick={() => setRulesPreviewOpen(false)}>×</button>
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
-                  <strong>{rulesTeam} 規則總預覽</strong>
-                  <small>共 {visibleStationRuleRows.length} 個站點｜{rulesOverviewEditing ? "編輯模式：欄位失焦或切換會詢問儲存" : "檢查模式：一眼核對全部規則"}</small>
+                  <strong>{rulesTeam} 規則總覽</strong>
+                  <small>共 {visibleStationRuleRows.length} 個站點｜{rulesOverviewEditing ? "編輯模式：欄位失焦或切換時會要求確認儲存" : "檢查模式：集中核對全部規則"}</small>
                 </div>
                 <button type="button" className={rulesOverviewEditing ? "ghost" : "primary"} disabled={disabled} onClick={() => setRulesOverviewEditing((current) => !current)}>
-                  {rulesOverviewEditing ? "完成編輯" : "編輯總攬"}
+                  {rulesOverviewEditing ? "完成編輯" : "編輯總覽"}
                 </button>
               </div>
               <div className="mobile-modal-body upgraded-modal-body">
@@ -3425,14 +3162,19 @@ export default function App() {
                     </tbody>
                   </table>
                 </div>
-                <p className="muted compact-line">可排滿空白或 0 表示不補人；若小於最低需求，該列會反紅提醒。</p>
+                <p className="muted compact-line">「可排滿」空白或 0 表示不補人；若低於最低需求，該列將以紅色標示。</p>
               </div>
-            </div>
-          </div>
+          </DialogShell>
         ) : null}
         {editingRule ? (
-          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingRuleKey("")}>
-            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card" onClick={(e) => e.stopPropagation()}>
+          <DialogShell
+            open={Boolean(editingRule)}
+            title="編輯站點規則"
+            onClose={() => setEditingRuleKey("")}
+            backdropClassName="mobile-modal-backdrop upgraded-modal-backdrop"
+            panelClassName="mobile-modal mobile-edit-sheet upgraded-modal-card"
+            closeOnBackdrop
+          >
               <button type="button" className="mobile-modal-floating-close" aria-label="關閉編輯視窗" onClick={() => setEditingRuleKey("")}>×</button>
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
@@ -3463,8 +3205,7 @@ export default function App() {
               <div className="mobile-modal-footer upgraded-modal-footer">
                 <button type="button" className="ghost full-width" onClick={() => setEditingRuleKey("")}>關閉</button>
               </div>
-            </div>
-          </div>
+          </DialogShell>
         ) : null}
       </EntranceLayout>
     );
@@ -3519,8 +3260,14 @@ export default function App() {
           </div>
         </div>
         {editingPerson ? (
-          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" onClick={() => setEditingPersonId("")}>
-            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal" onClick={(e) => e.stopPropagation()}>
+          <DialogShell
+            open={Boolean(editingPerson)}
+            title="編輯人員資料"
+            onClose={() => setEditingPersonId("")}
+            backdropClassName="mobile-modal-backdrop upgraded-modal-backdrop"
+            panelClassName="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal"
+            closeOnBackdrop
+          >
               <button type="button" className="mobile-modal-floating-close" aria-label="關閉編輯視窗" onClick={() => setEditingPersonId("")}>×</button>
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
@@ -3557,12 +3304,17 @@ export default function App() {
               <div className="mobile-modal-footer upgraded-modal-footer">
                 <button type="button" className="ghost full-width" onClick={() => setEditingPersonId("")}>關閉</button>
               </div>
-            </div>
-          </div>
+          </DialogShell>
         ) : null}
         {newPersonOpen ? (
-          <div className="mobile-modal-backdrop upgraded-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-person-title" onClick={() => setNewPersonOpen(false)}>
-            <div className="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal new-person-modal" onClick={(event) => event.stopPropagation()}>
+          <DialogShell
+            open={newPersonOpen}
+            title="新增人員"
+            onClose={() => setNewPersonOpen(false)}
+            backdropClassName="mobile-modal-backdrop upgraded-modal-backdrop"
+            panelClassName="mobile-modal mobile-edit-sheet upgraded-modal-card person-edit-modal new-person-modal"
+            closeOnBackdrop
+          >
               <button type="button" className="mobile-modal-floating-close" aria-label="關閉新增人員視窗" onClick={() => setNewPersonOpen(false)}>×</button>
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
@@ -3603,8 +3355,7 @@ export default function App() {
                   {newPersonSubmitting ? "新增中..." : appEnvironment.writesEnabled ? "確認新增" : "檢查新增資料"}
                 </button>
               </div>
-            </div>
-          </div>
+          </DialogShell>
         ) : null}
       </EntranceLayout>
     );
@@ -3775,10 +3526,6 @@ export default function App() {
           --theme-title-spacing: .03em;
         }
         .app-font-system { --theme-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif; }
-        .app-font-rounded { --theme-font-family: "Arial Rounded MT Bold", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
-        .app-font-serif { --theme-font-family: "Noto Serif TC", "Songti TC", "PMingLiU", Georgia, serif; }
-        .app-font-mono { --theme-font-family: "SFMono-Regular", Consolas, "Noto Sans Mono CJK TC", "Noto Sans TC", monospace; }
-        .app-font-hand { --theme-font-family: "Comic Sans MS", "Marker Felt", "Noto Sans TC", "PingFang TC", cursive; }
         .content h1, .content h2, .content h3, .brand-card h1, .panel h3, .layout-title h1 {
           color: var(--theme-text);
           letter-spacing: var(--theme-title-spacing);
@@ -4311,10 +4058,6 @@ export default function App() {
 
         /* 繁體中文字型：使用系統內常見可用字族，差異比原本更明顯 */
         .app-font-system { --theme-font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif; }
-        .app-font-rounded { --theme-font-family: "jf open 粉圓 2.0", "Gen Jyuu Gothic", "Kosugi Maru", "Arial Rounded MT Bold", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif; }
-        .app-font-serif { --theme-font-family: "Noto Serif TC", "Source Han Serif TC", "Songti TC", "PMingLiU", "MingLiU", serif; }
-        .app-font-mono { --theme-font-family: "Noto Sans Mono CJK TC", "Sarasa Mono TC", "Cascadia Mono", "Consolas", "Courier New", "Noto Sans TC", monospace; }
-        .app-font-hand { --theme-font-family: "BiauKai", "DFKai-SB", "KaiTi", "Kaiti TC", "Noto Serif TC", "PMingLiU", serif; }
 
         @media (max-width: 700px) {
           .content:has(.home-flat-page) > section {
@@ -5143,15 +4886,15 @@ export default function App() {
         }
 
       `}</style>
-      <div className={`app-shell app-theme-${effectiveTheme} app-font-${effectiveFont}`} translate="no">
+      <div className="app-shell app-theme-glass app-font-system app-operational-v3">
         <aside className="sidebar">
           <div className="brand-card">
-            <div className="brand-kicker">通用型檢測系統</div>
-            <h1>站點資格管理</h1>
-            <p>提供幹部查詢站點資格、維護考核、分析缺口與執行試排。</p>
+            <div className="brand-kicker">ROSARIO</div>
+            <h1>現場人力與站點資格系統</h1>
+            <p>整合人員資格、全站覆蓋、缺勤風險與班表試排。</p>
           </div>
           <div className="control-card">
-            <label>登入系統</label>
+            <div className="control-card-title">帳號登入</div>
             {currentUser ? (
               <div className="logged-user">
                 <strong>{currentUser.name}</strong>
@@ -5161,19 +4904,19 @@ export default function App() {
               </div>
             ) : (
               <form className="login-form" onSubmit={(event) => { event.preventDefault(); void handleLogin(); }}>
-                <input ref={loginAccountRef} name="username" autoComplete="username" disabled={loginSubmitting} placeholder="登入帳號（不分大小寫）" value={loginForm.account} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} />
-                <input ref={loginPasswordRef} name="password" type="password" autoComplete="current-password" disabled={loginSubmitting} placeholder="登入密碼（不分大小寫）" value={loginForm.password} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} />
-                <select value={loginKeep} onChange={(e) => updateLoginKeep(e.target.value as LoginKeepKey)} aria-label="保持登入時間">
-                  {loginKeepOptions.map((item) => <option key={item.key} value={item.key}>重新整理保持登入：{item.label}</option>)}
-                </select>
-                <button className="primary login-submit-button" type="submit" disabled={loginSubmitting} aria-busy={loginSubmitting}>
-                  {loginSubmitting ? <span className="login-spinner" aria-hidden="true" /> : null}
-                  <span>{loginSubmitting ? "登入中..." : "登入"}</span>
+                <label className="login-field" htmlFor="login-account"><span>帳號</span><input id="login-account" ref={loginAccountRef} name="username" autoComplete="username" disabled={loginSubmitting || sessionRestoring} placeholder="請輸入帳號" value={loginForm.account} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, account: e.target.value }))} /></label>
+                <label className="login-field" htmlFor="login-password"><span>密碼</span><input id="login-password" ref={loginPasswordRef} name="password" type="password" autoComplete="current-password" disabled={loginSubmitting || sessionRestoring} placeholder="請輸入密碼" value={loginForm.password} onKeyDown={() => { loginManualInputRef.current = true; }} onPaste={() => { loginManualInputRef.current = true; }} onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))} /></label>
+                <label className="login-field" htmlFor="login-keep"><span>保持登入</span><select id="login-keep" value={loginKeep} onChange={(e) => updateLoginKeep(e.target.value as LoginKeepKey)}>
+                  {loginKeepOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+                </select></label>
+                <button className="primary login-submit-button" type="submit" disabled={loginSubmitting || sessionRestoring} aria-busy={loginSubmitting || sessionRestoring}>
+                  {loginSubmitting || sessionRestoring ? <span className="login-spinner" aria-hidden="true" /> : null}
+                  <span>{sessionRestoring ? "確認登入狀態..." : loginSubmitting ? "登入中..." : "登入"}</span>
                 </button>
               </form>
             )}
           </div>
-          <nav className="nav-list">
+          <nav className="nav-list" aria-label="主要功能">
             {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => navigateToPage(item.key)}>{item.label}</button>)}
           </nav>
         </aside>
@@ -5224,53 +4967,44 @@ export default function App() {
           {page === "home" ? (
             currentUser ? (
               <Layout title="" subtitle="">
-                <WorkforceWorkbench
-                  data={data}
-                  currentUser={currentUser}
-                  loading={loading}
-                  onNavigate={navigateToPage}
-                />
+                <Suspense fallback={<Empty text="正在載入工作台..." />}>
+                  <WorkforceWorkbench
+                    data={data}
+                    currentUser={currentUser}
+                    loading={loading}
+                    onNavigate={navigateToPage}
+                  />
+                </Suspense>
               </Layout>
             ) : (
               <EntranceLayout pageKey="home">
               <section className="home-flat-page">
                 <div className="home-flat-stats">
-                  <StatCard title="人員總數" value={loading ? "..." : bootstrapError && !data.people.length ? "-" : String(data.people.length)} note="人員主檔" />
-                  <StatCard title="站點總數" value={loading ? "..." : bootstrapError && !data.stations.length ? "-" : String(data.stations.length)} note="站點主檔" />
-                  <StatCard title="資格筆數" value={loading ? "..." : bootstrapError && !data.qualifications.length ? "-" : String(data.qualifications.length)} note="站點資格" />
+                  <StatCard title="人員總數" value={!currentUser ? "-" : loading ? "..." : bootstrapError && !data.people.length ? "-" : String(data.people.length)} note={!currentUser ? "登入後載入" : "人員主檔"} />
+                  <StatCard title="站點總數" value={!currentUser ? "-" : loading ? "..." : bootstrapError && !data.stations.length ? "-" : String(data.stations.length)} note={!currentUser ? "登入後載入" : "站點主檔"} />
+                  <StatCard title="資格筆數" value={!currentUser ? "-" : loading ? "..." : bootstrapError && !data.qualifications.length ? "-" : String(data.qualifications.length)} note={!currentUser ? "登入後載入" : "站點資格"} />
                 </div>
 
                 <div className="home-flat-grid">
                   <div className="panel intro-panel home-flat-info">
-                    <h3>系統說明</h3>
-                    <p>提供查詢人員資格、查詢站點人選、站點考核、缺口分析與站點試排。</p>
-                    <p>未登入只能看首頁；登入後，系統會依帳號權限顯示可用功能。</p>
+                    <h3>系統用途</h3>
+                    <p>整合人員資格、站點需求與出勤資料，用於查詢、考核、覆蓋分析及班表試排。</p>
+                    <p>登入後將依帳號權限顯示可用班別與管理功能。</p>
                   </div>
 
                   <div className="panel compact-preference-panel home-flat-settings">
                     <div className="theme-selector-heading compact-selector-header">
                       <div>
-                        <h3>外觀設定</h3>
-                        <p>用選單快速切換全站樣式與繁中文字型。</p>
+                        <h3>介面標準</h3>
+                        <p>全站採用統一的營運介面，固定以顏色與文字區分覆蓋、缺口、訓練及支援狀態。</p>
                       </div>
-                      <span className="chip">目前：{globalThemeOptions.find((item) => item.key === globalThemeOption)?.label} / {globalFontOptions.find((item) => item.key === globalFontOption)?.label}</span>
+                      <span className="status-pill success">標準模式</span>
                     </div>
-                    <div className="compact-selector-grid">
-                      <label className="compact-selector-card">
-                        <span className="compact-selector-title">樣式主題</span>
-                        <select value={globalThemeOption} onChange={(e) => updateGlobalTheme(e.target.value as GlobalThemeKey)}>
-                          {globalThemeOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-                        </select>
-                        <small>{globalThemeOptions.find((item) => item.key === globalThemeOption)?.note}</small>
-                      </label>
-
-                      <label className="compact-selector-card">
-                        <span className="compact-selector-title">字型風格</span>
-                        <select value={globalFontOption} onChange={(e) => updateGlobalFont(e.target.value as GlobalFontKey)}>
-                          {globalFontOptions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-                        </select>
-                        <small>{globalFontOptions.find((item) => item.key === globalFontOption)?.note}</small>
-                      </label>
+                    <div className="interface-legend" aria-label="狀態色彩說明">
+                      <span className="legend-item success">完整覆蓋</span>
+                      <span className="legend-item warning">瓶頸／訓練</span>
+                      <span className="legend-item danger">實際缺口</span>
+                      <span className="legend-item support">支援人力</span>
                     </div>
                   </div>
                 </div>
@@ -5367,7 +5101,7 @@ export default function App() {
                 </div>
               </div>
               <div className="panel">
-                <h3>班別人員總攬</h3>
+                <h3>班別人員總覽</h3>
                 <table className="table"><thead><tr><th>工號</th><th>姓名</th><th>職務</th><th>系統權限</th><th>國籍</th><th>合格</th><th>訓練中</th><th>不可排</th></tr></thead><tbody>{reviewOverviewRows.map((row) => <tr key={row.id}><td>{row.id}</td><td>{row.name}</td><td>{row.role}</td><td>{String(getSystemPermission(data.people.find((p) => p.id === row.id) || null) || "-")}</td><td>{row.nationality}</td><td>{row.qualified}</td><td>{row.training}</td><td>{row.blocked}</td></tr>)}</tbody></table>
               </div>
             </EntranceLayout>
@@ -5377,10 +5111,10 @@ export default function App() {
             <EntranceLayout pageKey="gap-analysis">
               <div className="panel">
                 <div className="toolbar">
-                  <select value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
+                  <select aria-label="覆蓋分析班別" value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
                     {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
-                  <select value={gapDay} onChange={(e) => { setGapDay(e.target.value as ShiftMode); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
+                  <select aria-label="覆蓋分析日別" value={gapDay} onChange={(e) => { setGapDay(e.target.value as ShiftMode); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
                     {dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </div>
@@ -5437,14 +5171,14 @@ export default function App() {
 
                   <div className="panel officer-relief-panel">
                     <div className="panel-header">
-                      <h3>領班/組長/主任可支援缺口</h3>
+                      <h3>幹部緊急支援評估</h3>
                       <div className="panel-header-actions">
                         <span className={gapOfficerSimulations.length ? "status-pill active" : "status-pill"}>{gapOfficerSimulations.length ? `已導入 ${gapOfficerSimulations.length} 人` : "未導入"}</span>
                         <button type="button" className="ghost" onClick={openGapOfficerDialog}>自訂支援</button>
                         <button type="button" className="ghost" onClick={() => setGapOfficerSimulations([])} disabled={!gapOfficerSimulations.length}>清除支援</button>
                       </div>
                     </div>
-                    <p className="muted">領班、組長、主任主要負責現場監督。即使目前沒有系統推薦，也可以用自訂支援手動導入模擬檢查。</p>
+                    <p className="muted">領班、組長與主任以現場管理為主要勤務。僅在必要時列出可緊急支援的缺口，亦可自訂人員與站點進行情境檢核。</p>
                     {gapActiveCoverageAnalysis.officerSuggestions.length ? (
                       <div className="officer-relief-tags">
                         {gapActiveCoverageAnalysis.officerSuggestions.map((item) => {
@@ -5471,8 +5205,8 @@ export default function App() {
                   <div className="panel resilience-panel">
                     <div className="panel-header">
                       <div>
-                        <h3>預防性缺勤壓力測試</h3>
-                        <p className="muted">自動交叉測試 1 人至指定人數缺勤，找出真正無法由重新排列吸收的風險。</p>
+                        <h3>缺勤韌性分析</h3>
+                        <p className="muted">交叉模擬指定人數內的缺勤組合，並重新配置全站，辨識無法由其他合格人員吸收的實際風險。</p>
                       </div>
                       <span className={gapStressRunning ? "status-pill active" : gapStressResult ? "status-pill success" : "status-pill"}>
                         {gapStressRunning ? "分析中" : gapStressResult ? "分析完成" : "尚未執行"}
@@ -5480,7 +5214,7 @@ export default function App() {
                     </div>
                     <div className="resilience-control-bar">
                       <label>
-                        最大缺勤人數
+                        分析人數上限
                         <input
                           type="number"
                           min={1}
@@ -5492,92 +5226,39 @@ export default function App() {
                         />
                       </label>
                       <button type="button" className="primary" disabled={gapStressRunning} onClick={runGapStressAnalysis}>
-                        {gapStressRunning ? "正在交叉計算…" : `分析 1～${gapStressMaxAbsences} 人缺勤`}
+                        {gapStressRunning ? "正在執行分析…" : `執行 1 至 ${gapStressMaxAbsences} 人缺勤分析`}
                       </button>
-                      <span>1～2 人通常完整排列；組合過大時採固定抽樣並明確標示。</span>
+                      <span>組合數在可完整計算範圍內會逐一驗證；超出範圍時採固定抽樣並標示為估算。</span>
                     </div>
 
                     {gapStressRunning ? (
                       <div className="resilience-progress" role="status" aria-live="polite">
                         <span />
-                        <strong>正在重新排列所有站點，請稍候，不需重複點擊。</strong>
+                        <strong>正在重新配置並驗證所有站點，請勿重複操作。</strong>
                       </div>
                     ) : null}
                     {gapStressError ? <p className="resilience-error" role="alert">{gapStressError}</p> : null}
 
                     {gapStressResult ? (
-                      <div className="resilience-results">
-                        <div className="detail-grid resilience-summary-grid">
-                          <Info label="分析出勤人力" value={String(gapStressResult.activeWorkerCount)} />
-                          <Info label="測試組合" value={`${gapStressResult.testedCombinations}/${gapStressResult.totalCombinations}`} />
-                          <Info label="風險組合" value={String(gapStressResult.levels.reduce((sum, item) => sum + item.riskScenarios, 0))} />
-                          <Info label="風險站點" value={String(gapStressResult.stationRisks.length)} />
-                          <Info label="計算方式" value={gapStressResult.exhaustive ? "完整排列" : "完整 + 抽樣"} />
-                        </div>
-
-                        <div className="resilience-level-grid" aria-label="各缺勤人數分析結果">
-                          {gapStressResult.levels.map((level) => (
-                            <div className={`resilience-level-item ${level.riskScenarios ? "has-risk" : "is-safe"}`} key={level.absenceCount}>
-                              <strong>缺勤 {level.absenceCount} 人</strong>
-                              <span>維持基準 {level.baselineMaintainedRate.toFixed(1)}%</span>
-                              <small>{level.riskScenarios} 個風險組合｜{level.exhaustive ? "完整" : `抽樣 ${level.testedCombinations.toLocaleString()}`}</small>
-                            </div>
-                          ))}
-                        </div>
-
-                        {gapStressResult.stationRisks.length ? (
-                          <div className="table-wrap resilience-table-wrap">
-                            <table className="table resilience-table">
-                              <thead><tr><th>風險站點</th><th>最少缺勤</th><th>風險次數</th><th>最大新增缺口</th><th>關鍵缺勤人員</th></tr></thead>
-                              <tbody>
-                                {gapStressResult.stationRisks.map((risk) => {
-                                  const station = data.stations.find((item) => item.id === risk.stationId);
-                                  const criticalNames = risk.criticalCombinations.slice(0, 3).map((ids) => ids
-                                    .map((id) => data.people.find((person) => person.id === id)?.name || id)
-                                    .join(" + "));
-                                  return (
-                                    <tr key={risk.stationId}>
-                                      <td><strong>{station?.name || risk.stationId}</strong></td>
-                                      <td>{risk.minAbsenceCount} 人</td>
-                                      <td>{risk.riskScenarioCount}</td>
-                                      <td>{risk.maxAddedShortage} 人</td>
-                                      <td>{criticalNames.join("、") || "-"}</td>
-                                    </tr>
-                                  );
-                                })}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <p className="resilience-safe-message">在本次測試範圍內，所有缺勤組合都能透過重新排列維持全勤基準。</p>
-                        )}
-
-                        {gapStressResult.criticalCombinations.length ? (
-                          <details className="resilience-critical-details">
-                            <summary>查看最小關鍵缺勤組合（{gapStressResult.criticalCombinations.length}）</summary>
-                            <div className="risk-combination-list">
-                              {gapStressResult.criticalCombinations.map((item) => {
-                                const names = item.absentIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join(" + ");
-                                const stations = item.affectedStations.map((impact) => {
-                                  const station = data.stations.find((stationItem) => stationItem.id === impact.stationId);
-                                  return `${station?.name || impact.stationId}缺 ${impact.shortage}`;
-                                }).join("、");
-                                return <div key={item.absentIds.join("|")}><strong>{names}</strong><span>{stations}</span></div>;
-                              })}
-                            </div>
-                          </details>
-                        ) : null}
-                      </div>
+                      <Suspense fallback={<Empty text="正在整理分析結果..." />}>
+                        <ResilienceInsights result={gapStressResult} people={data.people} stations={data.stations} />
+                      </Suspense>
                     ) : null}
                   </div>
 
                   <div className="grid two">
                     <div className="panel">
                       <div className="panel-header">
-                        <h3>指定缺勤模擬</h3>
+                        <h3>指定缺勤情境</h3>
                         <div className="panel-header-actions">
                           <span className={gapAbsentIds.length ? "status-pill danger" : "status-pill"}>{gapAbsentIds.length ? `已選 ${gapAbsentIds.length} 人缺勤` : "未模擬缺勤"}</span>
-                          <button type="button" className="cute-help-button" onClick={() => setGapHelpOpen(true)}>?</button>
+                          <button
+                            type="button"
+                            className="cute-help-button"
+                            aria-label="查看缺勤韌性分析說明"
+                            title="分析說明"
+                            onClick={() => setGapHelpOpen(true)}
+                          >?</button>
                         </div>
                       </div>
                       <div className="inline-action-bar compact-tabs">
@@ -5605,11 +5286,17 @@ export default function App() {
 
                     <div className="panel">
                       <div className="panel-header">
-                        <h3>補訓建議</h3>
+                        <h3>補訓效益建議</h3>
                         <div className="panel-header-actions">
                           <span>{gapStressResult ? "預防風險排序" : gapAbsentIds.length ? "全勤 + 指定缺勤" : "全勤基準"}</span>
                           <span className={gapSimulationCount ? "status-pill active" : "status-pill"}>{gapSimulationCount ? `已導入 ${gapSimulationCount} 項` : "未導入"}</span>
-                          <button type="button" className="cute-help-button small" onClick={() => setGapTrainingHelpOpen(true)}>?</button>
+                          <button
+                            type="button"
+                            className="cute-help-button small"
+                            aria-label="查看補訓效益建議說明"
+                            title="補訓說明"
+                            onClick={() => setGapTrainingHelpOpen(true)}
+                          >?</button>
                         </div>
                       </div>
                       <div className="inline-action-bar compact-tabs">
@@ -5748,8 +5435,14 @@ export default function App() {
                   })() : null}
 
                   {gapAbsentDialogOpen ? (
-                    <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapAbsentDialogOpen(false)}>
-                      <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                    <DialogShell
+                      open={gapAbsentDialogOpen}
+                      title="選擇缺勤人員"
+                      onClose={() => setGapAbsentDialogOpen(false)}
+                      backdropClassName="manual-modal-backdrop coverage-help-backdrop"
+                      panelClassName="manual-modal coverage-menu-modal"
+                      closeOnBackdrop
+                    >
                         <div className="manual-modal-title-row">
                           <h3>選擇缺勤人員</h3>
                           <button type="button" className="manual-modal-close-button" aria-label="關閉缺勤人員視窗" onClick={() => setGapAbsentDialogOpen(false)}>×</button>
@@ -5762,7 +5455,7 @@ export default function App() {
                           {gapAbsentIds.length ? gapAbsentIds.map((id) => {
                             const person = data.people.find((item) => item.id === id);
                             return (
-                              <button key={id} type="button" onClick={() => toggleGapAbsentPerson(id)} title="點擊移除缺勤">
+                              <button key={id} type="button" onClick={() => toggleGapAbsentPerson(id)} title="移除缺勤人員">
                                 {person?.name || id} ×
                               </button>
                             );
@@ -5780,13 +5473,18 @@ export default function App() {
                           <button type="button" className="ghost" onClick={() => { setGapAbsentIds([]); setGapOfficerSimulations([]); }}>清空缺勤</button>
                           <button type="button" className="primary" onClick={() => setGapAbsentDialogOpen(false)}>完成</button>
                         </div>
-                      </div>
-                    </div>
+                    </DialogShell>
                   ) : null}
 
                   {gapOfficerDialogOpen ? (
-                    <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapOfficerDialogOpen(false)}>
-                      <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                    <DialogShell
+                      open={gapOfficerDialogOpen}
+                      title="選擇幹部緊急支援"
+                      onClose={() => setGapOfficerDialogOpen(false)}
+                      backdropClassName="manual-modal-backdrop coverage-help-backdrop"
+                      panelClassName="manual-modal coverage-menu-modal"
+                      closeOnBackdrop
+                    >
                         <div className="manual-modal-title-row">
                           <h3>自訂幹部支援</h3>
                           <button type="button" className="manual-modal-close-button" aria-label="關閉幹部支援視窗" onClick={() => setGapOfficerDialogOpen(false)}>×</button>
@@ -5800,7 +5498,7 @@ export default function App() {
                             const person = data.people.find((personItem) => personItem.id === item.employeeId);
                             const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
                             return (
-                              <button key={`${item.employeeId}-${item.stationId}`} type="button" onClick={() => toggleGapOfficerSimulation(item.employeeId, item.stationId)} title="點擊移除幹部支援">
+                              <button key={`${item.employeeId}-${item.stationId}`} type="button" onClick={() => toggleGapOfficerSimulation(item.employeeId, item.stationId)} title="移除幹部支援">
                                 {person?.name || item.employeeId} → {station?.name || item.stationId} ×
                               </button>
                             );
@@ -5837,13 +5535,18 @@ export default function App() {
                           <button type="button" className="ghost" onClick={() => setGapOfficerSimulations([])}>清空支援</button>
                           <button type="button" className="primary" onClick={addGapOfficerCustomSimulation} disabled={!gapOfficerPickerId || !gapOfficerPickerStationId}>導入模擬</button>
                         </div>
-                      </div>
-                    </div>
+                    </DialogShell>
                   ) : null}
 
                   {gapTrainingDialogOpen ? (
-                    <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingDialogOpen(false)}>
-                      <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                    <DialogShell
+                      open={gapTrainingDialogOpen}
+                      title="選擇補訓人員"
+                      onClose={() => setGapTrainingDialogOpen(false)}
+                      backdropClassName="manual-modal-backdrop coverage-help-backdrop"
+                      panelClassName="manual-modal coverage-menu-modal"
+                      closeOnBackdrop
+                    >
                         <div className="manual-modal-title-row">
                           <h3>選擇補訓人員</h3>
                           <button type="button" className="manual-modal-close-button" aria-label="關閉補訓導入視窗" onClick={() => setGapTrainingDialogOpen(false)}>×</button>
@@ -5857,7 +5560,7 @@ export default function App() {
                             const person = data.people.find((personItem) => personItem.id === item.employeeId);
                             const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
                             return (
-                              <button key={`${item.employeeId}-${item.stationId}`} type="button" onClick={() => toggleGapTrainingSimulation(item.employeeId, item.stationId)} title="點擊移除補訓導入">
+                              <button key={`${item.employeeId}-${item.stationId}`} type="button" onClick={() => toggleGapTrainingSimulation(item.employeeId, item.stationId)} title="移除補訓模擬">
                                 {person?.name || item.employeeId} → {station?.name || item.stationId} ×
                               </button>
                             );
@@ -5877,8 +5580,7 @@ export default function App() {
                           <button type="button" className="ghost" onClick={() => setGapTrainingSimulations([])}>清空補訓</button>
                           <button type="button" className="primary" onClick={() => setGapTrainingDialogOpen(false)}>完成</button>
                         </div>
-                      </div>
-                    </div>
+                    </DialogShell>
                   ) : null}
 
                   {gapTrainingPicker && gapTrainingPickerPerson ? (() => {
@@ -5887,8 +5589,14 @@ export default function App() {
                       : null;
                     const selectedStation = data.stations.find((station) => station.id === gapTrainingPickerSelectedStationId);
                     return (
-                      <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingPicker(null)}>
-                        <div className="manual-modal coverage-menu-modal" onClick={(event) => event.stopPropagation()}>
+                      <DialogShell
+                        open
+                        title="選擇補訓站點"
+                        onClose={() => setGapTrainingPicker(null)}
+                        backdropClassName="manual-modal-backdrop coverage-help-backdrop"
+                        panelClassName="manual-modal coverage-menu-modal"
+                        closeOnBackdrop
+                      >
                           <div className="manual-modal-title-row">
                             <h3>{gapTrainingPickerPerson.name} 補訓站點</h3>
                             <button type="button" className="manual-modal-close-button" aria-label="關閉補訓站點選單" onClick={() => setGapTrainingPicker(null)}>×</button>
@@ -5949,8 +5657,7 @@ export default function App() {
                               ) : null}
                             </div>
                           </div>
-                        </div>
-                      </div>
+                      </DialogShell>
                     );
                   })() : null}
 
@@ -5998,7 +5705,7 @@ export default function App() {
 
                   <div className="panel">
                     <div className="panel-header">
-                      <h3>{gapTrainingSimulationAnalysis ? "全站模擬檢核表" : gapAbsentIds.length ? "缺勤後全站檢核表" : "站點缺口明細"}</h3>
+                      <h3>{gapTrainingSimulationAnalysis ? "情境模擬配置明細" : gapAbsentIds.length ? "缺勤後配置明細" : "全站配置明細"}</h3>
                       <span>{gapTrainingSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}</span>
                     </div>
                     <p className="muted">
@@ -6008,19 +5715,20 @@ export default function App() {
                           ? "此表已排除目前模擬缺勤的人員，方便核對缺勤後每站是否仍有人可頂。"
                           : "此表顯示目前班別與日期的原始全站分析。"}
                     </p>
+                    <div className="table-wrap">
                     <table className="table">
                       <thead>
                         <tr>
                           <th>站點</th>
                           <th>最低需求</th>
                           <th>{gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}</th>
-                          <th>{gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全局缺口"}</th>
+                          <th>{gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全站缺口"}</th>
                           <th>本班合格</th>
                           <th>支援合格</th>
                           <th>總合格</th>
                           <th>訓練中</th>
-                          <th>風險</th>
-                          <th>支援可補</th>
+                          <th>狀態</th>
+                          <th>支援合格人員</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -6067,52 +5775,47 @@ export default function App() {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 </>
               ) : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}
 
-              {gapHelpOpen ? (
-                <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapHelpOpen(false)}>
-                  <div className="manual-modal coverage-help-modal" onClick={(event) => event.stopPropagation()}>
-                    <div className="manual-modal-title-row">
-                      <h3>缺勤分析說明</h3>
-                      <button type="button" className="manual-modal-close-button" aria-label="關閉說明" onClick={() => setGapHelpOpen(false)}>×</button>
-                    </div>
-                    <p>「預防性缺勤壓力測試」會從 1 人一路測到你指定的人數，每一種情境都重新安排全站，確認是否能在不重複指派人員的前提下維持全勤基準。</p>
-                    <p>第一天、第二天的全勤基準包含本班與對班支援人力。每次重新排列都會先配置支援人力，再由本班補位，用來檢查支援離開或人員缺勤後，本班是否真的有能力接手。</p>
-                    <p>最大缺勤人數設為 1，等同完整測試每一位作業人員單獨缺勤；設為 2，則同時包含所有單人與雙人組合。組合過大時會改採固定抽樣，結果會清楚標示。</p>
-                    <p>「指定缺勤模擬」則是每天有人請假時，直接選定實際缺勤名單，立即查看該組合的全站指派與缺口。</p>
-                    <p>如果某人或某個組合反覆造成同一站點缺口，代表資格過度集中，補訓建議會優先尋找能真正降低這些風險的人選。</p>
-                    <div className="manual-modal-actions">
-                      <button type="button" className="primary" onClick={() => setGapHelpOpen(false)}>知道了</button>
-                    </div>
-                  </div>
+              <AppDialog
+                open={gapHelpOpen}
+                title="缺勤韌性分析說明"
+                description="說明分析範圍、計算方式與結果判讀原則。"
+                onClose={() => setGapHelpOpen(false)}
+                footer={<button type="button" className="primary" onClick={() => setGapHelpOpen(false)}>關閉說明</button>}
+              >
+                <div className="formal-explanation-list">
+                  <p>系統會從單人缺勤逐步分析至指定人數上限。每一個情境都重新配置全站，並確認同一人不會重複指派。</p>
+                  <p>第一天與第二天以本班及對班支援人力建立全勤基準，配置時優先使用支援人力，再由本班補位；另行檢核支援撤除後，本班是否仍能接手。</p>
+                  <p>分析上限設為 1，代表驗證每位作業人員單獨缺勤；設為 2，則同時包含單人與雙人組合。組合數超出完整計算上限時，系統採固定抽樣並明確標示估算。</p>
+                  <p>指定缺勤情境適用於實際請假名單，可直接查看該組合重新配置後的全站缺口。</p>
+                  <p>若特定人員或組合反覆造成同一站點缺口，表示資格集中或共享人力不足，後續補訓建議會優先評估能實際降低風險的組合。</p>
                 </div>
-              ) : null}
+              </AppDialog>
 
-              {gapTrainingHelpOpen ? (
-                <div className="manual-modal-backdrop coverage-help-backdrop" role="dialog" aria-modal="true" translate="no" onClick={() => setGapTrainingHelpOpen(false)}>
-                  <div className="manual-modal coverage-help-modal" onClick={(event) => event.stopPropagation()}>
-                    <div className="manual-modal-title-row">
-                      <h3>補訓建議說明</h3>
-                      <button type="button" className="manual-modal-close-button" aria-label="關閉補訓說明" onClick={() => setGapTrainingHelpOpen(false)}>×</button>
-                    </div>
-                    <p>未執行壓力測試時，補訓建議先依全勤基準缺口排序；完成壓力測試後，會改依「能解除多少缺勤風險、能減少多少缺口人次」排序。</p>
-                    <p>合格站點較少只作為成效相同時的排序條件，不會因認證少就直接推薦；領班、組長、主任也不列入一般補訓候選。</p>
-                    <p>點選推薦名單時，系統不會立即導入，而是先開啟站點選單，讓你決定要採用推薦站點、此人既有資格站點，或自訂其他站點。</p>
-                    <p>如果自訂站點不是此人的合格站點，系統會明確提示需要訓練。你可以先加入補訓模擬查看全站結果，也可以前往站點考核頁將該站標記為訓練中。</p>
-                    <p>只要加入補訓模擬，下方全站檢核表會立刻用新的假設重新計算，包含重複指派、導入後缺口與全站指派。</p>
-                    <div className="manual-modal-actions">
-                      <button type="button" className="primary" onClick={() => setGapTrainingHelpOpen(false)}>知道了</button>
-                    </div>
-                  </div>
+              <AppDialog
+                open={gapTrainingHelpOpen}
+                title="補訓效益建議說明"
+                description="補訓建議以降低全站缺口與缺勤風險為主要排序依據。"
+                onClose={() => setGapTrainingHelpOpen(false)}
+                footer={<button type="button" className="primary" onClick={() => setGapTrainingHelpOpen(false)}>關閉說明</button>}
+              >
+                <div className="formal-explanation-list">
+                  <p>尚未執行缺勤韌性分析時，系統先依全勤基準缺口評估；完成分析後，改依可解除的風險組合數及可減少的缺口人次排序。</p>
+                  <p>人員目前合格站點較少僅作為效益相同時的次要排序條件，不會因認證少而直接列為優先。領班、組長與主任不列入一般補訓候選。</p>
+                  <p>選擇建議人員後，系統會先顯示推薦站點、既有資格站點與其他可選站點，不會立即變更配置。</p>
+                  <p>若選擇尚未合格的站點，系統會要求確認訓練，並可同步建立「訓練中」考核狀態。</p>
+                  <p>導入補訓情境後，全站配置明細會重新計算指派、缺口及其他站點影響，避免只補單一站點卻形成新的缺口。</p>
                 </div>
-              ) : null}
+              </AppDialog>
             </EntranceLayout>
           ) : null}
           {currentRole && page === "manual-schedule" && canUsePage("manual-schedule") ? (
             <EntranceLayout pageKey="manual-schedule">
-              <div translate="no">
+              <div>
               <style>{`
                 .app-toast { position: fixed; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 50%; transform: translateX(-50%); z-index: 9999; width: min(720px, calc(100vw - 28px)); display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; padding: 14px 16px; border-radius: 18px; background: rgba(15, 23, 42, .94); color: #fff; border: 1px solid rgba(148, 163, 184, .45); box-shadow: 0 16px 40px rgba(15, 23, 42, .22); backdrop-filter: blur(12px); pointer-events: none; animation: toastSlideIn .22s ease-out; }
                 .app-toast.banner { top: calc(env(safe-area-inset-top, 0px) + 8px); width: min(920px, calc(100vw - 16px)); border-radius: 14px; }
@@ -6129,7 +5832,7 @@ export default function App() {
                 .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 8px; font-size: 19px; font-weight: 950; color: #06142f; }
                 .manual-schedule-list { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 7px !important; max-height: none !important; overflow: visible !important; }
                 .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 46px !important; height: 46px !important; display: grid !important; place-items: center !important; align-content: center !important; justify-content: center !important; text-align: center !important; touch-action: manipulation; padding: 4px 8px !important; border-radius: 18px !important; line-height: 1 !important; }
-                .manual-schedule-list .list-row strong { display: block !important; max-width: 100% !important; font-size: 15px !important; line-height: 1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important; transform: translateY(5px); }
+                .manual-schedule-list .list-row strong { display: block !important; max-width: 100% !important; font-size: 15px !important; line-height: 1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important; transform: none !important; }
                 .manual-schedule-list .list-row span { display: block !important; max-width: 100% !important; margin-top: 2px !important; font-size: 10px !important; line-height: 1.1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
                 .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                 .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
@@ -6149,7 +5852,7 @@ export default function App() {
                 .manual-schedule-list .list-row.training-assigned strong {
                   color: #713f12 !important;
                   line-height: 1.05 !important;
-                  transform: translateY(1px);
+                  transform: none !important;
                 }
                 .manual-schedule-list .list-row .training-badge-text {
                   display: none !important;
@@ -6364,16 +6067,16 @@ export default function App() {
 
               <div className="panel">
                 <div className="toolbar">
-                  <select value={manualShift} onChange={(e) => handleManualShiftChange(e.target.value as TeamName)}>
+                  <select aria-label="班表試排班別" value={manualShift} onChange={(e) => handleManualShiftChange(e.target.value as TeamName)}>
                     {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
-                  <select value={manualDay} onChange={(e) => handleManualDayChange(e.target.value as ShiftMode)}>
+                  <select aria-label="班表試排日別" value={manualDay} onChange={(e) => handleManualDayChange(e.target.value as ShiftMode)}>
                     {dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
-                  <select value={manualMode} onChange={(e) => handleManualModeChange(e.target.value as SmartScheduleMode)}>
+                  <select aria-label="班表試排模式" value={manualMode} onChange={(e) => handleManualModeChange(e.target.value as SmartScheduleMode)}>
                     {SMART_MODE_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
-                  <button className="primary" type="button" onClick={runManualPlan}>一鍵安排</button>
+                  <button className="primary" type="button" onClick={runManualPlan}>重新自動安排</button>
                   <button className="ghost" type="button" onClick={saveManualScheduleDraft}>儲存草稿</button>
                 </div>
                 <div className="detail-grid">
@@ -6388,7 +6091,7 @@ export default function App() {
               </div>
 
               <div className="panel manual-officer-panel">
-                <h3>幹部站位</h3>
+                <h3>幹部勤務與站長站位</h3>
                 <div className="manual-officer-board">
                   {officerRoleOrder.map((role) => {
                     const people = manualOfficerDisplayGroups[role];
@@ -6419,20 +6122,20 @@ export default function App() {
                     );
                   })}
                 </div>
-                <p className="manual-officer-note">幹部站位會先保留出勤人力；主任僅顯示姓名，不列入待排人力計算。</p>
+                <p className="manual-officer-note">領班、組長與主任列為現場管理勤務；站長可指定作業站點並計入該站人力。主任僅顯示姓名，不列入待排人力。</p>
               </div>
 
               <div className="panel manual-extra-work-panel compact">
                 <div className="manual-extra-compact-header">
                   <div>
-                    <h3>自訂工作</h3>
-                    <p>提供 2 個臨時欄位；需要時點一下小標籤設定工作與人員，只會進入本次班表與圖片。</p>
+                    <h3>臨時勤務</h3>
+                    <p>可設定兩項非站點勤務及執行人員，內容僅套用於本次試排與輸出。</p>
                   </div>
                 </div>
                 <div className="manual-extra-pill-row">
                   {manualExtraWorks.map((extra, index) => {
                     const selectedPeople = extra.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
-                    const title = extra.workName.trim() || `自訂工作 ${index + 1}`;
+                    const title = extra.workName.trim() || `臨時勤務 ${index + 1}`;
                     const isFilled = Boolean(extra.workName.trim() || selectedPeople.length);
                     return (
                       <button
@@ -6444,7 +6147,7 @@ export default function App() {
                         <span className="slot-label">{index + 1}</span>
                         <strong>{title}</strong>
                         <span className="slot-count">{selectedPeople.length} 人</span>
-                        <em>{selectedPeople.length ? selectedPeople.map((person) => person.name).join("、") : "點一下設定內容"}</em>
+                        <em>{selectedPeople.length ? selectedPeople.map((person) => person.name).join("、") : "尚未設定，請選擇"}</em>
                       </button>
                     );
                   })}
@@ -6456,15 +6159,19 @@ export default function App() {
                   {manualDisplayRules.map((rule) => {
                     const station = data.stations.find((item) => item.id === rule.stationId);
                     const selectedIds = manualAssignments[rule.stationId] || [];
+                    const stationLeaderIds = Object.entries(manualOfficerStations)
+                      .filter(([, stationId]) => stationId === rule.stationId)
+                      .map(([employeeId]) => employeeId);
+                    const coveredCount = new Set([...selectedIds, ...stationLeaderIds]).size;
                     const required = Number(rule.minRequired || 0);
                     const maxAssignable = Number(rule.maxAssignable || 0);
                     const stationStatusClass = required > 0
-                      ? selectedIds.length >= required
-                        ? maxAssignable > required && selectedIds.length >= maxAssignable
+                      ? coveredCount >= required
+                        ? maxAssignable > required && coveredCount >= maxAssignable
                           ? "is-overfilled"
                           : "is-filled"
                         : "is-short"
-                      : selectedIds.length
+                      : coveredCount
                         ? "is-filled"
                         : "is-neutral";
                     const assignableAttendance = manualAttendance.all.filter((person) => !manualOfficerIds.has(person.id));
@@ -6482,7 +6189,7 @@ export default function App() {
                       <div className={`panel manual-schedule-station ${stationStatusClass}`} key={rule.stationId}>
                         <div className="panel-header">
                           <h3>{station?.name || rule.stationId}</h3>
-                          <span>需求 {required}{maxAssignable ? `｜可排滿 ${maxAssignable}` : ""}｜已排 {selectedIds.length}</span>
+                          <span>需求 {required}{maxAssignable ? `｜可排滿 ${maxAssignable}` : ""}｜已排 {coveredCount}{stationLeaderIds.length ? `（含站長 ${stationLeaderIds.length}）` : ""}</span>
                         </div>
 
                         <div className="toolbar">
@@ -6502,7 +6209,7 @@ export default function App() {
                                     type="button"
                                     className={`list-row active${isTraining ? " training-assigned" : ""}`}
                                     onClick={() => toggleManualAssignment(rule.stationId, person.id)}
-                                    title={isTraining ? "訓練人員：手動安排，不會被一鍵安排" : undefined}
+                                    title={isTraining ? "訓練人員：僅限手動安排，不納入自動安排" : undefined}
                                   >
                                     <strong>{person.name}</strong>
                                     {isTraining ? <small className="training-badge-text">訓練人員</small> : null}
@@ -6528,7 +6235,7 @@ export default function App() {
                                   type="button"
                                   className={`list-row ${isConflict ? "conflict" : ""}${isTraining ? " training-candidate" : ""}`}
                                   onClick={() => toggleManualAssignment(rule.stationId, person.id)}
-                                  title={isTraining ? "訓練人員：可手動補位，不會被一鍵安排" : undefined}
+                                  title={isTraining ? "訓練人員：可手動補位，不納入自動安排" : undefined}
                                 >
                                   <strong>{person.name}</strong>
                                   {isTraining ? <small className="training-badge-text">訓練人員</small> : null}
@@ -6546,22 +6253,131 @@ export default function App() {
 
               {manualEffectiveAssigned > 0 ? (
                 <div className="manual-floating-tip-react">
-                  <div>已排:{manualEffectiveAssigned}</div>
-                  <div>待排:{manualPendingCount}</div>
-                  <button type="button" onClick={completeManualSchedule}>安排完成</button>
+                  <div>已配置：{manualEffectiveAssigned}</div>
+                  <div>未配置：{manualPendingCount}</div>
+                  <button type="button" onClick={completeManualSchedule}>檢查並預覽</button>
                   <button type="button" onClick={() => scrollToTop()}>回到頂部</button>
                 </div>
               ) : null}
 
+              <AppDialog
+                open={manualSafetyOpen}
+                title="班表安全檢核"
+                description="預覽與輸出前，重新核對全站需求、重複指派、訓練人員、站長站位及臨時勤務。"
+                onClose={() => setManualSafetyOpen(false)}
+                size="wide"
+                footer={(
+                  <>
+                    <button type="button" className="ghost" onClick={() => setManualSafetyOpen(false)}>返回調整</button>
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={!manualSafety.canPreview || (manualSafety.requiresAcknowledgement && !manualSafetyAcknowledged)}
+                      onClick={confirmManualScheduleSafety}
+                    >
+                      確認並開啟預覽
+                    </button>
+                  </>
+                )}
+              >
+                <div className={`schedule-audit-status ${manualSafety.canPreview ? "is-ready" : "is-blocked"}`} role="status" aria-live="polite">
+                  <strong>{manualSafety.canPreview ? "檢核通過" : "尚未通過"}</strong>
+                  <span>{manualSafety.canPreview ? "站點需求已覆蓋，且未發現重複指派。" : "請先處理下列阻擋項目，再重新檢核。"}</span>
+                </div>
+
+                <dl className="schedule-audit-metrics">
+                  <div><dt>站點需求</dt><dd>{manualSafety.requiredStationSlots}</dd></div>
+                  <div><dt>站點已配置</dt><dd>{manualSafety.assignedStationSlots}</dd></div>
+                  <div><dt>站點缺口</dt><dd>{manualSafety.totalShortage}</dd></div>
+                  <div><dt>未配置備援</dt><dd>{manualSafety.unassignedIds.length}</dd></div>
+                </dl>
+
+                {manualSafety.blockingIssues.length ? (
+                  <section className="schedule-audit-section is-danger" aria-labelledby="schedule-audit-blockers">
+                    <h3 id="schedule-audit-blockers">必須處理</h3>
+                    <ul>{manualSafety.blockingIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul>
+                  </section>
+                ) : null}
+
+                {manualSafety.stationChecks.some((item) => item.shortage > 0) ? (
+                  <section className="schedule-audit-section" aria-labelledby="schedule-audit-shortage">
+                    <h3 id="schedule-audit-shortage">未覆蓋站點</h3>
+                    <div className="schedule-audit-list">
+                      {manualSafety.stationChecks.filter((item) => item.shortage > 0).map((item) => {
+                        const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                        return <div key={item.stationId}><strong>{station?.name || item.stationId}</strong><span>{item.assigned}/{item.required}，仍缺 {item.shortage} 人</span></div>;
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+
+                {manualSafety.duplicatePeople.length ? (
+                  <section className="schedule-audit-section" aria-labelledby="schedule-audit-duplicates">
+                    <h3 id="schedule-audit-duplicates">重複指派人員</h3>
+                    <div className="schedule-audit-list">
+                      {manualSafety.duplicatePeople.map((item) => {
+                        const person = data.people.find((personItem) => personItem.id === item.employeeId);
+                        const placementText = item.placements.map((placement) => {
+                          const separator = placement.indexOf(":");
+                          const kind = separator >= 0 ? placement.slice(0, separator) : placement;
+                          const id = separator >= 0 ? placement.slice(separator + 1) : "";
+                          if (kind === "站點" || kind === "補充站位") {
+                            const station = data.stations.find((stationItem) => stationItem.id === id);
+                            return `${kind === "補充站位" ? "站長站位" : "站點"}：${station?.name || id}`;
+                          }
+                          return placement.replace(":", "：");
+                        }).join("、");
+                        return <div key={item.employeeId}><strong>{person?.name || item.employeeId}</strong><span>{placementText}</span></div>;
+                      })}
+                    </div>
+                  </section>
+                ) : null}
+
+                {manualSafety.trainingAssignments.length ? (
+                  <section className="schedule-audit-section is-warning" aria-labelledby="schedule-audit-training">
+                    <h3 id="schedule-audit-training">訓練人員站位</h3>
+                    <p>{manualSafety.trainingAssignments.map((item) => {
+                      const person = data.people.find((personItem) => personItem.id === item.employeeId);
+                      const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
+                      return `${person?.name || item.employeeId} → ${station?.name || item.stationId}`;
+                    }).join("、")}</p>
+                  </section>
+                ) : null}
+
+                {manualSafety.unassignedIds.length ? (
+                  <section className="schedule-audit-section" aria-labelledby="schedule-audit-reserve">
+                    <h3 id="schedule-audit-reserve">未配置備援人員</h3>
+                    <p>{manualSafety.unassignedIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join("、")}</p>
+                    <small>未配置人員保留為備援，不等同於站點缺口。</small>
+                  </section>
+                ) : null}
+
+                {manualSafety.canPreview && manualSafety.requiresAcknowledgement ? (
+                  <label className="schedule-audit-confirmation">
+                    <input
+                      type="checkbox"
+                      checked={manualSafetyAcknowledged}
+                      onChange={(event) => setManualSafetyAcknowledged(event.target.checked)}
+                    />
+                    我已確認訓練人員或特殊支援安排，並了解其現場風險。
+                  </label>
+                ) : null}
+              </AppDialog>
+
               {manualPreviewOpen ? (
-                <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true" translate="no">
-                  <div className="manual-modal manual-preview-modal">
+                <DialogShell
+                  open={manualPreviewOpen}
+                  title="班表確認與輸出"
+                  onClose={() => setManualPreviewOpen(false)}
+                  backdropClassName="manual-modal-backdrop manual-modal-backdrop-top"
+                  panelClassName="manual-modal manual-preview-modal"
+                >
                     <div className="manual-preview-title-row">
                       <div>
-                        <h3>班表預覽</h3>
-                        <p>可切換樣式；班表只顯示班別、幹部、站點名稱與人名，站點英文名會以括號標示。</p>
+                        <h3>班表確認與輸出</h3>
+                        <p>安全檢核已完成。請確認班別、幹部勤務、站點與人員配置後，再進行分享或下載。</p>
                       </div>
-                      <button type="button" className="manual-preview-close" aria-label="關閉班表預覽" onClick={() => setManualPreviewOpen(false)}>×</button>
+                      <button type="button" className="manual-preview-close" aria-label="關閉班表確認與輸出" onClick={() => setManualPreviewOpen(false)}>×</button>
                     </div>
                     <div className="manual-preview-tabs">
                       {schedulePreviewStyleOptions.map((item) => (
@@ -6681,7 +6497,12 @@ export default function App() {
                                     const person = row.people[rowIndex];
                                     return (
                                       <td className="schedule-matrix-person-cell" key={`${row.stationId}-${rowIndex}`}>
-                                        {person ? <span className={`schedule-matrix-person-chip${person.isOfficer ? " officer" : ""}`}>{person.name}</span> : null}
+                                        {person ? (
+                                          <span className={`schedule-matrix-person-chip${person.isOfficer ? " officer" : ""}${person.isTraining ? " training" : ""}`}>
+                                            {person.name}
+                                            {person.isTraining ? <small>訓練人員</small> : null}
+                                          </span>
+                                        ) : null}
                                       </td>
                                     );
                                   })}
@@ -6701,21 +6522,24 @@ export default function App() {
                       <button type="button" className="primary" onClick={shareManualSchedulePreview}>系統分享</button>
                       <button type="button" className="primary" onClick={confirmManualSchedulePreview}>確認完成並下載圖片</button>
                     </div>
-                  </div>
-                </div>
+                </DialogShell>
               ) : null}
 
               {manualResetDialog ? (
-                <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
-                  <div className="manual-modal">
+                <DialogShell
+                  open
+                  title="重置班表試排"
+                  onClose={() => setManualResetDialog(null)}
+                  backdropClassName="manual-modal-backdrop"
+                  panelClassName="manual-modal"
+                >
                     <h3>重置目前站點試排？</h3>
                     <p>更換班別 / 日別 / 模式會清空目前已安排人員，是否繼續？</p>
                     <div className="manual-modal-actions">
                       <button type="button" className="ghost" onClick={() => setManualResetDialog(null)}>取消</button>
                       <button type="button" className="primary" onClick={() => applyManualSwitch(manualResetDialog.type, manualResetDialog.value)}>確認重置</button>
                     </div>
-                  </div>
-                </div>
+                </DialogShell>
               ) : null}
 
               {manualConflictDialog ? (() => {
@@ -6728,8 +6552,13 @@ export default function App() {
                 const oldNextCount = Math.max(0, oldCount - 1);
                 const willCreateShortage = oldNeed > 0 && oldNextCount < oldNeed;
                 return (
-                  <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
-                    <div className="manual-modal">
+                  <DialogShell
+                    open
+                    title="更換人員站點"
+                    onClose={() => setManualConflictDialog(null)}
+                    backdropClassName="manual-modal-backdrop"
+                    panelClassName="manual-modal"
+                  >
                       <h3>更換站點？</h3>
                       <p>{person?.name || manualConflictDialog.employeeId} 已安排在「{oldStation?.name || manualConflictDialog.assignedStationId}」，是否更換到「{nextStation?.name || manualConflictDialog.stationId}」？</p>
                       <p className={willCreateShortage ? "manual-impact-warning" : "muted"}>
@@ -6740,8 +6569,7 @@ export default function App() {
                         <button type="button" className="ghost" onClick={() => setManualConflictDialog(null)}>取消</button>
                         <button type="button" className="primary" onClick={confirmManualConflictReplace}>確認更換</button>
                       </div>
-                    </div>
-                  </div>
+                  </DialogShell>
                 );
               })() : null}
 
@@ -6749,8 +6577,13 @@ export default function App() {
                 const person = data.people.find((item) => item.id === manualTrainingDialog.personId);
                 const station = data.stations.find((item) => item.id === manualTrainingDialog.stationId);
                 return (
-                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true" translate="no">
-                    <div className="manual-modal">
+                  <DialogShell
+                    open
+                    title="加入訓練人員"
+                    onClose={() => setManualTrainingDialog(null)}
+                    backdropClassName="manual-modal-backdrop manual-modal-backdrop-top"
+                    panelClassName="manual-modal"
+                  >
                       <h3>加入訓練人員？</h3>
                       <p><strong>{person?.name || manualTrainingDialog.personId}</strong> 目前在「{station?.name || manualTrainingDialog.stationId}」{manualTrainingDialog.currentStatus === "無站點資格" ? "沒有站點資格" : `狀態為「${manualTrainingDialog.currentStatus}」`}。</p>
                       <p>是否加入訓練並同步連動到考核資料，將此站點狀態設為「訓練中」？</p>
@@ -6758,22 +6591,27 @@ export default function App() {
                         <button type="button" className="ghost" onClick={() => setManualTrainingDialog(null)}>取消</button>
                         <button type="button" className="primary" onClick={confirmManualTrainingPerson}>加入訓練</button>
                       </div>
-                    </div>
-                  </div>
+                  </DialogShell>
                 );
               })() : null}
 
               {manualExtraDialog && manualExtraDialogItem ? (() => {
                 const selectedPeople = manualExtraDialogItem.personIds.map((id) => data.people.find((person) => person.id === id)).filter(Boolean) as Person[];
                 return (
-                  <div className="manual-modal-backdrop manual-modal-backdrop-top" role="dialog" aria-modal="true" translate="no" onClick={closeManualExtraDialog}>
-                    <div className="manual-modal" onClick={(event) => event.stopPropagation()}>
+                  <DialogShell
+                    open
+                    title="設定臨時勤務"
+                    onClose={closeManualExtraDialog}
+                    backdropClassName="manual-modal-backdrop manual-modal-backdrop-top"
+                    panelClassName="manual-modal"
+                    closeOnBackdrop
+                  >
                       <div className="manual-modal-title-row">
-                        <h3>設定自訂工作</h3>
-                        <button type="button" className="manual-modal-close-button" aria-label="關閉自訂工作視窗" onClick={closeManualExtraDialog}>×</button>
+                        <h3>設定臨時勤務</h3>
+                        <button type="button" className="manual-modal-close-button" aria-label="關閉臨時勤務視窗" onClick={closeManualExtraDialog}>×</button>
                       </div>
                       <label className="manual-extra-dialog-field">
-                        自訂工作名稱
+                        勤務名稱
                         <input
                           value={manualExtraDialogItem.workName}
                           onChange={(event) => updateManualExtraWork(manualExtraDialogItem.id, { workName: event.target.value })}
@@ -6791,7 +6629,7 @@ export default function App() {
                       </label>
                       <div className="manual-extra-selected">
                         {selectedPeople.length ? selectedPeople.map((person) => (
-                          <button key={person.id} type="button" onClick={() => removeManualExtraPerson(manualExtraDialogItem.id, person.id)} title="點擊移除">
+                          <button key={person.id} type="button" onClick={() => removeManualExtraPerson(manualExtraDialogItem.id, person.id)} title="移除人員">
                             {person.name} ×
                           </button>
                         )) : <span className="muted">尚未加入人員</span>}
@@ -6815,14 +6653,18 @@ export default function App() {
                         <button type="button" className="ghost" onClick={() => clearManualExtraWork(manualExtraDialogItem.id)}>清空此欄</button>
                         <button type="button" className="primary" onClick={closeManualExtraDialog}>完成</button>
                       </div>
-                    </div>
-                  </div>
+                  </DialogShell>
                 );
               })() : null}
 
               {manualCustomDialog ? (
-                <div className="manual-modal-backdrop" role="dialog" aria-modal="true" translate="no">
-                  <div className="manual-modal">
+                <DialogShell
+                  open={Boolean(manualCustomDialog)}
+                  title="自訂站點人選"
+                  onClose={() => { setManualCustomDialog(null); setManualCustomKeyword(""); }}
+                  backdropClassName="manual-modal-backdrop"
+                  panelClassName="manual-modal"
+                >
                     <h3>自訂人選</h3>
                     <input value={manualCustomKeyword} onChange={(e) => setManualCustomKeyword(e.target.value)} placeholder="搜尋姓名或工號" autoFocus />
                     <div className="manual-custom-results">
@@ -6836,8 +6678,7 @@ export default function App() {
                     <div className="manual-modal-actions">
                       <button type="button" className="ghost" onClick={() => { setManualCustomDialog(null); setManualCustomKeyword(""); }}>關閉</button>
                     </div>
-                  </div>
-                </div>
+                </DialogShell>
               ) : null}
               </div>
             </EntranceLayout>
@@ -6851,22 +6692,32 @@ export default function App() {
       </div>
 
       {appVersionBlocked ? (
-        <div className="version-blocker" role="dialog" aria-modal="true">
-          <div className="version-blocker-card">
-            <h2>系統已更新</h2>
+        <DialogShell
+          open={appVersionBlocked}
+          title="系統已更新"
+          onClose={() => window.location.reload()}
+          backdropClassName="version-blocker"
+          panelClassName="version-blocker-card"
+        >
+            <h2 id="version-blocker-title">系統已更新</h2>
             <p>{appVersionMessage || "為避免舊版資料覆蓋或權限判斷錯誤，請重新整理後繼續使用。"}</p>
             <button type="button" className="primary" onClick={() => window.location.reload()}>重新整理</button>
-          </div>
-        </div>
+        </DialogShell>
       ) : null}
 
       {mobileDetailModal ? (
-        <div className="mobile-modal-backdrop upgraded-modal-backdrop" onClick={() => setMobileDetailModal(null)}>
-          <div className={`mobile-modal upgraded-modal-card ${mobileDetailModal.type === "review" ? "review-edit-modal" : ""}`} onClick={(e) => e.stopPropagation()}>
+        <DialogShell
+          open={Boolean(mobileDetailModal)}
+          title={mobileDetailModal.type === "person" ? "人員資訊" : mobileDetailModal.type === "station" ? "站點資訊" : "站點考核"}
+          onClose={() => setMobileDetailModal(null)}
+          backdropClassName="mobile-modal-backdrop upgraded-modal-backdrop"
+          panelClassName={`mobile-modal upgraded-modal-card ${mobileDetailModal.type === "review" ? "review-edit-modal" : ""}`}
+          closeOnBackdrop
+        >
             <button type="button" className="mobile-modal-floating-close" aria-label="關閉資訊視窗" onClick={() => setMobileDetailModal(null)}>×</button>
             <div className="mobile-modal-header upgraded-modal-header">
-              <strong>{mobileDetailModal.type === "person" ? "人員資訊" : mobileDetailModal.type === "station" ? "站點資訊" : "站點考核"}</strong>
-              <button type="button" className="mobile-modal-close" onClick={() => setMobileDetailModal(null)}>×</button>
+              <strong id="mobile-detail-title">{mobileDetailModal.type === "person" ? "人員資訊" : mobileDetailModal.type === "station" ? "站點資訊" : "站點考核"}</strong>
+              <button type="button" className="mobile-modal-close" aria-label="關閉資訊視窗" onClick={() => setMobileDetailModal(null)}>×</button>
             </div>
             <div className="mobile-modal-body upgraded-modal-body">
               {mobileDetailModal.type === "person" && mobilePerson ? <PersonDetailView person={mobilePerson} qualifications={mobilePersonQualifications} compact /> : null}
@@ -6938,8 +6789,7 @@ export default function App() {
               ) : null}
             </div>
             <button type="button" className="mobile-modal-fab-close" onClick={() => setMobileDetailModal(null)}>關閉</button>
-          </div>
-        </div>
+        </DialogShell>
       ) : null}
     </>
   );

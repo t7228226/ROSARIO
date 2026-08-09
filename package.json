@@ -11,8 +11,8 @@
     "preview": "vite preview",
     "check:contracts": "node scripts/check-contracts.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/people/newPerson.test.ts scripts/gas-idempotency.test.mjs",
-    "test:watch": "tsx --test --watch src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/people/newPerson.test.ts"
+    "test": "tsx --test src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/workforce/scheduleSafety.test.ts src/domain/people/newPerson.test.ts scripts/gas-auth.test.mjs scripts/gas-idempotency.test.mjs",
+    "test:watch": "tsx --test --watch src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/workforce/scheduleSafety.test.ts src/domain/people/newPerson.test.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

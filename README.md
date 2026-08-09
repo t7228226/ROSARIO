@@ -66,105 +66,24 @@ https://t7228226.github.io/ROSARIO/
 
 之後你就可以直接用手機打開這個網址測試，不需要本機電腦常駐。
 
-## API 設定
+## API 與安全
 
-`.env` 可加入：
+- 正式 GAS 來源為 `gas-login-fallback-2026-07-01.js`。
+- 前端通訊、逾時重試與防重複寫入集中在 `src/lib/gasClient.ts`。
+- 登入成功後由 GAS 核發工作階段 token；重新整理時會重新確認帳號狀態與系統權限。
+- 所有寫入都必須通過 GAS 的伺服器端權限判斷，不能只靠前端按鈕隱藏。
+- bootstrap、登入與更新回應不回傳密碼；密碼重設後只保存雜湊值。
+- 正式部署後需在 Apps Script 編輯器執行一次 `migrateLegacyAccountPasswords()`，將既有明文密碼批次轉換；合法登入也會自動逐筆轉換。
+- Apps Script 的 Script Properties 會保存 `ROSARIO_PASSWORD_PEPPER`。請勿刪除或任意重建，否則既有密碼雜湊將無法驗證，只能由最高權限管理員重新設定密碼。
+- 預覽環境預設唯讀。若要連接獨立測試 GAS，可在 `.env.preview.local` 設定 `VITE_GAS_API_URL`，並於確認不會寫入正式資料後才啟用 `VITE_ENABLE_WRITES=true`。
+
+## 驗證
 
 ```bash
-VITE_GAS_API_URL=https://script.google.com/macros/s/AKfycbwsqvP9ogL4v81T3luON_43aHt1Vdz-e3bT--sEH2n56eKj11z05FPhkCC4rFouwt4w_A/exec
-VITE_USE_MOCK=false
+npm run check:contracts
+npm run typecheck
+npm test
+npm run build
 ```
 
-若未設定或無法連線，系統會自動退回 mock 資料模式，方便先把前端畫面與邏輯確認好。
-
-若你只想先測手機畫面，不測後端，可設：
-
-```bash
-VITE_USE_MOCK=true
-```
-
-## 建議的 GAS 回傳格式
-
-### 1. 取得初始化資料
-`GET ?action=bootstrap`
-
-```json
-{
-  "people": [],
-  "stations": [],
-  "qualifications": [],
-  "stationRules": []
-}
-```
-
-### 2. 新增 / 更新資格
-`POST`
-
-```json
-{
-  "action": "upsertQualification",
-  "payload": {
-    "employeeId": "P0001",
-    "stationId": "STR",
-    "status": "合格"
-  }
-}
-```
-
-### 3. 刪除資格
-`POST`
-
-```json
-{
-  "action": "deleteQualification",
-  "payload": {
-    "employeeId": "P0001",
-    "stationId": "STR"
-  }
-}
-```
-
-### 4. 更新站點規則
-`POST`
-
-```json
-{
-  "action": "updateStationRule",
-  "payload": {
-    "id": "STR",
-    "team": "婷芬班",
-    "dayKey": "第一天",
-    "stationId": "STR",
-    "minRequired": 4,
-    "backupTarget": 2,
-    "priority": 1,
-    "isMandatory": true
-  }
-}
-```
-
-### 5. 更新人員主檔
-`POST`
-
-```json
-{
-  "action": "updatePerson",
-  "payload": {
-    "id": "P0001",
-    "name": "王小明",
-    "shift": "婷芬班",
-    "role": "作業員",
-    "nationality": "台籍",
-    "aDay1": "日A",
-    "aDay2": "日A",
-    "bDay1": "",
-    "bDay2": "",
-    "employmentStatus": "在職"
-  }
-}
-```
-
-## 注意
-
-目前我無法直接驗證你的 Google Apps Script 實際回傳格式，所以我已把所有後端串接集中在 `src/lib/api.ts`。
-只要你的 GAS 欄位命名不一樣，優先改這個檔案即可，不需要整個前端重寫。
+`check:contracts` 會檢查前後端寫入動作、session 授權、密碼防護、版本門檻與防重複寫入契約；通過建置仍不等於正式 GAS 已部署，發布後仍須執行線上登入與未授權請求測試。
