@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [frontendSource, appSource, gasClientSource, gasSource] = await Promise.all([
+const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, gasClientSource, gasSource] = await Promise.all([
   readFile(path.join(root, "src/config/writeActions.ts"), "utf8"),
   readFile(path.join(root, "src/App.tsx"), "utf8"),
+  readFile(path.join(root, "src/domain/bootstrap/sanitizeBootstrap.ts"), "utf8"),
+  readFile(path.join(root, "src/main.tsx"), "utf8"),
   readFile(path.join(root, "src/lib/gasClient.ts"), "utf8"),
   readFile(path.join(root, "gas-login-fallback-2026-07-01.js"), "utf8"),
 ]);
@@ -34,8 +36,8 @@ const loginStart = gasSource.indexOf("function login_", mergeAccountsStart);
 assert.ok(mergeAccountsStart >= 0 && loginStart > mergeAccountsStart, "找不到帳號欄位合併區塊");
 const bootstrapAccountMergeSource = gasSource.slice(mergeAccountsStart, loginStart);
 assert.doesNotMatch(bootstrapAccountMergeSource, /loginPassword\s*:|password\s*:/, "bootstrap 不可回傳密碼欄位");
-assert.match(appSource, /delete sanitized\.password;/, "前端 bootstrap 清理必須移除 password");
-assert.match(appSource, /delete sanitized\.loginPassword;/, "前端 bootstrap 清理必須移除 loginPassword");
+assert.match(bootstrapSanitizerSource, /delete sanitized\.password;/, "前端 bootstrap 清理必須移除 password");
+assert.match(bootstrapSanitizerSource, /delete sanitized\.loginPassword;/, "前端 bootstrap 清理必須移除 loginPassword");
 assert.doesNotMatch(appSource, /title="目前密碼"|目前密碼會讀取/, "前端不得顯示現有密碼");
 assert.match(gasSource, /PASSWORD_HASH_PREFIX = 'rosario-v1\$'/, "GAS 必須以雜湊格式保存新密碼");
 assert.match(gasSource, /setCellIfExists_\([^\n]+?'登入密碼', hashPassword_\(nextPassword\)\)/, "密碼更新不可寫入明文");
@@ -52,7 +54,7 @@ assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operatio
 assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
 assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
 assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
-assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-003'/, "舊版前端不得繞過可靠寫入");
+assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-004'/, "舊版前端不得繞過可靠寫入");
 assert.match(gasSource, /function authorizeWriteAction_\(/, "GAS 寫入前必須執行伺服器端授權");
 assert.match(gasSource, /const session = authorizeWriteAction_\([^;]+;/, "寫入端點不得只依賴前端權限");
 assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工作階段");
@@ -68,6 +70,11 @@ assert.match(gasClientSource, /operationId/, "前端寫入必須傳送 operation
 assert.match(gasClientSource, /pollGasOperation/, "前端逾時後必須查詢操作結果");
 assert.match(gasClientSource, /inFlightWriteRequests/, "前端必須阻擋相同內容的重複送出");
 assert.match(appSource, /lazy\(\(\) => import\("\.\/features\/gap-analysis\/ResilienceInsights"\)\)/, "大型分析畫面必須延遲載入");
+assert.match(appSource, /import Layout from "\.\/components\/Layout";/, "登入後首頁仍必須使用 Layout 容器");
+assert.doesNotMatch(appSource, /<style>\{`/, "App 不得重新放回大段內嵌樣式");
+assert.ok(appSource.split(/\r?\n/).length < 5000, "App 主檔應維持在 5000 行以下");
+assert.match(mainSource, /import "\.\/app-shell\.css";/, "主應用樣式必須由獨立 CSS 載入");
+assert.match(mainSource, /import "\.\/manual-schedule\.css";/, "班表試排樣式必須由獨立 CSS 載入");
 assert.match(appSource, /if \(!currentUser\) return;[\s\S]+fetchGasBootstrapData\(\)/, "未登入時不得載入 bootstrap 主檔");
 assert.match(appSource, /setCurrentUser\(null\);[\s\S]{0,160}setData\(emptyBootstrap\);/, "登出或 session 逾時後必須清空主檔資料");
 assert.doesNotMatch(appSource, /setPermissionItemStates\(permissionItems\)/, "session 清理不得引用不存在的權限變數");

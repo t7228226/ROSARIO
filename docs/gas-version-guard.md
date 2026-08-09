@@ -73,6 +73,6 @@ function doPost(e) {
 
 每次前端發布新版時，同步調整：
 
-- `src/App.tsx` 的 `APP_VERSION`
+- `.env.production` 與 `src/config/environment.ts` 的 `VITE_APP_VERSION`／備援版本
 - `public/version.json` 的 `version`
-- GAS 的 `LATEST_VERSION` / `MIN_WRITE_VERSION`
+- GAS 的 `APP_VERSION` / `MIN_WRITE_VERSION`

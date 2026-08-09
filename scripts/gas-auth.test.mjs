@@ -146,7 +146,7 @@ test("write requests reject missing sessions before executing callbacks", () => 
 
   assert.throws(() => context.executeWriteRequest_(
     "upsertQualification",
-    { appVersion: "2026-08-10-003" },
+    { appVersion: "2026-08-10-004" },
     {},
     () => { writes += 1; return { ok: true }; }
   ), /登入|工作階段/);
@@ -161,7 +161,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   const allowed = context.executeWriteRequest_(
     "upsertQualification",
-    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
     {},
     () => { qualificationWrites += 1; return { ok: true }; }
   );
@@ -170,7 +170,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
     {},
     () => { ruleWrites += 1; return { ok: true }; }
   ), /權限不足/);
@@ -184,7 +184,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
     { team: "翊展班" },
     () => { writes += 1; return { ok: true }; }
   );
@@ -192,7 +192,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-003", sessionToken: login.sessionToken },
+    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
     { team: "俊志班" },
     () => { writes += 1; return { ok: true }; }
   ), /自己班別/);
