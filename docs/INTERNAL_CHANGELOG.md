@@ -2,6 +2,7 @@
 
 ## 2026-08-10-008
 
+- 正式 GAS 更新至第 26 版，GitHub Pages 由 `main` 發布完成。
 - 將使用者介面品牌改為 `TSEC 人力站點`，ROSARIO 僅保留為專案內部代號。
 - 建立太陽能板矩陣抽象 `T` 品牌圖示，並輸出瀏覽器、iPhone 與 Android/PWA 所需尺寸。
 - 新增 PWA manifest、手機桌面名稱、主題色與 Apple Touch Icon 設定。
