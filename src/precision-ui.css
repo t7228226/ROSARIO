@@ -288,6 +288,43 @@ body {
   text-align: center !important;
 }
 
+.manual-modal.manual-preview-modal {
+  background: #fff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+.manual-preview-modal .manual-preview-title-row,
+.manual-preview-modal .manual-preview-title-row h3,
+.manual-preview-modal .manual-modal-actions {
+  background: #fff !important;
+}
+
+.manual-preview-modal .manual-preview-title-row {
+  margin: -10px -10px 12px;
+  padding: 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.manual-preview-modal .manual-preview-title-row > div {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.manual-preview-modal .manual-preview-title-row h3 {
+  position: static !important;
+  top: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: #0f172a !important;
+}
+
+.manual-preview-modal .manual-preview-title-row p {
+  color: #475569 !important;
+}
+
 .app-operational-v3 .entrance-header h1,
 .app-operational-v3 .entrance-header p,
 .app-operational-v3 .entrance-header * {
@@ -542,7 +579,7 @@ body {
   .toolbar, .info-item, .stat-card, .mobile-modal-header,
   .upgraded-modal-header, .upgraded-edit-grid label,
   .upgraded-preview-row, .resilience-insight-heading,
-  .manual-extra-pill, .schedule-matrix-meta
+  .manual-extra-pill, .schedule-ab-team
 ) {
   text-align: center !important;
 }
@@ -1035,6 +1072,10 @@ body {
     display: block;
     width: 58px;
     height: 58px;
+  }
+
+  body:has(.manual-preview-modal) .mobile-command-center {
+    display: none;
   }
 
   .mobile-command-trigger {

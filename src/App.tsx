@@ -27,11 +27,13 @@ import {
   findAssignedStation,
   getAssignmentSummary,
 } from "./domain/workforce/assignmentState";
+import { splitBalancedRotationRows } from "./domain/workforce/rotationGroups";
 import type { CoverageResilienceResult } from "./domain/workforce/resilience";
 import { auditScheduleSafety } from "./domain/workforce/scheduleSafety";
 import CoverageConfigurationOverview, {
   type CoverageConfigurationRow,
 } from "./features/gap-analysis/CoverageConfigurationOverview";
+import ABScheduleMatrix from "./features/schedule-preview/ABScheduleMatrix";
 import {
   fetchGasBootstrapData,
   fetchGasPermissionConfig,
@@ -119,7 +121,7 @@ const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: str
   { key: "table", label: "標準表格" },
   { key: "share", label: "分享圖卡" },
   { key: "section", label: "分區海報" },
-  { key: "matrix", label: "橫向矩陣" },
+  { key: "matrix", label: "A/B 輪休橫表" },
 ];
 
 const initialManualExtraWorks: ManualExtraWork[] = [
@@ -1174,6 +1176,7 @@ export default function App() {
             stationId: rule.stationId,
             stationName: getScheduleStationDisplayName(station),
             people: uniquePreviewPeople([...assignedPeople, ...selectedOfficerPeople]),
+            required: getRuleNeed(rule, manualDay),
           };
         }),
         ...manualExtraWorks
@@ -1186,6 +1189,7 @@ export default function App() {
               stationId: item.id,
               stationName,
               people: uniquePreviewPeople(people),
+              required: people.length,
             };
           })
           .filter((row) => row.stationName || row.people.length > 0),
@@ -1951,15 +1955,20 @@ export default function App() {
 
   function downloadManualScheduleMatrixImage() {
     if (typeof document === "undefined") return;
+    const rows = manualSchedulePreview.rows;
+    const groupedRows = splitBalancedRotationRows(rows.map((row) => row.people));
+    const groupDepth = Math.max(
+      2,
+      ...groupedRows.map((groups) => Math.max(groups.groupA.length, groups.groupB.length)),
+    );
     const scale = 2;
     const leftWidth = 300;
     const colWidth = 136;
-    const headerHeight = 190;
+    const headerHeight = 224;
     const hasTrainingPeople = rows.some((row) => row.people.some((person) => person.isTraining));
     const personRowHeight = hasTrainingPeople ? 58 : 46;
-    const footerHeight = 40;
-    const rows = manualSchedulePreview.rows;
-    const maxPeople = Math.max(4, ...rows.map((row) => row.people.length));
+    const footerHeight = 92;
+    const maxPeople = groupDepth * 2;
     const width = Math.max(1180, leftWidth + rows.length * colWidth + 48);
     const height = headerHeight + maxPeople * personRowHeight + footerHeight;
     const canvas = document.createElement("canvas");
@@ -1999,20 +2008,40 @@ export default function App() {
     ctx.fillStyle = "#b91c1c";
     ctx.font = "900 34px 'Noto Sans TC', 'PingFang TC', sans-serif";
     ctx.fillText(manualSchedulePreview.team, x0 + 28, y0 + 48);
+    ctx.fillStyle = "#713f12";
+    ctx.font = "800 15px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText(`${manualDay}｜${manualMode}試排`, x0 + 28, y0 + 76);
     ctx.fillStyle = "#0f172a";
     ctx.font = "900 24px 'Noto Sans TC', 'PingFang TC', sans-serif";
-    ctx.fillText(`主任　${manualSchedulePreview.officers.主任.join("、") || "-"}`, x0 + 28, y0 + 94);
-    ctx.fillText(`組長　${manualSchedulePreview.officers.組長.join("、") || "-"}`, x0 + 28, y0 + 132);
+    ctx.fillText(`主任　${manualSchedulePreview.officers.主任.join("、") || "-"}`, x0 + 28, y0 + 112);
+    ctx.fillText(`組長　${manualSchedulePreview.officers.組長.join("、") || "-"}`, x0 + 28, y0 + 150);
     const leaderText = `領班　${manualSchedulePreview.officers.領班.join("、") || "-"}`;
     wrapCanvasText(ctx, leaderText, leftWidth - 56).slice(0, 2).forEach((line, idx) => {
-      ctx.fillText(line, x0 + 28, y0 + 170 + idx * 30);
+      ctx.fillText(line, x0 + 28, y0 + 188 + idx * 28);
     });
+
+    const groupBodyY = y0 + headerHeight;
+    const groupBodyHeight = groupDepth * personRowHeight;
+    ctx.fillStyle = "#fef3c7";
+    ctx.fillRect(x0, groupBodyY, leftWidth, groupBodyHeight);
+    ctx.fillStyle = "#dcfce7";
+    ctx.fillRect(x0, groupBodyY + groupBodyHeight, leftWidth, groupBodyHeight);
+    ctx.strokeStyle = "#64748b";
+    ctx.strokeRect(x0, groupBodyY, leftWidth, groupBodyHeight * 2);
+    ctx.beginPath();
+    ctx.moveTo(x0, groupBodyY + groupBodyHeight);
+    ctx.lineTo(x0 + leftWidth, groupBodyY + groupBodyHeight);
+    ctx.stroke();
+    ctx.fillStyle = "#854d0e";
+    ctx.font = "900 34px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("A 組", x0 + leftWidth / 2, groupBodyY + groupBodyHeight / 2 + 8);
+    ctx.fillStyle = "#166534";
+    ctx.fillText("B 組", x0 + leftWidth / 2, groupBodyY + groupBodyHeight + groupBodyHeight / 2 + 8);
+    ctx.textAlign = "start";
 
     ctx.fillStyle = "#e2e8f0";
     ctx.fillRect(x0 + leftWidth, y0, rows.length * colWidth, 44);
-    ctx.fillStyle = "#0f172a";
-    ctx.font = "900 19px 'Noto Sans TC', 'PingFang TC', sans-serif";
-    ctx.fillText("站點 / Station", x0 + leftWidth + 16, y0 + 29);
 
     rows.forEach((row, index) => {
       const x = x0 + leftWidth + index * colWidth;
@@ -2030,6 +2059,10 @@ export default function App() {
       const headerTop = y0 + 44;
       const headerBodyHeight = headerHeight - 44;
       const stationCenterX = x + colWidth / 2;
+      ctx.fillStyle = "#0f172a";
+      ctx.font = "800 14px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(`需求 ${Math.max(0, Number(row.required || 0))}｜已排 ${row.people.length}`, stationCenterX, y0 + 28);
       const stationLineHeight = 25;
       const codeGap = label.code ? 12 : 0;
       const codeLineHeight = label.code ? 24 : 0;
@@ -2061,7 +2094,9 @@ export default function App() {
       ctx.stroke();
       rows.forEach((row, colIndex) => {
         const x = x0 + leftWidth + colIndex * colWidth;
-        const person = row.people[rowIndex];
+        const groups = groupedRows[colIndex];
+        const groupPeople = rowIndex < groupDepth ? groups.groupA : groups.groupB;
+        const person = groupPeople[rowIndex % groupDepth];
         if (!person) return;
         const chipX = x + 8;
         const chipY = y + 7;
@@ -2075,25 +2110,43 @@ export default function App() {
         ctx.strokeStyle = person.isTraining ? "#f59e0b" : person.isOfficer ? "#16a34a" : "#cbd5e1";
         ctx.stroke();
         ctx.fillStyle = person.isTraining ? "#92400e" : person.isOfficer ? "#166534" : "#334155";
+        ctx.textAlign = "center";
         if (person.isTraining) {
           ctx.font = "900 16px 'Noto Sans TC', 'PingFang TC', sans-serif";
-          ctx.fillText(person.name, chipX + 10, chipY + 18);
+          ctx.fillText(person.name, chipX + chipW / 2, chipY + 18);
           ctx.font = "700 11px 'Noto Sans TC', 'PingFang TC', sans-serif";
-          ctx.fillText("訓練人員", chipX + 10, chipY + 34);
+          ctx.fillText("訓練人員", chipX + chipW / 2, chipY + 34);
           ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
         } else {
-          ctx.fillText(person.name, chipX + 10, chipY + 22);
+          ctx.fillText(person.name, chipX + chipW / 2, chipY + 22);
         }
+        ctx.textAlign = "start";
       });
     }
 
+    const absenceY = y0 + tableHeight + 8;
+    ctx.fillStyle = "#fbcfe8";
+    ctx.fillRect(x0, absenceY, tableWidth, 44);
+    ctx.strokeStyle = "#be185d";
+    ctx.strokeRect(x0, absenceY, tableWidth, 44);
+    ctx.fillStyle = "#831843";
+    ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillText("請假人員 0", x0 + 18, absenceY + 29);
+    ctx.fillStyle = "#475569";
+    ctx.fillText("-", x0 + leftWidth + 18, absenceY + 29);
+
     ctx.fillStyle = "#64748b";
     ctx.font = "700 15px 'Noto Sans TC', 'PingFang TC', sans-serif";
-    ctx.fillText("※ 綠色為站長站位；黃色為訓練人員。", x0, height - 16);
+    ctx.fillText("※ 人員依站點順序交錯並平衡 A、B 組總人數；綠色為幹部支援，黃色為訓練人員。", x0, height - 16);
 
     const link = document.createElement("a");
-    const date = new Date().toISOString().slice(0, 10);
-    link.download = `${manualSchedulePreview.team}-橫版班表-${date}.png`;
+    const now = new Date();
+    const date = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+    ].join("-");
+    link.download = `${manualSchedulePreview.team}-A-B輪休橫表-${date}.png`;
     link.href = canvas.toDataURL("image/png");
     document.body.appendChild(link);
     link.click();
@@ -4265,7 +4318,7 @@ export default function App() {
                   title="班表確認與輸出"
                   onClose={() => setManualPreviewOpen(false)}
                   backdropClassName="manual-modal-backdrop manual-modal-backdrop-top"
-                  panelClassName="manual-modal manual-preview-modal"
+                  panelClassName={`manual-modal manual-preview-modal${manualPreviewStyle === "matrix" ? " is-matrix" : ""}`}
                 >
                     <div className="manual-preview-title-row">
                       <div>
@@ -4361,52 +4414,19 @@ export default function App() {
 
                     {manualPreviewStyle === "matrix" ? (
                       <div className="schedule-paper schedule-matrix-paper">
-                        <div className="schedule-matrix-scroll">
-                          <table className="schedule-matrix-table">
-                            <thead>
-                              <tr>
-                                <th className="schedule-matrix-meta">
-                                  <div className="schedule-matrix-team">{manualSchedulePreview.team}</div>
-                                  <div className="schedule-matrix-officers">
-                                    <div>主任　{manualSchedulePreview.officers.主任.join("、") || "-"}</div>
-                                    <div>組長　{manualSchedulePreview.officers.組長.join("、") || "-"}</div>
-                                    <div>領班　{manualSchedulePreview.officers.領班.join("、") || "-"}</div>
-                                  </div>
-                                </th>
-                                {manualSchedulePreview.rows.map((row) => {
-                                  const label = splitScheduleStationLabel(row.stationName);
-                                  return (
-                                    <th className="schedule-matrix-station" key={row.stationId}>
-                                      <span className="schedule-matrix-station-name">{label.name}</span>
-                                      {label.code ? <span className="schedule-matrix-station-code">{label.code}</span> : null}
-                                    </th>
-                                  );
-                                })}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {Array.from({ length: Math.max(4, ...manualSchedulePreview.rows.map((row) => row.people.length)) }).map((_, rowIndex) => (
-                                <tr key={`matrix-row-${rowIndex}`}>
-                                  <td className="schedule-matrix-row-label">人員 {rowIndex + 1}</td>
-                                  {manualSchedulePreview.rows.map((row) => {
-                                    const person = row.people[rowIndex];
-                                    return (
-                                      <td className="schedule-matrix-person-cell" key={`${row.stationId}-${rowIndex}`}>
-                                        {person ? (
-                                          <span className={`schedule-matrix-person-chip${person.isOfficer ? " officer" : ""}${person.isTraining ? " training" : ""}`}>
-                                            {person.name}
-                                            {person.isTraining ? <small>訓練人員</small> : null}
-                                          </span>
-                                        ) : null}
-                                      </td>
-                                    );
-                                  })}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                        <div className="schedule-matrix-note">橫向滑動查看完整班表；確認完成會輸出完整橫版 PNG。</div>
+                        <ABScheduleMatrix
+                          team={manualSchedulePreview.team}
+                          day={manualDay}
+                          mode={manualMode}
+                          officers={manualSchedulePreview.officers}
+                          rows={manualSchedulePreview.rows}
+                          attendanceCount={manualCountableTotal}
+                          requiredCount={manualSafety.requiredStationSlots}
+                          assignedCount={manualSafety.assignedStationSlots}
+                          shortageCount={manualSafety.totalShortage}
+                          reserveCount={manualSafety.unassignedIds.length}
+                          absentPeople={[]}
+                        />
                       </div>
                     ) : null}
 
