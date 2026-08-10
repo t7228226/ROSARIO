@@ -3082,8 +3082,14 @@ export default function App() {
       <div className={`app-shell app-theme-${uiTheme} app-font-system app-operational-v3`} data-theme={uiTheme}>
         <aside className="sidebar">
           <div className="brand-card">
-            <div className="brand-kicker">ROSARIO</div>
-            <h1>現場人力與站點資格系統</h1>
+            <div className="brand-lockup" aria-label="TSEC 人力站點">
+              <img className="brand-mark" src={`${import.meta.env.BASE_URL}icons/tsec-workforce-mark.svg`} alt="" aria-hidden="true" />
+              <div className="brand-wordmark">
+                <strong>TSEC</strong>
+                <span>人力站點</span>
+              </div>
+            </div>
+            <h1>現場人力與站點資格管理系統</h1>
             <p>整合人員資格、全站覆蓋、缺勤風險與班表試排。</p>
           </div>
           <div className="control-card">

@@ -6,7 +6,18 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>站點資格管理 App</title>
+    <title>TSEC 人力站點</title>
+    <meta name="description" content="TSEC 現場人力與站點資格管理系統" />
+    <meta name="application-name" content="TSEC 人力站點" />
+    <meta name="theme-color" content="#0b3157" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="TSEC 人力站點" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icons/tsec-workforce-mark.svg" type="image/svg+xml" />
+    <link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" sizes="180x180" />
     <style>
       html, body {
         margin: 0;
@@ -16,8 +27,25 @@
         font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
       }
       #boot-status {
+        min-height: 100vh;
+        box-sizing: border-box;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 10px;
         padding: 24px;
+        text-align: center;
         line-height: 1.7;
+      }
+      #boot-status h1,
+      #boot-status p {
+        margin: 0;
+      }
+      #boot-status h1 {
+        font-size: 24px;
+      }
+      #boot-status p {
+        color: #58677b;
       }
       #boot-status.error {
         background: #fff7f7;
@@ -39,7 +67,7 @@
           if (!el) {
             el = document.createElement('div');
             el.id = 'boot-status';
-            el.innerHTML = '<h1>系統啟動中</h1><p>若長時間停在此畫面，請把畫面截圖提供給我。</p>';
+            el.innerHTML = '<h1>TSEC 人力站點</h1><p>系統載入中，請稍候。</p>';
             document.addEventListener('DOMContentLoaded', function () {
               var root = document.getElementById('root');
               if (root && !document.getElementById('boot-status')) {
@@ -88,8 +116,8 @@
   </head>
   <body>
     <div id="boot-status">
-      <h1>系統啟動中</h1>
-      <p>若長時間停在此畫面，請把畫面截圖提供給我。</p>
+      <h1>TSEC 人力站點</h1>
+      <p>系統載入中，請稍候。</p>
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

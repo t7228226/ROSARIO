@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">TSEC 人力站點</title>
+  <desc id="description">由太陽能板矩陣構成的抽象 T，代表人員與站點的交叉覆蓋。</desc>
+  <rect width="1024" height="1024" fill="#0b3157" />
+  <g fill="#f7fbff">
+    <rect x="170" y="228" width="204" height="174" rx="34" />
+    <rect x="410" y="228" width="204" height="174" rx="34" />
+    <rect x="650" y="228" width="204" height="174" rx="34" />
+    <rect x="410" y="438" width="204" height="174" rx="34" />
+    <rect x="410" y="648" width="204" height="174" rx="34" />
+  </g>
+  <g fill="none" stroke="#b7cee2" stroke-width="14" stroke-linecap="round">
+    <path d="M272 250v130M192 315h160" />
+    <path d="M512 250v130M432 315h160" />
+    <path d="M752 250v130M672 315h160" />
+    <path d="M512 460v130M432 525h160" />
+    <path d="M512 670v130M432 735h160" />
+  </g>
+  <g stroke="#f6c744" stroke-width="20" stroke-linecap="round">
+    <path d="M199 148v-34M199 282v34M132 215H98M300 215h-34M152 168l-24-24M246 262l24 24M246 168l24-24M152 262l-24 24" />
+  </g>
+  <circle cx="199" cy="215" r="48" fill="#f6c744" />
+  <circle cx="199" cy="215" r="20" fill="#e54835" />
+</svg>

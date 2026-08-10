@@ -4,12 +4,14 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, precisionUiSource, gasClientSource, gasSource] = await Promise.all([
+const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, precisionUiSource, mobileCommandSource, mobileCommandPositionSource, gasClientSource, gasSource] = await Promise.all([
   readFile(path.join(root, "src/config/writeActions.ts"), "utf8"),
   readFile(path.join(root, "src/App.tsx"), "utf8"),
   readFile(path.join(root, "src/domain/bootstrap/sanitizeBootstrap.ts"), "utf8"),
   readFile(path.join(root, "src/main.tsx"), "utf8"),
   readFile(path.join(root, "src/precision-ui.css"), "utf8"),
+  readFile(path.join(root, "src/components/MobileCommandMenu.tsx"), "utf8"),
+  readFile(path.join(root, "src/domain/preferences/mobileCommandPosition.ts"), "utf8"),
   readFile(path.join(root, "src/lib/gasClient.ts"), "utf8"),
   readFile(path.join(root, "gas-login-fallback-2026-07-01.js"), "utf8"),
 ]);
@@ -61,7 +63,7 @@ assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operatio
 assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
 assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
 assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
-assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-006'/, "舊版前端不得繞過可靠寫入");
+assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-008'/, "舊版前端不得繞過可靠寫入");
 assert.match(gasSource, /function authorizeWriteAction_\(/, "GAS 寫入前必須執行伺服器端授權");
 assert.match(gasSource, /const session = authorizeWriteAction_\([^;]+;/, "寫入端點不得只依賴前端權限");
 assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工作階段");
@@ -86,6 +88,11 @@ assert.match(mainSource, /import "\.\/precision-ui\.css";/, "全域設計系統�
 assert.ok(mainSource.indexOf('import "./precision-ui.css";') > mainSource.indexOf('import "./upgrade.css";'), "全域設計系統必須最後載入，避免舊樣式覆蓋");
 assert.match(precisionUiSource, /html,[\s\S]+overflow-x: clip;/, "行動版必須裁切全頁水平溢位且不得建立額外捲動容器");
 assert.match(precisionUiSource, /\.mobile-command-center/, "手機必須提供避開底部手勢區的快速選單");
+assert.match(mobileCommandSource, /window\.addEventListener\("pointermove", handlePointerMove/, "手機快速選單按鈕必須支援拖曳移動");
+assert.match(mobileCommandSource, /className="mobile-command-dismiss"/, "手機快速選單必須支援點選外部關閉");
+assert.doesNotMatch(mobileCommandSource, />\s*收合\s*</, "手機快速選單不得保留額外收合按鈕");
+assert.match(mobileCommandPositionSource, /MOBILE_COMMAND_POSITION_STORAGE_KEY/, "手機快速選單位置必須保存於裝置端");
+assert.doesNotMatch(precisionUiSource, /text-align:\s*left/, "全域介面不得退回靠左對齊規則");
 assert.match(appSource, /CoverageConfigurationOverview/, "覆蓋分析必須提供精簡摘要與詳細視窗");
 assert.match(appSource, /if \(!currentUser\) return;[\s\S]+fetchGasBootstrapData\(\)/, "未登入時不得載入 bootstrap 主檔");
 assert.match(appSource, /setCurrentUser\(null\);[\s\S]{0,160}setData\(emptyBootstrap\);/, "登出或 session 逾時後必須清空主檔資料");
