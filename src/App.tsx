@@ -4050,7 +4050,7 @@ export default function App() {
               </div>
 
               {manualDisplayRules.length ? (
-                <div className="grid two">
+                <div className="grid two manual-schedule-station-grid">
                   {manualDisplayRules.map((rule) => {
                     const station = data.stations.find((item) => item.id === rule.stationId);
                     const selectedIds = manualAssignments[rule.stationId] || [];

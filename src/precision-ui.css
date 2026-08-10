@@ -1203,6 +1203,77 @@ body {
   }
 }
 
+/* 班表試排依卡片寬度自動排版，避免全域雙欄比例壓縮站點與姓名。 */
+#root .app-shell.app-operational-v3 .content:not(:has(.home-flat-page)) .grid.two.manual-schedule-station-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  align-items: stretch !important;
+}
+
+.app-operational-v3 .manual-schedule-station {
+  display: flex !important;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: visible !important;
+}
+
+.app-operational-v3 .manual-schedule-station.is-filled {
+  background: var(--ros-success-soft) !important;
+}
+
+.app-operational-v3 .manual-schedule-station.is-overfilled {
+  background: var(--ros-primary-soft) !important;
+}
+
+.app-operational-v3 .manual-schedule-station.is-short {
+  background: var(--ros-danger-soft) !important;
+}
+
+.app-operational-v3 .manual-schedule-station.is-neutral {
+  background: var(--ros-surface) !important;
+}
+
+.app-operational-v3 .manual-schedule-station .manual-schedule-group:last-of-type {
+  flex: 1;
+}
+
+.app-operational-v3 .manual-schedule-list {
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)) !important;
+  grid-auto-rows: minmax(48px, auto);
+  align-items: stretch !important;
+}
+
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row {
+  min-width: 0 !important;
+  min-height: 48px !important;
+  height: auto !important;
+  align-self: stretch !important;
+  padding: 7px 8px !important;
+}
+
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row.training-candidate,
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row.training-assigned {
+  min-height: 64px !important;
+  height: auto !important;
+}
+
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row strong,
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row span {
+  width: 100% !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+  overflow: visible !important;
+  overflow-wrap: anywhere;
+  text-overflow: clip !important;
+  line-height: 1.25 !important;
+}
+
+@media (max-width: 900px) {
+  #root .app-shell.app-operational-v3 .content:not(:has(.home-flat-page)) .grid.two.manual-schedule-station-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
 @keyframes command-panel-enter {
   from { opacity: 0; transform: translate(-50%, -47%) scale(0.98); filter: blur(4px); }
   to { opacity: 1; transform: translate(-50%, -50%) scale(1); filter: blur(0); }

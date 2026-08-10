@@ -11,10 +11,10 @@
 .app-toast { top: calc(env(safe-area-inset-top, 0px) + 10px); width: calc(100vw - 20px); padding: 12px 14px; border-radius: 16px; } .app-toast span { font-size: 15px; } }
                .manual-schedule-station .manual-schedule-group { margin-top: 14px; }
                .manual-schedule-station .manual-schedule-group h4 { margin: 0 0 8px; font-size: 19px; font-weight: 950; color: #06142f; }
-               .manual-schedule-list { display: grid !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; gap: 7px !important; max-height: none !important; overflow: visible !important; }
-               .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 46px !important; height: 46px !important; display: grid !important; place-items: center !important; align-content: center !important; justify-content: center !important; text-align: center !important; touch-action: manipulation; padding: 4px 8px !important; border-radius: 18px !important; line-height: 1 !important; }
-               .manual-schedule-list .list-row strong { display: block !important; max-width: 100% !important; font-size: 15px !important; line-height: 1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; margin: 0 !important; transform: none !important; }
-               .manual-schedule-list .list-row span { display: block !important; max-width: 100% !important; margin-top: 2px !important; font-size: 10px !important; line-height: 1.1 !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; }
+               .manual-schedule-list { display: grid !important; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)) !important; grid-auto-rows: minmax(48px, auto); align-items: stretch !important; gap: 7px !important; max-height: none !important; overflow: visible !important; }
+               .manual-schedule-list .list-row { width: 100% !important; min-width: 0 !important; min-height: 48px !important; height: auto !important; align-self: stretch !important; display: grid !important; place-items: center !important; align-content: center !important; justify-content: center !important; text-align: center !important; touch-action: manipulation; padding: 7px 8px !important; border-radius: 18px !important; line-height: 1.2 !important; }
+               .manual-schedule-list .list-row strong { display: block !important; width: 100% !important; max-width: 100% !important; font-size: 15px !important; line-height: 1.25 !important; white-space: normal !important; overflow: visible !important; overflow-wrap: anywhere; text-overflow: clip !important; margin: 0 !important; transform: none !important; }
+               .manual-schedule-list .list-row span { display: block !important; width: 100% !important; max-width: 100% !important; margin-top: 2px !important; font-size: 10px !important; line-height: 1.25 !important; white-space: normal !important; overflow: visible !important; overflow-wrap: anywhere; text-overflow: clip !important; }
                .manual-schedule-list .list-row.active { background: #2563eb; color: #fff; border-color: #2563eb; }
                .manual-schedule-list .list-row.active strong, .manual-schedule-list .list-row.active span { color: #fff; }
                .manual-schedule-list .list-row.conflict { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
@@ -25,7 +25,7 @@
                .manual-schedule-list .list-row.conflict.training-candidate strong,
                .manual-schedule-list .list-row.conflict.training-candidate span { color: #991b1b; }
                .manual-schedule-list .list-row.training-candidate,
-               .manual-schedule-list .list-row.training-assigned { min-height: 62px !important; height: 62px !important; row-gap: 3px !important; }
+               .manual-schedule-list .list-row.training-assigned { min-height: 64px !important; height: auto !important; row-gap: 3px !important; }
                .manual-schedule-list .list-row.training-assigned { background: #facc15 !important; color: #713f12 !important; border-color: #eab308 !important; box-shadow: 0 10px 22px rgba(234, 179, 8, .24); }
                .manual-schedule-list .list-row.training-assigned strong,
                .manual-schedule-list .list-row.training-assigned span { color: #713f12; }
@@ -211,11 +211,11 @@
                @media (max-width: 900px) {
                  .manual-floating-tip-react { right: 10px; bottom: 12px; font-size: 18px; }
                  .manual-schedule-station .manual-schedule-group h4 { font-size: 18px; }
-                 .manual-schedule-list { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: 6px !important; }
+                 .manual-schedule-list { grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)) !important; gap: 6px !important; }
                  .officer-relief-tags { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-                 .manual-schedule-list .list-row { min-height: 44px !important; height: 44px !important; padding: 4px 6px !important; border-radius: 16px !important; }
+                 .manual-schedule-list .list-row { min-height: 48px !important; height: auto !important; padding: 7px 6px !important; border-radius: 16px !important; }
                  .manual-schedule-list .list-row.training-candidate,
-                 .manual-schedule-list .list-row.training-assigned { min-height: 58px !important; height: 58px !important; }
+                 .manual-schedule-list .list-row.training-assigned { min-height: 64px !important; height: auto !important; }
                  .manual-schedule-list .list-row strong { font-size: 14px !important; }
                  .manual-officer-row { grid-template-columns: 1fr; gap: 6px; }
                  .manual-officer-title { font-size: 20px; padding-top: 0; }

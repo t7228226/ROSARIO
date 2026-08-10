@@ -875,7 +875,7 @@ body {
 
   .app-operational-v3 .manual-schedule-list {
     display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)) !important;
     gap: 8px !important;
   }
 
@@ -981,7 +981,7 @@ body {
 
 @media (max-width: 480px) {
   .app-operational-v3 .manual-schedule-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)) !important;
   }
 
   .app-operational-v3 .manual-schedule-list .list-row strong {
