@@ -2,9 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
-import "./upgrade.css";
 import "./app-shell.css";
 import "./manual-schedule.css";
+import "./upgrade.css";
+import "./precision-ui.css";
 
 declare global {
   interface Window {

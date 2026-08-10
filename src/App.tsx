@@ -1,11 +1,18 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import EntranceLayout from "./components/EntranceLayout";
 import Layout from "./components/Layout";
+import MobileCommandMenu from "./components/MobileCommandMenu";
+import ThemePicker from "./components/ThemePicker";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import AppDialog, { DialogShell } from "./components/ui/AppDialog";
 import { appEnvironment } from "./config/environment";
 import { emptyBootstrap, sanitizeBootstrapData } from "./domain/bootstrap/sanitizeBootstrap";
 import { buildPersonProfilePayload, createEmptyPersonDraft, prepareNewPerson } from "./domain/people/newPerson";
+import {
+  readStoredUiTheme,
+  storeUiTheme,
+  type UiThemeKey,
+} from "./domain/preferences/uiTheme";
 import {
   buildRolePermissionMapsFromSaved,
   databasePermissionItems,
@@ -22,6 +29,9 @@ import {
 } from "./domain/workforce/assignmentState";
 import type { CoverageResilienceResult } from "./domain/workforce/resilience";
 import { auditScheduleSafety } from "./domain/workforce/scheduleSafety";
+import CoverageConfigurationOverview, {
+  type CoverageConfigurationRow,
+} from "./features/gap-analysis/CoverageConfigurationOverview";
 import {
   fetchGasBootstrapData,
   fetchGasPermissionConfig,
@@ -261,6 +271,8 @@ export default function App() {
   const [showBackToTop, setShowBackToTop] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>(() => getViewportMode());
   const [mobileDetailModal, setMobileDetailModal] = useState<MobileDetailModal>(null);
+  const [mobileCommandOpen, setMobileCommandOpen] = useState(false);
+  const [uiTheme, setUiTheme] = useState<UiThemeKey>(() => readStoredUiTheme(typeof window === "undefined" ? undefined : window.localStorage));
   const contentRef = useRef<HTMLElement | null>(null);
   const personDetailRef = useRef<HTMLDivElement | null>(null);
   const stationDetailRef = useRef<HTMLDivElement | null>(null);
@@ -296,6 +308,7 @@ export default function App() {
   const [gapShift, setGapShift] = useState<TeamName>("婷芬班");
   const [gapDay, setGapDay] = useState<ShiftMode>("當班");
   const [gapHelpOpen, setGapHelpOpen] = useState(false);
+  const [gapConfigurationDetailsOpen, setGapConfigurationDetailsOpen] = useState(false);
   const [gapAbsentIds, setGapAbsentIds] = useState<string[]>([]);
   const [gapAbsentDialogOpen, setGapAbsentDialogOpen] = useState(false);
   const [gapAbsentKeyword, setGapAbsentKeyword] = useState("");
@@ -416,6 +429,24 @@ export default function App() {
     const timer = window.setTimeout(() => setFlash(""), toastDurationMs);
     return () => window.clearTimeout(timer);
   }, [flash, toastDurationMs]);
+
+  useEffect(() => {
+    document.documentElement.dataset.uiTheme = uiTheme;
+    storeUiTheme(uiTheme, window.localStorage);
+  }, [uiTheme]);
+
+  function changeUiTheme(nextTheme: UiThemeKey) {
+    if (nextTheme === uiTheme) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const viewTransitionDocument = document as Document & {
+      startViewTransition?: (update: () => void) => { finished: Promise<void> };
+    };
+    if (!reducedMotion && viewTransitionDocument.startViewTransition) {
+      viewTransitionDocument.startViewTransition(() => setUiTheme(nextTheme));
+      return;
+    }
+    setUiTheme(nextTheme);
+  }
 
   useEffect(() => {
     const storedVersion = window.localStorage.getItem(appVersionStorageKey);
@@ -913,6 +944,49 @@ export default function App() {
     () => gapAbsentIds.length ? gapAttendance.support.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.support,
     [gapAbsentIds, gapAttendance.support]
   );
+  const gapConfigurationRows = useMemo<CoverageConfigurationRow[]>(() => {
+    const supportIds = new Set(gapDisplayAttendanceSupport.map((person) => person.id));
+    return gapRules.map((rule) => {
+      const required = getRuleNeed(rule, gapDay);
+      const station = data.stations.find((item) => item.id === rule.stationId);
+      const coverage = getStationCoverage(rule.stationId, required, gapDisplayAttendanceAll, gapDisplayAttendanceSupport, gapDisplayQualifications);
+      const row = gapDisplayCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+      const beforeRow = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
+      const assigned = (row?.assignedIds || []).map((id) => {
+        const person = data.people.find((item) => item.id === id);
+        return {
+          id,
+          name: person?.name || id,
+          kind: person && isSupportOfficerPerson(person) ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
+        };
+      });
+      return {
+        stationId: rule.stationId,
+        stationName: station?.name || rule.stationId,
+        required,
+        assigned,
+        shortage: row?.shortage || 0,
+        ownQualified: coverage.ownQualified,
+        supportQualified: coverage.supportQualified,
+        totalQualified: coverage.qualified,
+        training: coverage.training,
+        status: row?.shortage ? "缺口" as const : row?.bottleneck ? "瓶頸" as const : "穩定" as const,
+        supportQualifiedNames: coverage.supportQualifiedIds.map((id) => data.people.find((person) => person.id === id)?.name || id),
+        changedBySimulation: Boolean(gapTrainingSimulationAnalysis && row && row.shortage !== (beforeRow?.shortage || 0)),
+      };
+    });
+  }, [
+    data.people,
+    data.stations,
+    gapActiveCoverageAnalysis.rows,
+    gapDay,
+    gapDisplayAttendanceAll,
+    gapDisplayAttendanceSupport,
+    gapDisplayCoverageAnalysis.rows,
+    gapDisplayQualifications,
+    gapRules,
+    gapTrainingSimulationAnalysis,
+  ]);
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
@@ -1504,7 +1578,7 @@ export default function App() {
       setPeopleSearchKeyword(created.id);
       setNewPersonOpen(false);
       setNewPersonDraft(createEmptyPersonDraft());
-      setFlashMessage(`已新增 ${created.name}（${created.id}），並寫入人員主表。`);
+      setFlashMessage(`已新增 ${created.name}（${created.id}），並同步寫入人員主表與站點矩陣。`);
     } catch (error) {
       setFlashMessage(`新增人員失敗：${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -2961,7 +3035,7 @@ export default function App() {
               <div className="mobile-modal-header upgraded-modal-header">
                 <div>
                   <strong id="new-person-title">新增人員</strong>
-                  <small>{appEnvironment.writesEnabled ? "儲存後會新增至人員主表" : "升級測試版僅檢查內容，不會寫入正式資料"}</small>
+                  <small>{appEnvironment.writesEnabled ? "儲存後會同步新增至人員主表與站點矩陣" : "升級測試版僅檢查內容，不會寫入正式資料"}</small>
                 </div>
               </div>
               <div className="mobile-modal-body upgraded-modal-body">
@@ -3005,7 +3079,7 @@ export default function App() {
 
   return (
     <>
-      <div className="app-shell app-theme-glass app-font-system app-operational-v3">
+      <div className={`app-shell app-theme-${uiTheme} app-font-system app-operational-v3`} data-theme={uiTheme}>
         <aside className="sidebar">
           <div className="brand-card">
             <div className="brand-kicker">ROSARIO</div>
@@ -3034,6 +3108,9 @@ export default function App() {
                 </button>
               </form>
             )}
+          </div>
+          <div className="desktop-theme-picker">
+            <ThemePicker value={uiTheme} onChange={changeUiTheme} />
           </div>
           <nav className="nav-list" aria-label="主要功能">
             {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => navigateToPage(item.key)}>{item.label}</button>)}
@@ -3822,80 +3899,21 @@ export default function App() {
                     </div>
                   ) : null}
 
-                  <div className="panel">
-                    <div className="panel-header">
-                      <h3>{gapTrainingSimulationAnalysis ? "情境模擬配置明細" : gapAbsentIds.length ? "缺勤後配置明細" : "全站配置明細"}</h3>
-                      <span>{gapTrainingSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}</span>
-                    </div>
-                    <p className="muted">
-                      {gapTrainingSimulationAnalysis
-                        ? "此表已套用上方補訓、幹部導入與缺勤條件，最佳指派、缺口與合格人數都會跟著模擬狀態更新。"
-                        : gapAbsentIds.length
-                          ? "此表已排除目前模擬缺勤的人員，方便核對缺勤後每站是否仍有人可頂。"
-                          : "此表顯示目前班別與日期的原始全站分析。"}
-                    </p>
-                    <div className="table-wrap">
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>站點</th>
-                          <th>最低需求</th>
-                          <th>{gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}</th>
-                          <th>{gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全站缺口"}</th>
-                          <th>本班合格</th>
-                          <th>支援合格</th>
-                          <th>總合格</th>
-                          <th>訓練中</th>
-                          <th>狀態</th>
-                          <th>支援合格人員</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {gapRules.map((rule) => {
-                          const station = data.stations.find((item) => item.id === rule.stationId);
-                          const required = getRuleNeed(rule, gapDay);
-                          const coverage = getStationCoverage(rule.stationId, required, gapDisplayAttendanceAll, gapDisplayAttendanceSupport, gapDisplayQualifications);
-                          const row = gapDisplayCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
-                          const beforeRow = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
-                          const beforeShortage = beforeRow?.shortage || 0;
-                          const supportPeople = coverage.supportQualifiedIds.map((id) => data.people.find((p) => p.id === id) || null);
-                          const assignedIds = row?.assignedIds || [];
-                          const assignedPeople = assignedIds.map((id) => data.people.find((p) => p.id === id) || null);
-                          const isChangedBySimulation = Boolean(gapTrainingSimulationAnalysis && row && row.shortage !== beforeShortage);
-                          return (
-                            <tr key={`${rule.team}-${rule.stationId}`} className={row?.shortage ? "danger-row" : row?.bottleneck || isChangedBySimulation ? "warning-row" : ""}>
-                              <td>{station?.name || rule.stationId}</td>
-                              <td>{required}</td>
-                              <td>
-                                <span className="assigned-name-tags">
-                                  {assignedIds.length ? assignedIds.map((id, index) => {
-                                    const person = assignedPeople[index];
-                                    const isSupportWorker = gapDisplayAttendanceSupport.some((supportPerson) => supportPerson.id === id);
-                                    return <span key={id} className={person && isSupportOfficerPerson(person) ? "officer-support-name" : isSupportWorker ? "support-assignment-name" : ""}>{person?.name || id}</span>;
-                                  }) : "-"}
-                                </span>
-                              </td>
-                              <td>{row?.shortage ?? 0}</td>
-                              <td>{coverage.ownQualified}</td>
-                              <td>{coverage.supportQualified}</td>
-                              <td>{coverage.qualified}</td>
-                              <td>{coverage.training}</td>
-                              <td>{row?.shortage ? "缺口" : row?.bottleneck ? "瓶頸" : "穩定"}</td>
-                              <td>
-                                <span className="assigned-name-tags">
-                                  {coverage.supportQualifiedIds.length ? coverage.supportQualifiedIds.map((id, index) => {
-                                    const person = supportPeople[index];
-                                    return <span key={id} className="support-assignment-name">{person?.name || id}</span>;
-                                  }) : "-"}
-                                </span>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                    </div>
-                  </div>
+                  <CoverageConfigurationOverview
+                    title={gapTrainingSimulationAnalysis ? "情境模擬配置" : gapAbsentIds.length ? "缺勤後配置" : "全站配置"}
+                    contextLabel={gapTrainingSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}
+                    description={gapTrainingSimulationAnalysis
+                      ? "已套用補訓、幹部導入與缺勤條件；摘要只顯示需要關注的站點。"
+                      : gapAbsentIds.length
+                        ? "已排除模擬缺勤人員；摘要只顯示缺口、瓶頸與配置變動。"
+                        : "先查看全站結論與風險站點，需要核對人員來源時再開啟詳細資料。"}
+                    assignmentLabel={gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}
+                    shortageLabel={gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全站缺口"}
+                    rows={gapConfigurationRows}
+                    detailsOpen={gapConfigurationDetailsOpen}
+                    onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
+                    onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
+                  />
                 </>
               ) : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}
 
@@ -4560,6 +4578,16 @@ export default function App() {
           {false && page === "smart-schedule" ? null : null}
           {showBackToTop ? <button type="button" className="back-to-top" onClick={() => scrollToTop()}>回到頂部</button> : null}
         </main>
+        <MobileCommandMenu
+          open={mobileCommandOpen}
+          page={page}
+          items={allowedNav}
+          theme={uiTheme}
+          onToggle={() => setMobileCommandOpen((current) => !current)}
+          onNavigate={navigateToPage}
+          onThemeChange={changeUiTheme}
+          onTop={() => scrollToTop()}
+        />
       </div>
 
       {appVersionBlocked ? (

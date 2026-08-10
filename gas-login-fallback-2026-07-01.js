@@ -45,8 +45,8 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-08-10-004',
-  MIN_WRITE_VERSION: '2026-08-10-004',
+  APP_VERSION: '2026-08-10-006',
+  MIN_WRITE_VERSION: '2026-08-10-006',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   WRITE_LOCK_TIMEOUT_MS: 20000,
@@ -1129,7 +1129,11 @@ function normalizeStationKey_(value) {
 
 function isMatrixBaseColumn_(header) {
   const key = normalizeStationKey_(header);
-  return ['工號', '姓名', '班別', '職務', '國籍', '備註', '更新時間', '更新人'].indexOf(key) >= 0;
+  return [
+    '工號', '姓名', '班別', '職務', '職稱', '國籍',
+    '(A)第一天', '(A)第二天', '(B)第一天', '(B)第二天',
+    '在職狀態', '備註', '更新時間', '更新人',
+  ].indexOf(key) >= 0;
 }
 
 function findHeaderColumn_(headers, candidates) {
@@ -1189,6 +1193,97 @@ function getQualificationDetailDataStartRow_(ws) {
     return 3;
   }
   return 2;
+}
+
+function getQualificationMatrixPersonCell_(header, person, now) {
+  const key = normalizeStationKey_(header);
+  switch (key) {
+    case '工號':
+    case '員工工號':
+    case '人員工號': return { recognized: true, value: person.id };
+    case '姓名':
+    case '員工姓名':
+    case '人員姓名': return { recognized: true, value: person.name };
+    case '班別': return { recognized: true, value: person.shift };
+    case '職務':
+    case '職稱': return { recognized: true, value: person.role };
+    case '國籍': return { recognized: true, value: person.nationality };
+    case '(A)第一天': return { recognized: true, value: person.aDay1 };
+    case '(A)第二天': return { recognized: true, value: person.aDay2 };
+    case '(B)第一天': return { recognized: true, value: person.bDay1 };
+    case '(B)第二天': return { recognized: true, value: person.bDay2 };
+    case '在職狀態': return { recognized: true, value: person.employmentStatus };
+    case '備註': return { recognized: true, value: person.note };
+    case '更新時間': return { recognized: true, value: now };
+    case '更新人': return { recognized: true, value: '系統' };
+    default: return { recognized: false, value: '' };
+  }
+}
+
+function copyQualificationMatrixRowPresentation_(sheet, sourceRow, targetRow, columnCount) {
+  if (!sourceRow || sourceRow === targetRow || columnCount <= 0) return;
+  try {
+    const sourceRange = sheet.getRange(sourceRow, 1, 1, columnCount);
+    const targetRange = sheet.getRange(targetRow, 1, 1, columnCount);
+    if (typeof sourceRange.copyTo === 'function') {
+      sourceRange.copyTo(targetRange, { formatOnly: true });
+    }
+    if (typeof sourceRange.getDataValidations === 'function' && typeof targetRange.setDataValidations === 'function') {
+      targetRange.setDataValidations(sourceRange.getDataValidations());
+    }
+  } catch (error) {
+    console.warn('複製 03_站點矩陣列格式失敗：' + (error && error.message ? error.message : String(error)));
+  }
+}
+
+function ensureQualificationMatrixPersonRow_(person) {
+  const matrixInfo = readQualificationMatrix_();
+  const employeeId = normalizeString_(person && person.id).toUpperCase();
+  const employeeName = normalizeString_(person && person.name);
+  if (!employeeId || !employeeName) {
+    throw new Error('建立 03_站點矩陣人員列時缺少工號或姓名');
+  }
+
+  const matchingRows = [];
+  for (var r = matrixInfo.headerRowIndex + 1; r < matrixInfo.values.length; r++) {
+    if (normalizeString_(matrixInfo.values[r][matrixInfo.employeeIdCol]).toUpperCase() === employeeId) {
+      matchingRows.push(r);
+    }
+  }
+  if (matchingRows.length > 1) {
+    throw new Error('03_站點矩陣存在重複工號：' + employeeId);
+  }
+
+  const now = new Date();
+  if (matchingRows.length === 1) {
+    const rowNumber = matchingRows[0] + 1;
+    matrixInfo.headers.forEach(function (header, colIndex) {
+      const cell = getQualificationMatrixPersonCell_(header, person, now);
+      if (cell.recognized) matrixInfo.sheet.getRange(rowNumber, colIndex + 1).setValue(cell.value || '');
+    });
+    return { created: false, rowNumber: rowNumber };
+  }
+
+  const rowValues = matrixInfo.headers.map(function (header) {
+    const cell = getQualificationMatrixPersonCell_(header, person, now);
+    return cell.recognized ? (cell.value || '') : '';
+  });
+  rowValues[matrixInfo.employeeIdCol] = employeeId;
+  rowValues[matrixInfo.employeeNameCol] = employeeName;
+
+  let presentationSourceRow = 0;
+  for (var sourceIndex = matrixInfo.values.length - 1; sourceIndex > matrixInfo.headerRowIndex; sourceIndex--) {
+    const sourceEmployeeId = normalizeString_(matrixInfo.values[sourceIndex][matrixInfo.employeeIdCol]);
+    if (sourceEmployeeId && sourceEmployeeId !== '工號' && sourceEmployeeId.indexOf('範例') < 0 && sourceEmployeeId.indexOf('說明') < 0) {
+      presentationSourceRow = sourceIndex + 1;
+      break;
+    }
+  }
+
+  matrixInfo.sheet.appendRow(rowValues);
+  const rowNumber = matrixInfo.sheet.getLastRow();
+  copyQualificationMatrixRowPresentation_(matrixInfo.sheet, presentationSourceRow, rowNumber, matrixInfo.headers.length);
+  return { created: true, rowNumber: rowNumber };
 }
 
 function setQualificationMatrixCell_(employeeId, stationId, status) {
@@ -1474,11 +1569,34 @@ function createPerson_(payload) {
     };
   }
 
+  const personRowNumber = peopleSheet.getLastRow() + 1;
   peopleSheet.appendRow(peopleHeaders.map(function (header) {
     return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';
   }));
 
-  return { ok: true, message: '人員已新增', person: person };
+  let matrixResult;
+  try {
+    matrixResult = ensureQualificationMatrixPersonRow_(person);
+  } catch (error) {
+    try {
+      peopleSheet.deleteRow(personRowNumber);
+    } catch (rollbackError) {
+      throw new Error(
+        '新增人員時站點矩陣同步失敗，且人員主表回滾失敗，請立即人工檢查：' +
+        (error && error.message ? error.message : String(error)) + '；回滾錯誤：' +
+        (rollbackError && rollbackError.message ? rollbackError.message : String(rollbackError))
+      );
+    }
+    throw new Error('新增人員未完成：站點矩陣同步失敗，已回滾人員主表。' + (error && error.message ? error.message : String(error)));
+  }
+
+  return {
+    ok: true,
+    message: matrixResult.created ? '人員已新增並建立站點矩陣列' : '人員已新增並確認站點矩陣列',
+    person: person,
+    matrixRowCreated: matrixResult.created,
+    matrixRowNumber: matrixResult.rowNumber,
+  };
 }
 
 /** =========================

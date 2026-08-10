@@ -4,11 +4,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, gasClientSource, gasSource] = await Promise.all([
+const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, precisionUiSource, gasClientSource, gasSource] = await Promise.all([
   readFile(path.join(root, "src/config/writeActions.ts"), "utf8"),
   readFile(path.join(root, "src/App.tsx"), "utf8"),
   readFile(path.join(root, "src/domain/bootstrap/sanitizeBootstrap.ts"), "utf8"),
   readFile(path.join(root, "src/main.tsx"), "utf8"),
+  readFile(path.join(root, "src/precision-ui.css"), "utf8"),
   readFile(path.join(root, "src/lib/gasClient.ts"), "utf8"),
   readFile(path.join(root, "gas-login-fallback-2026-07-01.js"), "utf8"),
 ]);
@@ -45,16 +46,22 @@ assert.match(gasSource, /setCellIfExists_\([^\n]+?'登入密碼', hashPassword_\
 const createPersonStart = gasSource.indexOf("function createPerson_");
 const validateOnlyIndex = gasSource.indexOf("validatedOnly: true", createPersonStart);
 const appendPersonIndex = gasSource.indexOf("peopleSheet.appendRow", createPersonStart);
+const ensureMatrixIndex = gasSource.indexOf("ensureQualificationMatrixPersonRow_(person)", createPersonStart);
+const rollbackPersonIndex = gasSource.indexOf("peopleSheet.deleteRow(personRowNumber)", createPersonStart);
 assert.ok(
   createPersonStart >= 0 && validateOnlyIndex > createPersonStart && appendPersonIndex > validateOnlyIndex,
   "createPerson 必須在寫入前支援 validateOnly 驗證"
+);
+assert.ok(
+  ensureMatrixIndex > appendPersonIndex && rollbackPersonIndex > ensureMatrixIndex,
+  "createPerson 必須同步建立站點矩陣列，失敗時回滾人員主表"
 );
 
 assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operationStatus 查詢");
 assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
 assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
 assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
-assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-004'/, "舊版前端不得繞過可靠寫入");
+assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-10-006'/, "舊版前端不得繞過可靠寫入");
 assert.match(gasSource, /function authorizeWriteAction_\(/, "GAS 寫入前必須執行伺服器端授權");
 assert.match(gasSource, /const session = authorizeWriteAction_\([^;]+;/, "寫入端點不得只依賴前端權限");
 assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工作階段");
@@ -75,6 +82,11 @@ assert.doesNotMatch(appSource, /<style>\{`/, "App 不得重新放回大段內嵌
 assert.ok(appSource.split(/\r?\n/).length < 5000, "App 主檔應維持在 5000 行以下");
 assert.match(mainSource, /import "\.\/app-shell\.css";/, "主應用樣式必須由獨立 CSS 載入");
 assert.match(mainSource, /import "\.\/manual-schedule\.css";/, "班表試排樣式必須由獨立 CSS 載入");
+assert.match(mainSource, /import "\.\/precision-ui\.css";/, "全域設計系統必須由獨立 CSS 載入");
+assert.ok(mainSource.indexOf('import "./precision-ui.css";') > mainSource.indexOf('import "./upgrade.css";'), "全域設計系統必須最後載入，避免舊樣式覆蓋");
+assert.match(precisionUiSource, /html,[\s\S]+overflow-x: clip;/, "行動版必須裁切全頁水平溢位且不得建立額外捲動容器");
+assert.match(precisionUiSource, /\.mobile-command-center/, "手機必須提供避開底部手勢區的快速選單");
+assert.match(appSource, /CoverageConfigurationOverview/, "覆蓋分析必須提供精簡摘要與詳細視窗");
 assert.match(appSource, /if \(!currentUser\) return;[\s\S]+fetchGasBootstrapData\(\)/, "未登入時不得載入 bootstrap 主檔");
 assert.match(appSource, /setCurrentUser\(null\);[\s\S]{0,160}setData\(emptyBootstrap\);/, "登出或 session 逾時後必須清空主檔資料");
 assert.doesNotMatch(appSource, /setPermissionItemStates\(permissionItems\)/, "session 清理不得引用不存在的權限變數");
