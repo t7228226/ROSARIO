@@ -118,24 +118,26 @@ export function ReviewDetailView({
         <Info compact={compact} label="在職狀態" value={person.employmentStatus} />
         <Info compact={compact} label="備註" value={person.note || "-"} />
       </div>
-      <div className="form-grid compact-form">
-        <div>
-          <label className="field-label">站點</label>
-          <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
-            <option value="">請選擇站點</option>
-            {stations.map((station) => <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>)}
-          </select>
+      <section className="review-qualification-entry" aria-label="考核登記">
+        <div className="form-grid compact-form">
+          <div>
+            <label className="field-label">站點</label>
+            <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
+              <option value="">請選擇站點</option>
+              {stations.map((station) => <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="field-label">狀態</label>
+            <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>
+              {(["合格", "訓練中", "不可排", ""] as QualificationStatus[]).map((item) => (
+                <option key={item || "blank"} value={item}>{item || "空白"}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <label className="field-label">狀態</label>
-          <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>
-            {(["合格", "訓練中", "不可排", ""] as QualificationStatus[]).map((item) => (
-              <option key={item || "blank"} value={item}>{item || "空白"}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <div className="toolbar"><button className="primary" type="button" onClick={onSave}>確認並儲存</button></div>
+        <div className="toolbar"><button className="primary" type="button" onClick={onSave}>確認並儲存</button></div>
+      </section>
       <table className={compact ? "table compact-table" : "table"}>
         <thead><tr><th>站點</th><th>狀態</th><th>操作</th></tr></thead>
         <tbody>

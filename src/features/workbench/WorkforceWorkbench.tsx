@@ -64,7 +64,7 @@ export default function WorkforceWorkbench({
   return (
     <section className="workforce-workbench" aria-label="今日人力概況">
       <div className="workforce-context-bar">
-        <div>
+        <div className="workforce-context-title">
           <span className="workforce-eyebrow">今日人力概況</span>
           <strong>{team}・{mode}</strong>
         </div>

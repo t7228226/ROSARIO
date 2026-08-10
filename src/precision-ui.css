@@ -580,6 +580,101 @@ body {
   text-align: center !important;
 }
 
+/* Keep dashboard regions visually separate and center context across the full workbench. */
+.app-operational-v3 .workforce-workbench {
+  gap: 16px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.app-operational-v3 .workforce-context-bar {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: center;
+  gap: 14px;
+  padding: 16px 18px !important;
+  border: 1px solid var(--ros-border) !important;
+  border-radius: var(--ros-radius) !important;
+  background: var(--ros-surface) !important;
+  backdrop-filter: none;
+}
+
+.app-operational-v3 .workforce-context-title {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+}
+
+.app-operational-v3 .workforce-context-controls {
+  width: 100%;
+  justify-content: center;
+  justify-self: center;
+  flex-wrap: wrap;
+}
+
+.app-operational-v3 .workforce-metric-strip {
+  border: 1px solid var(--ros-border) !important;
+  border-radius: var(--ros-radius) !important;
+  overflow: hidden;
+}
+
+.app-operational-v3 .workforce-action-row {
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.app-operational-v3 .workforce-attention-section {
+  gap: 14px !important;
+  padding: 16px !important;
+}
+
+.app-operational-v3 .workforce-table-wrap {
+  border: 1px solid var(--ros-border) !important;
+  border-radius: 6px;
+}
+
+.app-operational-v3 .review-qualification-entry {
+  width: 100%;
+  display: grid;
+  gap: 14px;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--ros-border);
+  border-radius: var(--ros-radius);
+  background: var(--ros-surface-muted);
+}
+
+.app-operational-v3 .review-qualification-entry .form-grid {
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.app-operational-v3 .review-qualification-entry .form-grid > div,
+.app-operational-v3 .review-qualification-entry select {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+.app-operational-v3 .review-qualification-entry .toolbar {
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+.app-operational-v3 .review-qualification-entry .toolbar .primary {
+  width: min(100%, 360px) !important;
+}
+
+@media (min-width: 901px) and (max-width: 1150px) {
+  .app-operational-v3 .content:not(:has(.home-flat-page)) .grid.two {
+    grid-template-columns: minmax(230px, 0.82fr) minmax(320px, 1.18fr) !important;
+  }
+}
+
 .theme-picker {
   display: grid;
   gap: 10px;
@@ -870,6 +965,19 @@ body {
     padding: 14px !important;
     border-radius: var(--ros-radius) !important;
     overflow-x: auto;
+  }
+
+  .app-operational-v3 .workforce-context-bar {
+    padding: 14px !important;
+  }
+
+  .app-operational-v3 .review-qualification-entry {
+    margin: 14px 0;
+    padding: 14px;
+  }
+
+  .app-operational-v3 .review-qualification-entry .form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 
   .app-operational-v3 .toolbar {

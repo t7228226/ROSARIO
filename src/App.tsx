@@ -3285,7 +3285,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <div className="panel" ref={reviewDetailRef}>
+                <div className="panel review-detail-panel" ref={reviewDetailRef}>
                   {reviewSelectedPerson ? (
                     <ReviewDetailView
                       person={reviewSelectedPerson}
