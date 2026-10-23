@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { evaluateWorkforceScenario } from "../../domain/workforce";
+import { coverageConclusion } from "../../domain/workforce/conclusion";
 import {
   DAY_OPTIONS,
   getAttendanceForTeam,
@@ -57,6 +58,7 @@ export default function WorkforceWorkbench({
     [data.stations]
   );
   const shortageRows = result.rows.filter((row) => row.shortage > 0);
+  const conclusion = coverageConclusion(result.analysis.required, result.analysis.shortage, loading);
   const attentionRows = shortageRows.length
     ? shortageRows
     : result.rows.filter((row) => row.bottleneck).slice(0, 6);
@@ -87,8 +89,8 @@ export default function WorkforceWorkbench({
       <div className="workforce-metric-strip" aria-label="人力摘要">
         <div><span>總出勤</span><strong>{loading ? "..." : attendance.totalCount}</strong></div>
         <div><span>站點需求</span><strong>{loading ? "..." : result.analysis.required}</strong></div>
-        <div><span>作業覆蓋</span><strong>{loading ? "..." : result.analysis.assigned}</strong></div>
-        <div className={result.analysis.shortage > 0 ? "is-danger" : "is-success"}>
+        <div><span>作業覆蓋</span><strong>{loading ? "..." : result.analysis.required - result.analysis.shortage}</strong></div>
+        <div className={conclusion.state === "shortage" ? "is-danger" : conclusion.state === "covered" ? "is-success" : ""}>
           <span>全站缺口</span><strong>{loading ? "..." : result.analysis.shortage}</strong>
         </div>
         <div><span>尚未安排</span><strong>{loading ? "..." : result.unassignedIds.length}</strong></div>
@@ -107,8 +109,8 @@ export default function WorkforceWorkbench({
             <h3>{shortageRows.length ? "目前站點缺口" : "資格配置瓶頸"}</h3>
             <p>基礎作業人力排除領班、組長與主任；站長依資格正常計入。</p>
           </div>
-          <span className={result.analysis.shortage > 0 ? "workforce-status danger" : "workforce-status success"}>
-            {result.analysis.shortage > 0 ? `仍缺 ${result.analysis.shortage} 人` : "最低需求已覆蓋"}
+          <span className={`workforce-status ${conclusion.state === "shortage" ? "danger" : conclusion.state === "covered" ? "success" : ""}`}>
+            {conclusion.label}
           </span>
         </div>
 
@@ -133,7 +135,7 @@ export default function WorkforceWorkbench({
             </table>
           </div>
         ) : (
-          <p className="workforce-empty">目前沒有設定最低需求的站點，請先確認站點規則。</p>
+          <p className="workforce-empty">{conclusion.state === "covered" ? "目前最低需求均已覆蓋，未發現低備援站點。" : loading ? "正在載入分析資料。" : "目前沒有正數最低需求，請確認站點規則後再判讀覆蓋。"}</p>
         )}
       </section>
     </section>

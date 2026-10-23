@@ -2,6 +2,7 @@ import {
   analyzeStationCoverage,
   getApplicableRules,
   getAttendanceForTeam,
+  getCoverageQualificationStatus,
 } from "../../lib/selectors";
 import type { Person, Qualification } from "../../types";
 import type {
@@ -17,16 +18,6 @@ const officerRoles = new Set(["領班", "組長", "主任"]);
 
 function isOfficer(person: Person) {
   return officerRoles.has(String(person.role || "").trim());
-}
-
-function getQualificationStatus(
-  qualifications: Qualification[],
-  employeeId: string,
-  stationId: string
-) {
-  return qualifications.find(
-    (item) => item.employeeId === employeeId && item.stationId === stationId
-  )?.status || "";
 }
 
 function addSimulatedQualification(
@@ -143,7 +134,7 @@ export function evaluateWorkforceScenario(
       continue;
     }
 
-    const qualificationStatus = getQualificationStatus(
+    const qualificationStatus = getCoverageQualificationStatus(
       snapshot.qualifications,
       assignment.employeeId,
       assignment.stationId
@@ -188,6 +179,8 @@ export function evaluateWorkforceScenario(
     forcedAssignments,
     { excludeOfficersFromCoverage: true }
   );
+  violations.push(...analysis.violations);
+  analysis.fullyCovered = analysis.fullyCovered && violations.length === 0;
   const assignments = Object.fromEntries(
     analysis.rows.map((row) => [row.stationId, row.assignedIds])
   );

@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useId,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
@@ -14,6 +13,7 @@ import {
   type MobileCommandPosition,
 } from "../domain/preferences/mobileCommandPosition";
 import ThemePicker from "./ThemePicker";
+import { DialogShell } from "./ui/AppDialog";
 
 interface MobileCommandMenuProps {
   open: boolean;
@@ -44,7 +44,6 @@ export default function MobileCommandMenu({
   onThemeChange,
   onTop,
 }: MobileCommandMenuProps) {
-  const menuId = useId();
   const dragState = useRef<{
     pointerId: number;
     startX: number;
@@ -55,19 +54,17 @@ export default function MobileCommandMenu({
   } | null>(null);
   const suppressClick = useRef(false);
   const [dragging, setDragging] = useState(false);
+  const [idle, setIdle] = useState(false);
   const [position, setPosition] = useState<MobileCommandPosition>(() => {
     if (typeof window === "undefined") return { x: 12, y: 12 };
     return readStoredMobileCommandPosition(window.localStorage, getCurrentViewport());
   });
 
   useEffect(() => {
-    if (!open) return;
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") onToggle();
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onToggle, open]);
+    if (open || dragging) { setIdle(false); return; }
+    const timer = window.setTimeout(() => setIdle(true), 4000);
+    return () => window.clearTimeout(timer);
+  }, [open, dragging, position]);
 
   useEffect(() => {
     function handleResize() {
@@ -108,7 +105,13 @@ export default function MobileCommandMenu({
       const state = dragState.current;
       if (!state || state.pointerId !== event.pointerId) return;
       if (state.moved) {
-        storeMobileCommandPosition(state.current, window.localStorage);
+        const viewport = getCurrentViewport();
+        const next = clampMobileCommandPosition({
+          x: state.current.x < viewport.width / 2 ? 12 : viewport.width - 70,
+          y: state.current.y,
+        }, viewport);
+        setPosition(next);
+        storeMobileCommandPosition(next, window.localStorage);
         suppressNextClick();
       }
       dragState.current = null;
@@ -126,6 +129,7 @@ export default function MobileCommandMenu({
   }, []);
 
   function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    setIdle(false);
     if (event.button !== 0 || open) return;
     dragState.current = {
       pointerId: event.pointerId,
@@ -154,13 +158,12 @@ export default function MobileCommandMenu({
 
   return (
     <>
-      {open ? <button type="button" className="mobile-command-dismiss" aria-label="關閉快速選單" onClick={onToggle} /> : null}
       <div
-        className={`mobile-command-center${open ? " is-open" : ""}${dragging ? " is-dragging" : ""}`}
+        className={`mobile-command-center${open ? " is-open" : ""}${dragging ? " is-dragging" : ""}${idle ? " is-idle" : ""}${position.x < getCurrentViewport().width / 2 ? " edge-left" : " edge-right"}`}
         style={{ left: position.x, top: position.y }}
       >
         {open ? (
-          <aside id={menuId} className="mobile-command-panel" aria-label="快速選單">
+          <DialogShell open={open} title="快速選單" onClose={onToggle} backdropClassName="mobile-command-dismiss" panelClassName="mobile-command-panel" closeOnBackdrop>
             <div className="mobile-command-heading">
               <div>
                 <strong>快速選單</strong>
@@ -187,13 +190,12 @@ export default function MobileCommandMenu({
               <button type="button" onClick={() => { onTop(); onToggle(); }}>回到頁面頂部</button>
             </div>
             <ThemePicker value={theme} onChange={onThemeChange} compact />
-          </aside>
+          </DialogShell>
         ) : null}
         <button
           type="button"
           className="mobile-command-trigger"
           aria-expanded={open}
-          aria-controls={menuId}
           aria-label="開啟快速選單，可拖曳移動"
           title="拖曳可移動，點選開啟功能"
           onPointerDown={handlePointerDown}

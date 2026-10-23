@@ -1,4 +1,5 @@
 export const FRONT_WRITE_ACTIONS = new Set([
+  "acknowledgeOperation",
   "upsertQualification",
   "deleteQualification",
   "updateStationRule",

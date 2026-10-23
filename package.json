@@ -9,21 +9,24 @@
     "build": "vite build",
     "build:preview": "vite build --mode preview",
     "preview": "vite preview",
+    "build:qa": "node scripts/build-qa.mjs",
+    "serve:qa": "node scripts/serve-integration-qa.mjs",
     "check:contracts": "node scripts/check-contracts.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/domain/bootstrap/sanitizeBootstrap.test.ts src/domain/permissions/config.test.ts src/domain/preferences/mobileCommandPosition.test.ts src/domain/preferences/uiTheme.test.ts src/domain/workforce/assignmentState.test.ts src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/workforce/rotationGroups.test.ts src/domain/workforce/scheduleSafety.test.ts src/domain/people/newPerson.test.ts scripts/gas-auth.test.mjs scripts/gas-idempotency.test.mjs scripts/gas-person-matrix.test.mjs",
-    "test:watch": "tsx --test --watch src/domain/bootstrap/sanitizeBootstrap.test.ts src/domain/permissions/config.test.ts src/domain/preferences/mobileCommandPosition.test.ts src/domain/preferences/uiTheme.test.ts src/domain/workforce/assignmentState.test.ts src/domain/workforce/engine.test.ts src/domain/workforce/resilience.test.ts src/domain/workforce/rotationGroups.test.ts src/domain/workforce/scheduleSafety.test.ts src/domain/people/newPerson.test.ts"
+    "typecheck": "node scripts/check-types.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:watch": "node scripts/run-tests.mjs --watch"
   },
   "dependencies": {
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.1.2",
     "tsx": "^4.23.1",
     "typescript": "^5.8.3",
-    "vite": "^5.4.10"
+    "vite": "^8.3.5"
   }
 }

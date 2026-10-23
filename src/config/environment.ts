@@ -1,3 +1,5 @@
+import release from "../../release.json";
+
 const fallbackGasEndpoint =
   "https://script.google.com/macros/s/AKfycby5fl0fRqY7gPjLSaVlyEGBkAYUMd0CgF8-WwWkwpALYJhTESryOE-Jdbh2SbarF1OD8A/exec";
 
@@ -16,6 +18,6 @@ export const appEnvironment = {
   gasEndpoint: String(import.meta.env.VITE_GAS_API_URL || fallbackGasEndpoint).trim(),
   version: String(
     import.meta.env.VITE_APP_VERSION ||
-      "2026-08-11-011"
+      release.version
   ).trim(),
 } as const;

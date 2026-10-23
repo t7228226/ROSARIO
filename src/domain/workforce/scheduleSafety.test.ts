@@ -46,7 +46,7 @@ describe("auditScheduleSafety", () => {
 
   it("訓練與幹部支援需要確認，但不會在站點完整時阻擋預覽", () => {
     const result = auditScheduleSafety({
-      rules,
+      rules: rules.map((rule) => ({ ...rule, trainingCanFill: true })),
       assignments: { A: ["P1"] },
       officerStations: { O1: "B" },
       sensitiveSupportIds: ["O1"],
@@ -59,5 +59,73 @@ describe("auditScheduleSafety", () => {
     assert.equal(result.requiresAcknowledgement, true);
     assert.equal(result.trainingAssignments.length, 1);
     assert.equal(result.officerAssignments.length, 1);
+  });
+
+  it("separates physical placements, formal qualifications and permitted trainees", () => {
+    const result = auditScheduleSafety({
+      rules: [{ stationId: "A", minRequired: 2, trainingCanFill: true }],
+      assignments: { A: ["Q", "T"] }, attendanceIds: ["Q", "T"],
+      qualifications: [{ employeeId: "Q", stationId: "A", status: "合格" }, { employeeId: "T", stationId: "A", status: "訓練中" }],
+    });
+    assert.equal(result.canPreview, true);
+    assert.deepEqual(result.stationChecks[0], { stationId: "A", required: 2, assigned: 2, qualified: 1, training: 1, eligibleTraining: 1, covered: 2, shortage: 0 });
+    assert.equal(result.requiresAcknowledgement, true);
+  });
+
+  it("blocks training from satisfying a rule that does not allow it", () => {
+    const result = auditScheduleSafety({
+      rules: [{ stationId: "A", minRequired: 1, trainingCanFill: false }], assignments: { A: ["T"] },
+      qualifications: [{ employeeId: "T", stationId: "A", status: "訓練中" }], attendanceIds: ["T"],
+    });
+    assert.equal(result.canPreview, false);
+    assert.equal(result.stationChecks[0].qualified, 0);
+    assert.equal(result.stationChecks[0].training, 1);
+    assert.equal(result.stationChecks[0].covered, 0);
+    assert.equal(result.totalShortage, 1);
+  });
+
+  it("checks station-leader qualifications and detects trainees without caller labels", () => {
+    const result = auditScheduleSafety({
+      rules, assignments: { A: ["T"] }, officerStations: { L: "B" }, attendanceIds: ["T", "L"],
+      qualifications: [{ employeeId: "T", stationId: "A", status: "訓練中" }, { employeeId: "L", stationId: "B", status: "不可排" }],
+    });
+    assert.equal(result.canPreview, false);
+    assert.equal(result.totalShortage, 2);
+    assert.equal(result.trainingAssignments.length, 1);
+    assert.ok(result.invalidAssignments.some((item) => item.employeeId === "L" && item.code === "BLOCKED_QUALIFICATION"));
+  });
+
+  it("does not count unavailable, out-of-attendance or inactive people even in extra duties", () => {
+    const result = auditScheduleSafety({
+      rules, assignments: { A: ["ABSENT"], B: ["OUTSIDER"] }, attendanceIds: ["ABSENT", "INACTIVE"],
+      unavailableIds: ["ABSENT"], extraWorks: [{ id: "X", workName: "X", personIds: ["INACTIVE"] }],
+      qualifications: [{ employeeId: "ABSENT", stationId: "A", status: "合格" }, { employeeId: "OUTSIDER", stationId: "B", status: "合格" }],
+      people: [
+        { id: "ABSENT", role: "技術員", employmentStatus: "在職" },
+        { id: "OUTSIDER", role: "技術員", employmentStatus: "在職" },
+        { id: "INACTIVE", role: "技術員", employmentStatus: "離職" },
+      ],
+    });
+    assert.equal(result.totalShortage, 2);
+    assert.equal(result.invalidAssignments.length, 3);
+    assert.equal(result.canPreview, false);
+    assert.deepEqual(result.unassignedIds, []);
+  });
+
+  it("treats explicit empty qualification and attendance lists as authoritative", () => {
+    const result = auditScheduleSafety({ rules: [rules[0]], assignments: { A: ["Q"] }, qualifications: [], attendanceIds: [] });
+    assert.equal(result.canPreview, false);
+    assert.equal(result.stationChecks[0].covered, 0);
+    assert.equal(result.qualificationVerified, true);
+    assert.equal(result.attendanceVerified, true);
+  });
+
+  it("requires acknowledgement for known support officers without a separate caller label", () => {
+    const result = auditScheduleSafety({ rules: [rules[0]], assignments: {}, officerStations: { O: "A" },
+      attendanceIds: ["O"], qualifications: [{ employeeId: "O", stationId: "A", status: "合格" }],
+      people: [{ id: "O", role: "領班", employmentStatus: "在職" }] });
+    assert.equal(result.canPreview, true);
+    assert.equal(result.requiresAcknowledgement, true);
+    assert.deepEqual(result.officerAssignments, [{ employeeId: "O", stationId: "A" }]);
   });
 });

@@ -3,10 +3,14 @@ import EntranceLayout from "./components/EntranceLayout";
 import Layout from "./components/Layout";
 import MobileCommandMenu from "./components/MobileCommandMenu";
 import ThemePicker from "./components/ThemePicker";
+import PagedList from "./components/PagedList";
+import OperationCenter from "./features/operations/OperationCenter";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import AppDialog, { DialogShell } from "./components/ui/AppDialog";
+import { useActionDialog } from "./components/ui/useActionDialog";
 import { appEnvironment } from "./config/environment";
 import { emptyBootstrap, sanitizeBootstrapData } from "./domain/bootstrap/sanitizeBootstrap";
+import { compareBootstrap, type SnapshotChange } from "./domain/bootstrap/compareBootstrap";
 import { buildPersonProfilePayload, createEmptyPersonDraft, prepareNewPerson } from "./domain/people/newPerson";
 import {
   readStoredUiTheme,
@@ -27,13 +31,18 @@ import {
   findAssignedStation,
   getAssignmentSummary,
 } from "./domain/workforce/assignmentState";
-import { splitBalancedRotationRows } from "./domain/workforce/rotationGroups";
+import { auditRotationCoverage, splitBalancedRotationRows } from "./domain/workforce/rotationGroups";
 import type { CoverageResilienceResult } from "./domain/workforce/resilience";
 import { auditScheduleSafety } from "./domain/workforce/scheduleSafety";
+import { buildManualPlan } from "./domain/workforce/manualPlan";
 import CoverageConfigurationOverview, {
   type CoverageConfigurationRow,
 } from "./features/gap-analysis/CoverageConfigurationOverview";
 import ABScheduleMatrix from "./features/schedule-preview/ABScheduleMatrix";
+import { previewName, uniquePreviewPeople, type PreviewPerson } from "./features/schedule-preview/previewIdentity";
+import { evaluateWorkforceScenario } from "./domain/workforce/engine";
+import { pageFromUrl, pageUrl } from "./lib/navigation";
+import ScheduleDraftPicker, { type ScheduleDraft, type ScheduleDraftDetail } from "./features/schedule-preview/ScheduleDraftPicker";
 import {
   fetchGasBootstrapData,
   fetchGasPermissionConfig,
@@ -62,6 +71,7 @@ import {
   DAY_OPTIONS,
   getApplicableRules,
   getAttendanceForTeam,
+  getCoverageQualificationStatus,
   getQualifiedPeopleForStation,
   getRuleNeed,
   getStationCoverage,
@@ -97,13 +107,7 @@ type ViewMode = "desktop" | "mobile";
 const APP_VERSION = appEnvironment.version;
 
 function getStationQualificationStatus(qualifications: Qualification[], employeeId: string, stationId: string) {
-  const statuses = qualifications
-    .filter((item) => item.employeeId === employeeId && item.stationId === stationId)
-    .map((item) => item.status);
-  if (statuses.includes("合格")) return "合格";
-  if (statuses.includes("訓練中")) return "訓練中";
-  if (statuses.includes("不可排")) return "不可排";
-  return "";
+  return getCoverageQualificationStatus(qualifications, employeeId, stationId);
 }
 
 const qualificationOptions: QualificationStatus[] = ["合格", "訓練中", "不可排", ""];
@@ -113,7 +117,7 @@ const officerRoleOrder = ["主任", "組長", "領班", "站長"] as const;
 type OfficerRole = (typeof officerRoleOrder)[number];
 type SchedulePreviewStyle = "card" | "table" | "share" | "section" | "matrix";
 type ManualExtraWork = { id: string; workName: string; personIds: string[] };
-type SchedulePreviewPerson = { name: string; isOfficer?: boolean; isTraining?: boolean };
+type SchedulePreviewPerson = PreviewPerson;
 
 
 const schedulePreviewStyleOptions: Array<{ key: SchedulePreviewStyle; label: string }> = [
@@ -261,10 +265,16 @@ function getViewportMode(): ViewMode {
 
 export default function App() {
   const [data, setData] = useState<AppBootstrap>(emptyBootstrap);
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const [syncChanges, setSyncChanges] = useState<SnapshotChange[]>([]);
   const [loading, setLoading] = useState(false);
   const [bootstrapError, setBootstrapError] = useState("");
   const [bootstrapRetryKey, setBootstrapRetryKey] = useState(0);
-  const [page, setPage] = useState<PageKey>("home");
+  const [dataConflict, setDataConflict] = useState("");
+  const [uncertainWrite, setUncertainWrite] = useState("");
+  const [lastLoadedAt, setLastLoadedAt] = useState("");
+  const [page, setPage] = useState<PageKey>(() => pageFromUrl(window.location.href));
   const [flash, setFlash] = useState("");
   const [appVersionBlocked, setAppVersionBlocked] = useState(false);
   const [appVersionMessage, setAppVersionMessage] = useState("");
@@ -285,6 +295,7 @@ export default function App() {
   const [sessionRestoring, setSessionRestoring] = useState(true);
   const [loginKeep, setLoginKeep] = useState<LoginKeepKey>(() => getStoredLoginKeep());
   const [currentUser, setCurrentUser] = useState<Person | null>(null);
+  const { confirmAction, requestText, actionDialog } = useActionDialog(currentUser?.id || "");
   const loginAccountRef = useRef<HTMLInputElement | null>(null);
   const loginPasswordRef = useRef<HTMLInputElement | null>(null);
   const loginAutoSubmittedRef = useRef(false);
@@ -308,6 +319,7 @@ export default function App() {
   const [reviewStatus, setReviewStatus] = useState<QualificationStatus>("合格");
 
   const [gapShift, setGapShift] = useState<TeamName>("婷芬班");
+  const [gapView, setGapView] = useState<"overview" | "absence" | "training" | "support">("overview");
   const [gapDay, setGapDay] = useState<ShiftMode>("當班");
   const [gapHelpOpen, setGapHelpOpen] = useState(false);
   const [gapConfigurationDetailsOpen, setGapConfigurationDetailsOpen] = useState(false);
@@ -347,6 +359,7 @@ export default function App() {
   const [manualSafetyOpen, setManualSafetyOpen] = useState(false);
   const [manualSafetyAcknowledged, setManualSafetyAcknowledged] = useState(false);
   const [manualPreviewOpen, setManualPreviewOpen] = useState(false);
+  const [manualExportImage, setManualExportImage] = useState<{ src: string; name: string } | null>(null);
   const [manualPreviewStyle, setManualPreviewStyle] = useState<SchedulePreviewStyle>("card");
 
   const hasManualAssignments = useMemo(
@@ -519,6 +532,7 @@ export default function App() {
   }
 
   function navigateToPage(nextPage: PageKey) {
+    if (nextPage !== page) window.history.pushState(null, "", pageUrl(window.location.href, nextPage));
     setPage(nextPage);
     setMobileDetailModal(null);
     if (isMobileView) {
@@ -529,6 +543,12 @@ export default function App() {
       });
     }
   }
+
+  useEffect(() => {
+    const onPopState = () => { setPage(pageFromUrl(window.location.href)); setMobileDetailModal(null); };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -542,7 +562,9 @@ export default function App() {
         if (!next.people.length && next.qualifications.length > 0) {
           throw new Error("人員主表讀取為 0 筆，請確認 GAS 已部署標題列自動偵測修正版。");
         }
+        if (dataRef.current.people.length) setSyncChanges(compareBootstrap(dataRef.current, next));
         setData(next);
+        setLastLoadedAt(new Date().toLocaleTimeString("zh-TW"));
       } catch (error) {
         if (!active) return;
         setPage("home");
@@ -558,6 +580,22 @@ export default function App() {
       active = false;
     };
   }, [bootstrapRetryKey, currentUser?.id]);
+
+  useEffect(() => {
+    function conflict(event: Event) {
+      setDataConflict((event as CustomEvent<{ message: string }>).detail.message);
+    }
+    function uncertain(event: Event) {
+      const detail = (event as CustomEvent<{ message: string; operationId: string }>).detail;
+      setUncertainWrite(`${detail.message} 操作編號：${detail.operationId}`);
+    }
+    window.addEventListener("rosario:data-conflict", conflict);
+    window.addEventListener("rosario:write-uncertain", uncertain);
+    return () => {
+      window.removeEventListener("rosario:data-conflict", conflict);
+      window.removeEventListener("rosario:write-uncertain", uncertain);
+    };
+  }, []);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -768,7 +806,7 @@ export default function App() {
   }, [permissionItemStates, rolePermissionMapStates, permissionSearchKeyword]);
 
   const selectedEmployee = useMemo(() => findVisibleSelection(filteredPeople, selectedEmployeeId), [filteredPeople, selectedEmployeeId]);
-  const mobilePerson = useMemo(() => data.people.find((item) => item.id === mobileDetailModal?.personId) || null, [data.people, mobileDetailModal]);
+  const mobilePerson = useMemo(() => mobileDetailModal?.type === "person" ? data.people.find((item) => item.id === mobileDetailModal.personId) || null : null, [data.people, mobileDetailModal]);
   const selectedEmployeeQualifications = useMemo(() => data.qualifications.filter((item) => item.employeeId === selectedEmployee?.id), [data.qualifications, selectedEmployee]);
   const mobilePersonQualifications = useMemo(() => data.qualifications.filter((item) => item.employeeId === mobilePerson?.id), [data.qualifications, mobilePerson]);
 
@@ -788,7 +826,7 @@ export default function App() {
   }, [data.stations, stationKeyword, stationScopedQualifications]);
 
   const selectedStation = useMemo(() => findVisibleSelection(filteredStations, selectedStationId), [filteredStations, selectedStationId]);
-  const mobileStation = useMemo(() => data.stations.find((item) => item.id === mobileDetailModal?.stationId) || null, [data.stations, mobileDetailModal]);
+  const mobileStation = useMemo(() => mobileDetailModal?.type === "station" ? data.stations.find((item) => item.id === mobileDetailModal.stationId) || null : null, [data.stations, mobileDetailModal]);
   const selectedStationQualifications = useMemo(() => stationScopedQualifications.filter((item) => item.stationId === selectedStation?.id), [stationScopedQualifications, selectedStation]);
   const mobileStationQualifications = useMemo(() => stationScopedQualifications.filter((item) => item.stationId === mobileStation?.id), [stationScopedQualifications, mobileStation]);
 
@@ -801,7 +839,7 @@ export default function App() {
   }, [data.people, reviewShift, reviewKeyword]);
 
   const reviewSelectedPerson = useMemo(() => findVisibleSelection(reviewPeople, reviewEmployeeId), [reviewPeople, reviewEmployeeId]);
-  const mobileReviewPerson = useMemo(() => data.people.find((item) => item.id === mobileDetailModal?.personId) || null, [data.people, mobileDetailModal]);
+  const mobileReviewPerson = useMemo(() => mobileDetailModal?.type === "review" ? data.people.find((item) => item.id === mobileDetailModal.personId) || null : null, [data.people, mobileDetailModal]);
   const reviewSelectedQualifications = useMemo(() => data.qualifications.filter((item) => item.employeeId === reviewSelectedPerson?.id), [data.qualifications, reviewSelectedPerson]);
   const mobileReviewQualifications = useMemo(() => data.qualifications.filter((item) => item.employeeId === mobileReviewPerson?.id), [data.qualifications, mobileReviewPerson]);
 
@@ -897,50 +935,35 @@ export default function App() {
     return gapRules.filter((rule) => stationIds.has(rule.stationId));
   }, [data.qualifications, gapRules, gapTrainingPickerPerson]);
   const gapTrainingPickerSelectedStationId = gapTrainingPickerStationId || gapTrainingPicker?.recommendedStationId || gapRules[0]?.stationId || "";
-  const gapTrainingPickerSelectedQualification = gapTrainingPickerPerson && gapTrainingPickerSelectedStationId
-    ? data.qualifications.find((item) => item.employeeId === gapTrainingPickerPerson.id && item.stationId === gapTrainingPickerSelectedStationId)
-    : undefined;
-  const gapTrainingPickerSelectedIsQualified = gapTrainingPickerSelectedQualification?.status === "合格";
-  const gapSimulationModel = useMemo(() => {
+  const gapTrainingPickerSelectedIsQualified = Boolean(gapTrainingPickerPerson && getStationQualificationStatus(data.qualifications, gapTrainingPickerPerson.id, gapTrainingPickerSelectedStationId) === "合格");
+  const gapSimulationResult = useMemo(() => {
     if (!gapTrainingSimulations.length && !gapOfficerSimulations.length) return null;
-    const simulatedQualifications: Qualification[] = [...data.qualifications];
-    const forcedAssignments = new Map<string, string>();
-    gapTrainingSimulations.forEach((item) => {
-      const person = data.people.find((personItem) => personItem.id === item.employeeId);
-      if (!person) return;
-      simulatedQualifications.push({
-        employeeId: person.id,
-        employeeName: person.name,
-        stationId: item.stationId,
-        status: "合格",
-      });
-      forcedAssignments.set(person.id, item.stationId);
+    return evaluateWorkforceScenario(data, {
+      team: gapShift,
+      mode: gapDay,
+      unavailableIds: gapAbsentIds,
+      assignments: [
+        ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
+        ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
+      ],
     });
-    gapOfficerSimulations.forEach((item) => {
-      forcedAssignments.set(item.employeeId, item.stationId);
-    });
-    return { qualifications: simulatedQualifications, forcedAssignments };
-  }, [data.people, data.qualifications, gapOfficerSimulations, gapTrainingSimulations]);
-  const gapSimulationAnalysis = useMemo(() => {
-    if (!gapSimulationModel) return null;
-    return analyzeStationCoverage(
-      gapShift,
-      gapDay,
-      data.stationRules || [],
-      data.people,
-      gapSimulationModel.qualifications,
-      new Set(gapAbsentIds),
-      gapSimulationModel.forcedAssignments,
-      { excludeOfficersFromCoverage: true }
-    );
-  }, [data.people, data.stationRules, gapShift, gapDay, gapAbsentIds, gapSimulationModel]);
+  }, [data, gapShift, gapDay, gapAbsentIds, gapOfficerSimulations, gapTrainingSimulations]);
+  const gapSimulationAnalysis = gapSimulationResult?.analysis || null;
   const gapTrainingSimulationAnalysis = gapSimulationAnalysis;
   const gapSimulationCount = gapTrainingSimulations.length + gapOfficerSimulations.length;
   const gapDisplayCoverageAnalysis = gapSimulationAnalysis || gapActiveCoverageAnalysis;
-  const gapDisplayQualifications = gapSimulationModel?.qualifications || data.qualifications;
+  const gapAcceptedSimulations = gapSimulationResult?.reasons.filter((item) => item.source === "training" || item.source === "officer") || [];
+  const gapDisplayQualifications = useMemo(() => {
+    const completed = gapSimulationResult?.reasons.filter((item) => item.source === "training") || [];
+    return [
+      ...data.qualifications.filter((item) => !completed.some((accepted) => accepted.employeeId === item.employeeId && accepted.stationId === item.stationId)),
+      ...completed.map((item) => ({ employeeId: item.employeeId, stationId: item.stationId, status: "合格" as const })),
+    ];
+  }, [data.qualifications, gapSimulationResult]);
   const gapDisplayAttendanceAll = useMemo(
-    () => gapAbsentIds.length ? gapAttendance.all.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.all,
-    [gapAbsentIds, gapAttendance.all]
+    () => gapAttendance.all.filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => !isSupportOfficerPerson(person) || gapSimulationResult?.reasons.some((item) => item.employeeId === person.id && item.source === "officer")),
+    [gapAbsentIds, gapAttendance.all, gapSimulationResult]
   );
   const gapDisplayAttendanceSupport = useMemo(
     () => gapAbsentIds.length ? gapAttendance.support.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.support,
@@ -959,7 +982,8 @@ export default function App() {
         return {
           id,
           name: person?.name || id,
-          kind: person && isSupportOfficerPerson(person) ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
+          kind: gapSimulationResult?.reasons.some((item) => item.employeeId === id && item.stationId === rule.stationId && item.source === "training")
+            ? "training" as const : person && isSupportOfficerPerson(person) ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
         };
       });
       return {
@@ -988,6 +1012,7 @@ export default function App() {
     gapDisplayQualifications,
     gapRules,
     gapTrainingSimulationAnalysis,
+    gapSimulationResult,
   ]);
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
@@ -1062,7 +1087,7 @@ export default function App() {
   const smartAttendance = useMemo(() => getAttendanceForTeam(data.people, smartShift, smartDay), [data.people, smartShift, smartDay]);
   const smartRules = useMemo(() => getApplicableRules(smartShift, smartDay, data.stationRules || []), [data.stationRules, smartShift, smartDay]);
 
-  const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, "當班", data.stationRules || []), [rulesTeam, data.stationRules]);
+  const stationRuleRows = useMemo(() => getApplicableRules(rulesTeam, "當班", data.managementStationRules || data.stationRules || []), [rulesTeam, data.managementStationRules, data.stationRules]);
 
   const manualCountableIds = useMemo(() => Array.from(new Set(
     manualAttendance.all
@@ -1084,32 +1109,20 @@ export default function App() {
     extraWorks: manualExtraWorks,
     trainingAssignments: manualTrainingAssignments,
     attendanceIds: manualCountableIds,
+    qualifications: data.qualifications,
+    people: data.people,
     reservedDutyIds: manualOfficerPeople
-      .filter((person) => normalizeOfficerRole(person.role) !== "主任")
+      .filter((person) => ["領班", "組長"].includes(normalizeOfficerRole(person.role) || ""))
       .map((person) => person.id),
-  }), [manualAssignments, manualCountableIds, manualExtraWorks, manualOfficerPeople, manualOfficerStations, manualRules, manualTrainingAssignments]);
+  }), [data.people, data.qualifications, manualAssignments, manualCountableIds, manualExtraWorks, manualOfficerPeople, manualOfficerStations, manualRules, manualTrainingAssignments]);
   const manualPendingCount = manualSafety.unassignedIds.length;
   const manualEffectiveAssigned = Math.max(0, manualCountableTotal - manualPendingCount);
   const manualSchedulePreview = useMemo(() => {
     const peopleById = new Map(data.people.map((person) => [person.id, person]));
     const uniqueNames = (names: string[]) => Array.from(new Set(names.map((name) => name.trim()).filter(Boolean)));
-    const uniquePreviewPeople = (people: SchedulePreviewPerson[]) => {
-      const map = new Map<string, SchedulePreviewPerson>();
-      people.forEach((person) => {
-        const name = person.name.trim();
-        if (!name) return;
-        const current = map.get(name);
-        map.set(name, {
-          name,
-          isOfficer: Boolean(current?.isOfficer || person.isOfficer),
-          isTraining: Boolean(current?.isTraining || person.isTraining),
-        });
-      });
-      return Array.from(map.values());
-    };
     const toPreviewPerson = (person?: Person | null, forceOfficer = false, isTraining = false): SchedulePreviewPerson | null => {
       if (!person?.name) return null;
-      return { name: person.name, isOfficer: forceOfficer || normalizeOfficerRole(person.role) !== null, isTraining };
+      return { employeeId: person.id, name: previewName(person, data.people), isOfficer: forceOfficer || isSupportOfficerPerson(person), isTraining };
     };
     const activeTeamPeople = data.people.filter((person) => {
       const employment = String(person.employmentStatus || "").trim();
@@ -1177,6 +1190,7 @@ export default function App() {
             stationName: getScheduleStationDisplayName(station),
             people: uniquePreviewPeople([...assignedPeople, ...selectedOfficerPeople]),
             required: getRuleNeed(rule, manualDay),
+            reliefRequired: rule.reliefMinPerBatch,
           };
         }),
         ...manualExtraWorks
@@ -1195,15 +1209,27 @@ export default function App() {
           .filter((row) => row.stationName || row.people.length > 0),
       ],
     };
-  }, [data.people, data.qualifications, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualRules, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
+  }, [data.people, data.qualifications, data.stations, manualAssignments, manualOfficerPeople, manualOfficerStations, manualDisplayRules, manualDay, manualShift, manualExtraWorks, manualOfficerDisplayGroups]);
+  const manualRotation = useMemo(() => auditRotationCoverage({
+    assignments: manualAssignments,
+    rules: manualRules,
+    qualifications: data.qualifications,
+    people: data.people,
+    attendanceIds: manualCountableIds,
+    officerStations: manualOfficerStations,
+    trainingAssignments: manualTrainingAssignments,
+    extraWorks: manualExtraWorks,
+    rows: manualSchedulePreview.rows,
+  }), [data.people, data.qualifications, manualAssignments, manualRules, manualCountableIds, manualOfficerStations, manualTrainingAssignments, manualExtraWorks, manualSchedulePreview]);
   const smartSummary = useMemo(() => getAssignmentSummary(smartAssignments, smartRules), [smartAssignments, smartRules]);
-  const visibleRulesTeams = useMemo(() => {
+  const visibleRulesTeams = useMemo<TeamName[]>(() => {
     if (!currentUser) return [];
+    if (data.viewableRuleTeams) return TEAM_OPTIONS.filter((team) => data.viewableRuleTeams!.includes(team));
     if (currentRole === "最高權限") return TEAM_OPTIONS;
     const ownTeam = getTeamOfPerson(currentUser);
     const isDirector = currentRole === "主任" || normalizeOfficerRole(currentUser.role) === "主任";
-    return isDirector && TEAM_OPTIONS.includes(ownTeam) ? [ownTeam] : [];
-  }, [currentRole, currentUser]);
+    return isDirector ? TEAM_OPTIONS.filter((team) => team === ownTeam) : [];
+  }, [currentRole, currentUser, data.viewableRuleTeams]);
 
   useEffect(() => {
     if (!visibleRulesTeams.length) return;
@@ -1224,7 +1250,7 @@ export default function App() {
       gapStressWorkerRef.current?.terminate();
       gapStressWorkerRef.current = null;
     };
-  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift]);
+  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapAbsentIds, gapTrainingSimulations, gapOfficerSimulations]);
 
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
@@ -1267,9 +1293,10 @@ export default function App() {
     return visibleRulesTeams.includes(team);
   }
 
-  function canEditRulesForTeam(team: TeamName) {
+  function canEditRulesForTeam(team: string) {
     if (!canUsePermission("PERM_012")) return false;
-    return visibleRulesTeams.includes(team);
+    if (data.editableRuleTeams) return data.editableRuleTeams.includes(team);
+    return visibleRulesTeams.some((item) => item === team);
   }
 
   function runGapStressAnalysis() {
@@ -1307,7 +1334,9 @@ export default function App() {
       mode: gapDay,
       stationRules: data.stationRules || [],
       people: data.people,
-      qualifications: data.qualifications,
+      qualifications: gapDisplayQualifications,
+      unavailableIds: gapAbsentIds,
+      forcedAssignments: gapAcceptedSimulations.map((item) => ({ employeeId: item.employeeId, stationId: item.stationId })),
       maxAbsences: gapStressMaxAbsences,
     });
   }
@@ -1322,6 +1351,7 @@ export default function App() {
   }
 
   function toggleGapTrainingSimulation(employeeId: string, stationId: string) {
+    setGapOfficerSimulations((current) => current.filter((item) => item.employeeId !== employeeId));
     setGapTrainingSimulations((current) => {
       const exists = current.some((item) => item.employeeId === employeeId && item.stationId === stationId);
       if (exists) return current.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId));
@@ -1330,6 +1360,7 @@ export default function App() {
   }
 
   function toggleGapOfficerSimulation(employeeId: string, stationId: string) {
+    setGapTrainingSimulations((current) => current.filter((item) => item.employeeId !== employeeId));
     setGapOfficerSimulations((current) => {
       const exists = current.some((item) => item.employeeId === employeeId && item.stationId === stationId);
       if (exists) return current.filter((item) => !(item.employeeId === employeeId && item.stationId === stationId));
@@ -1346,10 +1377,15 @@ export default function App() {
 
   function addGapOfficerCustomSimulation() {
     if (!gapOfficerPickerId || !gapOfficerPickerStationId) return;
+    if (getStationQualificationStatus(data.qualifications, gapOfficerPickerId, gapOfficerPickerStationId) !== "合格") {
+      setFlashMessage("此人員未具備該站合格資格，無法作為幹部支援。");
+      return;
+    }
     setGapOfficerSimulations((current) => [
       ...current.filter((item) => item.employeeId !== gapOfficerPickerId),
       { employeeId: gapOfficerPickerId, stationId: gapOfficerPickerStationId },
     ]);
+    setGapTrainingSimulations((current) => current.filter((item) => item.employeeId !== gapOfficerPickerId));
     setGapOfficerDialogOpen(false);
     setGapOfficerKeyword("");
     setGapOfficerPickerId("");
@@ -1371,6 +1407,7 @@ export default function App() {
 
   function addGapTrainingSimulationFromPicker(stationId = gapTrainingPickerSelectedStationId) {
     if (!gapTrainingPickerPerson || !stationId) return;
+    setGapOfficerSimulations((current) => current.filter((item) => item.employeeId !== gapTrainingPickerPerson.id));
     setGapTrainingSimulations((current) => [
       ...current.filter((item) => item.employeeId !== gapTrainingPickerPerson.id),
       { employeeId: gapTrainingPickerPerson.id, stationId },
@@ -1388,10 +1425,6 @@ export default function App() {
     setGapTrainingDialogOpen(false);
     setPage("qualification-review");
     scrollToTop();
-  }
-
-  function confirmAction(message: string) {
-    return window.confirm(message);
   }
 
   function updateLoginKeep(option: LoginKeepKey) {
@@ -1471,7 +1504,7 @@ export default function App() {
         expiresAt: result.sessionExpiresAt,
       });
       setLoginForm({ account: "", password: "" });
-      setPage("home");
+      setPage(pageFromUrl(window.location.href));
       setFlashMessage(`登入成功：${mergedUser.name}，重新整理仍會保留登入。`);
       scrollToTop();
     } catch (error) {
@@ -1491,7 +1524,7 @@ export default function App() {
       setFlashMessage("找不到指定站點。");
       return false;
     }
-    if (confirmBeforeSave && !confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${status || "空白"}」？`)) {
+    if (confirmBeforeSave && !await confirmAction(`確認修改 ${employee.name} 的 ${station.name} 為「${status || "空白"}」？`)) {
       setFlashMessage("已取消修改。");
       return false;
     }
@@ -1533,7 +1566,7 @@ export default function App() {
   async function handleDeleteQualification(employeeId: string, stationId: string) {
     const person = data.people.find((item) => item.id === employeeId);
     const station = data.stations.find((item) => item.id === stationId);
-    if (!confirmAction(`確認刪除 ${person?.name || employeeId} 的 ${station?.name || stationId} 資格？`)) {
+    if (!await confirmAction(`確認刪除 ${person?.name || employeeId} 的 ${station?.name || stationId} 資格？`)) {
       setFlashMessage("已取消刪除。");
       return;
     }
@@ -1544,7 +1577,7 @@ export default function App() {
 
   async function handleUpdatePerson(person: Person, patch: Partial<Person>) {
     const next = { ...person, ...patch };
-    if (!confirmAction(`確認修改人員 ${person.name}（${person.id}）？`)) {
+    if (!await confirmAction(`確認修改人員 ${person.name}（${person.id}）？`)) {
       setFlashMessage("已取消修改。");
       return;
     }
@@ -1566,7 +1599,7 @@ export default function App() {
       setFlashMessage(`新增資料檢查通過：${next.name}（${next.id}）。測試版唯讀，尚未寫入正式資料。`);
       return;
     }
-    if (!confirmAction(`確認新增人員 ${next.name}（${next.id}）至 ${next.shift}？`)) {
+    if (!await confirmAction(`確認新增人員 ${next.name}（${next.id}）至 ${next.shift}？`)) {
       setFlashMessage("已取消新增人員。");
       return;
     }
@@ -1584,7 +1617,7 @@ export default function App() {
       setNewPersonDraft(createEmptyPersonDraft());
       setFlashMessage(`已新增 ${created.name}（${created.id}），並同步寫入人員主表與站點矩陣。`);
     } catch (error) {
-      setFlashMessage(`新增人員失敗：${error instanceof Error ? error.message : String(error)}`);
+      setFlashMessage(`新增人員結果尚未確認：${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setNewPersonSubmitting(false);
     }
@@ -1604,7 +1637,7 @@ export default function App() {
       permissionLevel: permission,
       isSuperAdmin: permission === "最高權限" || person.id === "P0033",
     };
-    if (!confirmAction(`確認將 ${person.name}（${person.id}）的系統權限調整為「${permission}」？`)) {
+    if (!await confirmAction(`確認將 ${person.name}（${person.id}）的系統權限調整為「${permission}」？`)) {
       setFlashMessage("已取消修改。");
       return;
     }
@@ -1626,7 +1659,7 @@ export default function App() {
       setFlashMessage("可排滿人數不可小於最低需求；若不補人請填 0。");
       return;
     }
-    if (!confirmAction(`確認修改 ${rule.team} 的 ${station?.name || rule.stationId} 規則？`)) {
+    if (!await confirmAction(`確認修改 ${rule.team} 的 ${station?.name || rule.stationId} 規則？`)) {
       setFlashMessage("已取消修改。");
       return;
     }
@@ -1639,6 +1672,9 @@ export default function App() {
       const exists = rules.some(sameRule);
       return {
         ...current,
+        managementStationRules: current.managementStationRules?.some(sameRule)
+          ? current.managementStationRules.map((item) => sameRule(item) ? next : item)
+          : current.managementStationRules ? [...current.managementStationRules, next] : undefined,
         stationRules: exists
           ? rules.map((item) => (sameRule(item) ? next : item))
           : [...rules, next],
@@ -1681,14 +1717,16 @@ export default function App() {
   }
 
   function runManualPlan() {
-    const assignablePeople = data.people.filter((person) => !isOfficerPerson(person));
-    const rows = buildSmartAssignments(manualShift, manualDay, data.stationRules || [], assignablePeople, data.qualifications, manualMode, { useMinRequired: true, randomize: true });
-    const next: Record<string, string[]> = {};
-    rows.forEach((row) => {
-      next[row.stationId] = row.assigned.filter((person) => !manualOfficerIds.has(person.id)).map((person) => person.id);
+    const plan = buildManualPlan({
+      team: manualShift, day: manualDay, rules: data.stationRules || [], people: data.people,
+      qualifications: data.qualifications, mode: manualMode,
+      officerStations: manualOfficerStations, extraWorks: manualExtraWorks,
+      options: { useMinRequired: true, randomize: true },
     });
-    setManualAssignments(next);
-    setFlashMessage(`自動安排已完成：${manualMode}；幹部勤務與站長站位維持不變。`);
+    setManualAssignments(plan.assignments);
+    setFlashMessage(plan.violations.length
+      ? `已安排其餘人力；${plan.violations.length} 項固定站位需確認：${plan.violations.map((item) => item.message).join("；")}`
+      : `自動安排已完成：${manualMode}；已保留固定站長與臨時勤務，依剩餘需求補位。`);
   }
 
   const manualCustomCandidates = useMemo(() => {
@@ -1904,6 +1942,29 @@ export default function App() {
     }
   }
 
+  function restoreManualDraft(draft: ScheduleDraft, details: ScheduleDraftDetail[]) {
+    const assignments: Record<string, string[]> = {};
+    const officerStations: Record<string, string> = {};
+    const extras = new Map<string, ManualExtraWork>();
+    for (const detail of [...details].sort((a, b) => Number(a.order || 0) - Number(b.order || 0))) {
+      if (detail.type === "幹部") officerStations[detail.employeeId] = detail.stationId;
+      else if (detail.type === "自訂") {
+        const extra = extras.get(detail.stationId) || { id: detail.stationId, workName: detail.note || "臨時勤務", personIds: [] };
+        extra.personIds.push(detail.employeeId);
+        extras.set(extra.id, extra);
+      } else (assignments[detail.stationId] ||= []).push(detail.employeeId);
+    }
+    setManualShift(draft.team);
+    setManualDay(draft.dayKey);
+    if (SMART_MODE_OPTIONS.includes(draft.mode)) setManualMode(draft.mode);
+    setManualAssignments(assignments);
+    setManualOfficerStations(officerStations);
+    setManualExtraWorks(extras.size ? [...extras.values()] : initialManualExtraWorks.map((item) => ({ ...item, personIds: [] })));
+    setManualSafetyAcknowledged(false);
+    setManualSafetyOpen(true);
+    setFlashMessage("草稿已載入，請核對目前出勤、資格與站點缺口。");
+  }
+
   async function copyManualSchedulePreview() {
     try {
       await navigator.clipboard.writeText(buildManualSchedulePreviewText());
@@ -1967,10 +2028,10 @@ export default function App() {
     const headerHeight = 224;
     const hasTrainingPeople = rows.some((row) => row.people.some((person) => person.isTraining));
     const personRowHeight = hasTrainingPeople ? 58 : 46;
-    const footerHeight = 92;
+    const footerHeight = 124;
     const maxPeople = groupDepth * 2;
     const width = Math.max(1180, leftWidth + rows.length * colWidth + 48);
-    const height = headerHeight + maxPeople * personRowHeight + footerHeight;
+    const height = headerHeight + maxPeople * personRowHeight + footerHeight + 48;
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
     if (!ctx) {
@@ -2062,7 +2123,9 @@ export default function App() {
       ctx.fillStyle = "#0f172a";
       ctx.font = "800 14px 'Noto Sans TC', 'PingFang TC', sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText(`需求 ${Math.max(0, Number(row.required || 0))}｜已排 ${row.people.length}`, stationCenterX, y0 + 28);
+      ctx.fillText(`正班 ${Math.max(0, Number(row.required || 0))}｜已排 ${row.people.length}`, stationCenterX, y0 + 20, colWidth - 12);
+      ctx.font = "700 11px 'Noto Sans TC', 'PingFang TC', sans-serif";
+      ctx.fillText(`輪休單批 ${"reliefRequired" in row && row.reliefRequired != null ? row.reliefRequired : "未設定"}`, stationCenterX, y0 + 36, colWidth - 12);
       const stationLineHeight = 25;
       const codeGap = label.code ? 12 : 0;
       const codeLineHeight = label.code ? 24 : 0;
@@ -2113,12 +2176,12 @@ export default function App() {
         ctx.textAlign = "center";
         if (person.isTraining) {
           ctx.font = "900 16px 'Noto Sans TC', 'PingFang TC', sans-serif";
-          ctx.fillText(person.name, chipX + chipW / 2, chipY + 18);
+          ctx.fillText(person.name, chipX + chipW / 2, chipY + 18, chipW - 12);
           ctx.font = "700 11px 'Noto Sans TC', 'PingFang TC', sans-serif";
           ctx.fillText("訓練人員", chipX + chipW / 2, chipY + 34);
           ctx.font = "900 18px 'Noto Sans TC', 'PingFang TC', sans-serif";
         } else {
-          ctx.fillText(person.name, chipX + chipW / 2, chipY + 22);
+          ctx.fillText(person.name, chipX + chipW / 2, chipY + 22, chipW - 12);
         }
         ctx.textAlign = "start";
       });
@@ -2137,6 +2200,9 @@ export default function App() {
 
     ctx.fillStyle = "#64748b";
     ctx.font = "700 15px 'Noto Sans TC', 'PingFang TC', sans-serif";
+    ctx.fillStyle = manualRotation.canRotate ? "#166534" : "#991b1b";
+    ctx.fillText(`${manualRotation.canRotate ? "輪休檢核通過" : "分組草案，輪休檢核未通過"}｜單批需求 ${manualRotation.requiredPerGroup}｜A 組缺 ${manualRotation.groupA.totalShortage}｜B 組缺 ${manualRotation.groupB.totalShortage}`, x0, height - 44);
+    ctx.fillStyle = "#64748b";
     ctx.fillText("※ 人員依站點順序交錯並平衡 A、B 組總人數；綠色為幹部支援，黃色為訓練人員。", x0, height - 16);
 
     const link = document.createElement("a");
@@ -2148,6 +2214,7 @@ export default function App() {
     ].join("-");
     link.download = `${manualSchedulePreview.team}-A-B輪休橫表-${date}.png`;
     link.href = canvas.toDataURL("image/png");
+    setManualExportImage({ src: link.href, name: link.download });
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2240,7 +2307,7 @@ export default function App() {
       let chipX = x + 28;
       let chipY = y + 64;
       const chipMaxX = x + w - 28;
-      const people = row.people.length ? row.people : [{ name: "-", isOfficer: false }];
+      const people = row.people.length ? row.people : [{ name: "-", isOfficer: false, isTraining: false }];
       people.forEach((person) => {
         const text = person.isTraining ? `${person.name} 訓練` : person.name;
         const chipWidth = Math.min(Math.max(58, ctx.measureText(text).width + 24), chipMaxX - x - 56);
@@ -2266,6 +2333,7 @@ export default function App() {
     const date = new Date().toISOString().slice(0, 10);
     link.download = `${manualSchedulePreview.team}-站點班表-${date}.png`;
     link.href = canvas.toDataURL("image/png");
+    setManualExportImage({ src: link.href, name: link.download });
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2292,11 +2360,18 @@ export default function App() {
   }
 
   async function handleCustomAssign(target: "manual" | "smart", stationId: string) {
-    const raw = window.prompt("請輸入工號或姓名");
+    const raw = await requestText("工號或姓名");
     if (!raw) return;
     const attendance = target === "manual" ? manualAttendance : smartAttendance;
     const assignments = target === "manual" ? manualAssignments : smartAssignments;
-    const person = attendance.all.find((item) => item.id === raw.trim() || item.name === raw.trim());
+    const key = raw.trim();
+    const exactId = attendance.all.find((item) => item.id === key);
+    const nameMatches = attendance.all.filter((item) => item.name === key);
+    if (!exactId && nameMatches.length > 1) {
+      setFlashMessage("有多位同名人員，請輸入工號以確認安排對象。");
+      return;
+    }
+    const person = exactId || nameMatches[0];
     const station = data.stations.find((item) => item.id === stationId);
     if (!person || !station) {
       setFlashMessage("找不到可用人員，請確認該人員存在於本次出勤池。");
@@ -2308,24 +2383,10 @@ export default function App() {
       setFlashMessage(`${person.name} 已安排在 ${assignedStation?.name || assignedStationId}，不可重複佔站。`);
       return;
     }
-    const qualified = data.qualifications.some((item) => item.employeeId === person.id && item.stationId === stationId && item.status === "合格");
-    if (!qualified) {
-      const training = confirmAction(`${person.name} 目前不符合 ${station.name} 資格。是否標記為訓練人力？`);
-      if (training) {
-        const ok = await persistQualification(person, stationId, "訓練中");
-        if (!ok) return;
-      } else {
-        const complete = confirmAction(`是否直接標記 ${person.name} 為 ${station.name} 訓練完成？`);
-        if (!complete) {
-          setFlashMessage("已取消自訂安排。");
-          return;
-        }
-        const ok = await persistQualification(person, stationId, "合格");
-        if (!ok) return;
-      }
-      setReviewShift(getTeamOfPerson(person) as (typeof REVIEW_TEAM_OPTIONS)[number]);
-      setReviewEmployeeId(person.id);
-      setReviewStationId(stationId);
+    const status = getCoverageQualificationStatus(data.qualifications, person.id, stationId);
+    if (status !== "合格" && status !== "訓練中") {
+      setFlashMessage("此人員尚未具備該站資格或訓練紀錄，不能直接安排。請至資格考核維護；班表試排不會變更正式資格。");
+      return;
     }
     const setter = target === "manual" ? setManualAssignments : setSmartAssignments;
     setter((current) => appendUniqueAssignment(current, stationId, person.id));
@@ -2499,7 +2560,7 @@ export default function App() {
           accountStatus: nextStatus,
           accountEnabled: nextStatus,
           enabled: nextStatus === "啟用" ? "Y" : "N",
-        } as Person & Record<string, unknown>;
+        };
         await postGasAction("updatePerson", payload);
         setData((current) => ({
           ...current,
@@ -2524,7 +2585,7 @@ export default function App() {
         const payload = {
           id: person.id,
           password: nextPassword,
-        } as Person & Record<string, unknown>;
+        };
         await postGasAction("updatePerson", payload);
         setAccountPasswordDrafts((current) => ({ ...current, [person.id]: "" }));
         setFlashMessage(`已重設 ${person.name} 的登入密碼。系統不會顯示或回傳密碼內容。`);
@@ -3168,12 +3229,13 @@ export default function App() {
               </form>
             )}
           </div>
-          <div className="desktop-theme-picker">
-            <ThemePicker value={uiTheme} onChange={changeUiTheme} />
-          </div>
           <nav className="nav-list" aria-label="主要功能">
             {allowedNav.map((item) => <button key={item.key} className={page === item.key ? "nav-item active" : "nav-item"} onClick={() => navigateToPage(item.key)}>{item.label}</button>)}
           </nav>
+          <details className="desktop-theme-picker">
+            <summary>外觀設定</summary>
+            <ThemePicker value={uiTheme} onChange={changeUiTheme} />
+          </details>
         </aside>
         {flash ? (
           <div
@@ -3195,6 +3257,30 @@ export default function App() {
           </div>
         ) : null}
         <main className="content" ref={contentRef}>
+          <AppDialog open={Boolean(manualExportImage)} title="班表圖片已產生" description="若瀏覽器未自動下載，可再次下載，或在手機上長按圖片儲存。" onClose={() => setManualExportImage(null)} size="wide" footer={manualExportImage ? <a className="primary exported-image-download" href={manualExportImage.src} download={manualExportImage.name}>下載 PNG 圖片</a> : null}>
+            {manualExportImage ? <img className="exported-schedule-image" src={manualExportImage.src} alt="班表輸出圖片" /> : null}
+          </AppDialog>
+          <AppDialog open={syncChanges.length > 0} title="資料更新差異" onClose={() => setSyncChanges([])} size="wide" footer={<button type="button" className="primary" onClick={() => setSyncChanges([])}>完成核對</button>}>
+            <p>已重新載入最新資料。以下列出重新讀取前後的差異，包含尚未儲存的本機主檔編輯；本視窗不會送出修改。</p>
+            <div className="table-wrap"><table className="table"><thead><tr><th>資料</th><th>欄位</th><th>重新讀取前</th><th>最新資料</th></tr></thead><tbody>{syncChanges.slice(0, 40).map((change, index) => <tr key={index}><td>{change.record}</td><td>{change.field}</td><td>{change.before}</td><td>{change.after}</td></tr>)}</tbody></table></div>
+            <p className="muted">共 {syncChanges.length} 項差異{syncChanges.length > 40 ? "，此處顯示前 40 項，請至對應管理頁核對完整資料" : ""}。</p>
+          </AppDialog>
+          {actionDialog}
+          {currentUser ? <div className="data-sync-bar">
+            <span>{loading ? "正在同步資料…" : lastLoadedAt ? `資料更新 ${lastLoadedAt}` : "尚未同步資料"}</span>
+            <button type="button" className="ghost" disabled={loading} onClick={() => setBootstrapRetryKey((value) => value + 1)}>重新載入資料</button>
+            <OperationCenter key={currentUser.id} userId={currentUser.id} isAdmin={currentRole === "最高權限"} available={Boolean(data.capabilities?.operationReceipts)} initialReceipts={data.recentOperations} onReload={() => setBootstrapRetryKey((value) => value + 1)} />
+          </div> : null}
+          <AppDialog open={Boolean(dataConflict)} title="資料版本已變更" onClose={() => setDataConflict("")} footer={
+            <button type="button" className="primary" onClick={() => { setDataConflict(""); setBootstrapRetryKey((value) => value + 1); }}>載入最新資料</button>
+          }>
+            <p>{dataConflict}</p><p>本次儲存未自動重送。重新載入會更新人員、資格與規則；班表試排與新增人員表單會保留，請先記下尚未送出的主檔編輯，再載入並核對後重試。</p>
+          </AppDialog>
+          <AppDialog open={Boolean(uncertainWrite)} title="寫入結果需要核對" onClose={() => setUncertainWrite("")} footer={
+            <button type="button" className="primary" onClick={() => { setUncertainWrite(""); setBootstrapRetryKey((value) => value + 1); }}>重新讀取確認結果</button>
+          }>
+            <p>{uncertainWrite}</p><p>請勿改變內容後再次新增。系統會保留原操作編號；若仍顯示處理中，需由管理員核對試算表與操作紀錄。</p>
+          </AppDialog>
           {appEnvironment.isPreview ? (
             <div className="preview-environment-banner" role="status">
               <strong>升級測試版</strong>
@@ -3223,12 +3309,12 @@ export default function App() {
             currentUser ? (
               <Layout title="" subtitle="">
                 <Suspense fallback={<Empty text="正在載入工作台..." />}>
-                  <WorkforceWorkbench
+                  {!data.people.length && (bootstrapError || loading) ? <Empty text={loading ? "正在載入核心資料，完成後顯示覆蓋結果。" : "核心資料尚未載入，暫不顯示覆蓋判斷。請重新讀取資料。"} /> : <WorkforceWorkbench
                     data={data}
                     currentUser={currentUser}
                     loading={loading}
                     onNavigate={navigateToPage}
-                  />
+                  />}
                 </Suspense>
               </Layout>
             ) : (
@@ -3274,20 +3360,19 @@ export default function App() {
               <div className="grid two">
                 <div className="panel">
                   <div className="toolbar">
-                    <select value={personTeamFilter} onChange={(e) => setPersonTeamFilter(e.target.value)}>
+                    <select aria-label="人員資格班別" value={personTeamFilter} onChange={(e) => setPersonTeamFilter(e.target.value)}>
                       <option value="全部班別">全部班別</option>
                       {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                     </select>
-                    <input placeholder="輸入工號、姓名、角色、國籍" value={personKeyword} onChange={(e) => setPersonKeyword(e.target.value)} />
+                    <input aria-label="搜尋人員資格" placeholder="輸入工號、姓名、角色、國籍" value={personKeyword} onChange={(e) => setPersonKeyword(e.target.value)} />
+                    {personKeyword ? <button type="button" className="ghost" onClick={() => setPersonKeyword("")}>清除搜尋</button> : null}
                   </div>
-                  <div className="list-scroll">
-                    {filteredPeople.map((person) => (
+                  <PagedList items={filteredPeople} renderItem={(person) => (
                       <button key={person.id} className={selectedEmployee?.id === person.id ? "list-row active" : "list-row"} onClick={() => { setSelectedEmployeeId(person.id); openMobileOrScroll({ type: "person", personId: person.id }, personDetailRef.current); }}>
                         <strong>{person.name}</strong>
                         <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span>
                       </button>
-                    ))}
-                  </div>
+                    )} />
                 </div>
                 <div className="panel" ref={personDetailRef}>
                   {selectedEmployee ? <PersonDetailView person={selectedEmployee} qualifications={selectedEmployeeQualifications} /> : <Empty text="此班別目前沒有可顯示人員。" />}
@@ -3303,16 +3388,14 @@ export default function App() {
                   <div className="toolbar">
                     <select value={stationTeamFilter} onChange={(e) => setStationTeamFilter(e.target.value as TeamName)}>{TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
                     <select value={stationDayFilter} onChange={(e) => setStationDayFilter(e.target.value as ShiftMode)}>{dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                    <input placeholder="搜尋站點" value={stationKeyword} onChange={(e) => setStationKeyword(e.target.value)} />
+                    <input aria-label="搜尋站點" placeholder="搜尋站點" value={stationKeyword} onChange={(e) => setStationKeyword(e.target.value)} />
                   </div>
-                  <div className="list-scroll">
-                    {filteredStations.map((station) => (
+                  <PagedList items={filteredStations} renderItem={(station) => (
                       <button key={station.id} className={selectedStation?.id === station.id ? "list-row active" : "list-row"} onClick={() => { setSelectedStationId(station.id); openMobileOrScroll({ type: "station", stationId: station.id }, stationDetailRef.current); }}>
                         <strong>{station.name}</strong>
                         <span>{station.id}</span>
                       </button>
-                    ))}
-                  </div>
+                    )} />
                 </div>
                 <div className="panel" ref={stationDetailRef}>
                   {selectedStation ? <StationDetailView station={selectedStation} team={stationTeamFilter} day={stationDayFilter} attendance={stationAttendance} qualifications={selectedStationQualifications} people={data.people} /> : <Empty text="找不到符合條件的站點。" />}
@@ -3327,16 +3410,14 @@ export default function App() {
                 <div className="panel">
                   <div className="toolbar">
                     <select value={reviewShift} onChange={(e) => setReviewShift(e.target.value as (typeof REVIEW_TEAM_OPTIONS)[number])}>{REVIEW_TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}</select>
-                    <input placeholder="輸入工號或姓名" value={reviewKeyword} onChange={(e) => setReviewKeyword(e.target.value)} />
+                    <input aria-label="搜尋考核人員" placeholder="輸入工號或姓名" value={reviewKeyword} onChange={(e) => setReviewKeyword(e.target.value)} />
                   </div>
-                  <div className="list-scroll">
-                    {reviewPeople.map((person) => (
+                  <PagedList items={reviewPeople} renderItem={(person) => (
                       <button key={person.id} className={reviewSelectedPerson?.id === person.id ? "list-row active" : "list-row"} onClick={() => { setReviewEmployeeId(person.id); openMobileOrScroll({ type: "review", personId: person.id }, reviewDetailRef.current); }}>
                         <strong>{person.name}</strong>
                         <span>{person.id}｜{String(getTeamOfPerson(person))}｜{person.role}</span>
                       </button>
-                    ))}
-                  </div>
+                    )} />
                 </div>
                 <div className="panel review-detail-panel" ref={reviewDetailRef}>
                   {reviewSelectedPerson ? (
@@ -3364,7 +3445,7 @@ export default function App() {
 
           {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? (
             <EntranceLayout pageKey="gap-analysis">
-              <div className="panel">
+              <div className="panel analysis-context">
                 <div className="toolbar">
                   <select aria-label="覆蓋分析班別" value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
                     {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -3386,11 +3467,11 @@ export default function App() {
 
               {gapRules.length ? (
                 <>
-                  <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
+                  <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.required <= 0 ? "is-unconfigured" : gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
                     <div className="panel-header">
                       <h3>{gapDay === "當班" ? "全勤基準分析" : "支援優先基準分析"}</h3>
                       <span>
-                        {gapCoverageAnalysis.fullyCovered
+                        {gapCoverageAnalysis.required <= 0 ? "尚未設定最低需求，請先核對站點規則" : gapCoverageAnalysis.fullyCovered
                           ? gapDay === "當班" ? "全員出勤時可全面覆蓋" : "支援先配置、本班補位後可全面覆蓋"
                           : gapDay === "當班" ? `全員出勤仍缺 ${gapCoverageAnalysis.shortage} 人` : `支援先配置、本班補位後仍缺 ${gapCoverageAnalysis.shortage} 人`}
                       </span>
@@ -3400,7 +3481,7 @@ export default function App() {
                       {gapDay === "當班" ? (
                         <>
                           <Info label="可作業人力" value={String(gapCoverageAnalysis.ownAvailable + gapCoverageAnalysis.supportAvailable)} />
-                          <Info label="已配置站點" value={`${gapCoverageAnalysis.assigned}/${gapCoverageAnalysis.required}`} />
+                          <Info label="有效覆蓋" value={gapCoverageAnalysis.required > 0 ? `${gapCoverageAnalysis.required - gapCoverageAnalysis.shortage}/${gapCoverageAnalysis.required}` : "尚未設定"} />
                           <Info label="未配置備援" value={String(gapCoverageAnalysis.ownUnassigned + gapCoverageAnalysis.supportUnassigned)} />
                         </>
                       ) : (
@@ -3414,6 +3495,7 @@ export default function App() {
                       <Info label="排除後缺口" value={String(gapCoverageAnalysis.shortage)} />
                       <Info label="瓶頸站點" value={String(gapCoverageAnalysis.rows.filter((row) => row.bottleneck).length)} />
                     </div>
+                    <details className="analysis-method"><summary>計算口徑</summary>
                     {gapDay === "當班" && (
                       <p className="muted">可作業人力為排除領班、組長、主任後的人數；未配置者保留為備援，不代表人員遺失。</p>
                     )}
@@ -3422,9 +3504,28 @@ export default function App() {
                         ? "進入頁面即依目前班別計算全勤覆蓋。此區預設排除領班、組長、主任；下方會列出可緊急支援的缺口。"
                         : "第一天、第二天會先把對班支援人力配置到合格站點，再由本班人力補位；未被使用的本班人力保留為備援與訓練空間。此區預設排除領班、組長、主任。"}
                     </p>
+                    </details>
                   </div>
 
-                  <div className="panel officer-relief-panel">
+                  <CoverageConfigurationOverview
+                    title={gapSimulationAnalysis ? "情境模擬配置" : gapAbsentIds.length ? "缺勤後配置" : "全站配置"}
+                    contextLabel={gapSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}
+                    description="先核對缺口，再查看完整指派與人員來源。"
+                    assignmentLabel={gapSimulationAnalysis ? "模擬指派" : "最佳指派"}
+                    shortageLabel="全站缺口"
+                    rows={gapConfigurationRows}
+                    detailsOpen={gapConfigurationDetailsOpen}
+                    onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
+                    onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
+                  />
+                  {gapSimulationResult?.violations.length ? <div className="bootstrap-error-banner" role="alert">未採用的模擬：{gapSimulationResult.violations.map((item) => item.message).join("；")}</div> : null}
+                  <div className="analysis-view-tabs" role="group" aria-label="分析工作項目">
+                    {([ ["overview", "目前缺口"], ["absence", "缺勤測試"], ["training", "補訓計畫"], ["support", "幹部支援"] ] as const).map(([key, label]) =>
+                      <button type="button" key={key} aria-pressed={gapView === key} onClick={() => setGapView(key)}>{label}</button>
+                    )}
+                  </div>
+
+                  <div className="panel officer-relief-panel" hidden={gapView !== "support"}>
                     <div className="panel-header">
                       <h3>幹部緊急支援評估</h3>
                       <div className="panel-header-actions">
@@ -3457,7 +3558,7 @@ export default function App() {
                     ) : <p className="muted">目前沒有自動判定需要領班/組長/主任支援的缺口；可按「自訂支援」手動選人與站點測試。</p>}
                   </div>
 
-                  <div className="panel resilience-panel">
+                  <div className="panel resilience-panel" hidden={gapView !== "absence"}>
                     <div className="panel-header">
                       <div>
                         <h3>缺勤韌性分析</h3>
@@ -3501,8 +3602,8 @@ export default function App() {
                     ) : null}
                   </div>
 
-                  <div className="grid two">
-                    <div className="panel">
+                  <div className="analysis-options">
+                    <div className="panel" hidden={gapView !== "absence"}>
                       <div className="panel-header">
                         <h3>指定缺勤情境</h3>
                         <div className="panel-header-actions">
@@ -3531,7 +3632,7 @@ export default function App() {
                             return (
                               <button type="button" className={`list-row absent-toggle ${selected ? "active danger" : ""}`} key={item.employeeId} onClick={() => toggleGapAbsentPerson(item.employeeId)}>
                                 <strong>{person?.name || item.employeeId}</strong>
-                                <span>{selected ? "人員缺勤｜" : ""}缺席後缺 {item.shortage} 人｜影響 {stations || "-"}</span>
+                                <span>{selected ? "人員缺勤｜" : ""}原缺 {gapCoverageAnalysis.shortage}、新增 {Math.max(0, item.shortage - gapCoverageAnalysis.shortage)}、合計 {item.shortage} 人｜影響 {stations || "-"}</span>
                               </button>
                             );
                           })}
@@ -3539,7 +3640,7 @@ export default function App() {
                       ) : <p className="muted">目前沒有偵測到單一人員缺席後會擴大缺口。</p>}
                     </div>
 
-                    <div className="panel">
+                    <div className="panel" hidden={gapView !== "training"}>
                       <div className="panel-header">
                         <h3>補訓效益建議</h3>
                         <div className="panel-header-actions">
@@ -3571,7 +3672,7 @@ export default function App() {
                                 onClick={() => openGapTrainingPicker(item.employeeId, item.stationId, "recommendation")}
                               >
                                 <strong>{person?.name || item.employeeId}</strong>
-                                <span>推薦：{station?.name || item.stationId}｜{item.priority}｜{item.reason}｜目前合格 {item.qualificationCount} 站{item.estimated ? "｜成效為抽樣估算" : ""}</span>
+                                <span>推薦：{station?.name || item.stationId}｜{item.priority}｜{item.reason}｜目前合格 {item.qualificationCount} 站｜成效驗證 {item.evaluatedScenarios}/{item.availableScenarios} 組{item.estimated ? "（估算）" : "（完整）"}</span>
                               </button>
                             );
                           })}
@@ -3631,7 +3732,7 @@ export default function App() {
                           <Info label="目前缺口" value={String(gapActiveCoverageAnalysis.shortage)} />
                           <Info label="導入後缺口" value={String(gapTrainingSimulationAnalysis.shortage)} />
                           <Info label="可減少缺口" value={String(reduced)} />
-                          <Info label="導入後覆蓋" value={`${gapTrainingSimulationAnalysis.assigned}/${gapTrainingSimulationAnalysis.required}`} />
+                          <Info label="導入後覆蓋" value={`${gapTrainingSimulationAnalysis.required - gapTrainingSimulationAnalysis.shortage}/${gapTrainingSimulationAnalysis.required}`} />
                           <Info label="重複指派" value={duplicatedAssignedNames.length ? duplicatedAssignedNames.join("、") : "0"} />
                         </div>
                         <table className="table">
@@ -3765,7 +3866,10 @@ export default function App() {
                               type="button"
                               className={`menu-option ${gapOfficerPickerId === person.id ? "active" : ""}`}
                               key={person.id}
-                              onClick={() => setGapOfficerPickerId(person.id)}
+                              onClick={() => {
+                                setGapOfficerPickerId(person.id);
+                                setGapOfficerPickerStationId(gapRules.find((rule) => getStationQualificationStatus(data.qualifications, person.id, rule.stationId) === "合格")?.stationId || "");
+                              }}
                             >
                               <strong>{person.name}</strong>
                               <span>{person.role || "-"}</span>
@@ -3775,7 +3879,8 @@ export default function App() {
                         <label className="manual-extra-dialog-field">
                           支援站點
                           <select value={gapOfficerPickerStationId} onChange={(event) => setGapOfficerPickerStationId(event.target.value)}>
-                            {gapRules.map((rule) => {
+                            <option value="">請選擇合格站點</option>
+                            {gapRules.filter((rule) => getStationQualificationStatus(data.qualifications, gapOfficerPickerId, rule.stationId) === "合格").map((rule) => {
                               const station = data.stations.find((item) => item.id === rule.stationId);
                               const row = gapActiveCoverageAnalysis.rows.find((item) => item.stationId === rule.stationId);
                               return (
@@ -3927,7 +4032,7 @@ export default function App() {
                         <Info label="原最佳覆蓋" value={`${gapCoverageAnalysis.assigned}/${gapCoverageAnalysis.required}`} />
                         <Info label="缺勤後覆蓋" value={`${gapAbsentAnalysis.assigned}/${gapAbsentAnalysis.required}`} />
                         <Info label="新增缺口" value={String(Math.max(0, gapAbsentAnalysis.shortage - gapCoverageAnalysis.shortage))} />
-                        <Info label="受影響站點" value={String(gapAbsentAnalysis.rows.filter((row) => row.shortage > 0).length)} />
+                        <Info label="新增／惡化站點" value={String(gapAbsentAnalysis.rows.filter((row) => row.shortage > (gapCoverageAnalysis.rows.find((before) => before.stationId === row.stationId)?.shortage || 0)).length)} />
                       </div>
                       <table className="table">
                         <thead>
@@ -3958,21 +4063,6 @@ export default function App() {
                     </div>
                   ) : null}
 
-                  <CoverageConfigurationOverview
-                    title={gapTrainingSimulationAnalysis ? "情境模擬配置" : gapAbsentIds.length ? "缺勤後配置" : "全站配置"}
-                    contextLabel={gapTrainingSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}
-                    description={gapTrainingSimulationAnalysis
-                      ? "已套用補訓、幹部導入與缺勤條件；摘要只顯示需要關注的站點。"
-                      : gapAbsentIds.length
-                        ? "已排除模擬缺勤人員；摘要只顯示缺口、瓶頸與配置變動。"
-                        : "先查看全站結論與風險站點，需要核對人員來源時再開啟詳細資料。"}
-                    assignmentLabel={gapTrainingSimulationAnalysis ? "模擬指派" : gapAbsentIds.length ? "缺勤後指派" : "最佳指派"}
-                    shortageLabel={gapTrainingSimulationAnalysis ? "模擬缺口" : gapAbsentIds.length ? "缺勤後缺口" : "全站缺口"}
-                    rows={gapConfigurationRows}
-                    detailsOpen={gapConfigurationDetailsOpen}
-                    onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
-                    onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
-                  />
                 </>
               ) : <Empty text="找不到此班別的正式站點規則，無法進行缺口分析。" />}
 
@@ -4026,6 +4116,7 @@ export default function App() {
                   </select>
                   <button className="primary" type="button" onClick={runManualPlan}>重新自動安排</button>
                   <button className="ghost" type="button" onClick={saveManualScheduleDraft}>儲存草稿</button>
+                  <ScheduleDraftPicker team={manualShift} day={manualDay} hasChanges={hasManualAssignments} onRestore={restoreManualDraft} />
                 </div>
                 <div className="detail-grid">
                   <Info label="本籍出勤" value={String(manualAttendance.localCount)} />
@@ -4055,7 +4146,7 @@ export default function App() {
                                 onChange={(event) => setManualOfficerStations((current) => ({ ...current, [person.id]: event.target.value }))}
                               >
                                 <option value="">站點選單</option>
-                                {manualDisplayRules.map((rule) => {
+                                {manualDisplayRules.filter((rule) => getStationQualificationStatus(data.qualifications, person.id, rule.stationId) === "合格").map((rule) => {
                                   const station = data.stations.find((item) => item.id === rule.stationId);
                                   return <option key={rule.stationId} value={rule.stationId}>{station?.name || rule.stationId}</option>;
                                 })}
@@ -4110,7 +4201,7 @@ export default function App() {
                     const stationLeaderIds = Object.entries(manualOfficerStations)
                       .filter(([, stationId]) => stationId === rule.stationId)
                       .map(([employeeId]) => employeeId);
-                    const coveredCount = new Set([...selectedIds, ...stationLeaderIds]).size;
+                    const coveredCount = manualSafety.stationChecks.find((check) => check.stationId === rule.stationId)?.covered || 0;
                     const required = Number(rule.minRequired || 0);
                     const maxAssignable = Number(rule.maxAssignable || 0);
                     const stationStatusClass = required > 0
@@ -4415,6 +4506,7 @@ export default function App() {
                     {manualPreviewStyle === "matrix" ? (
                       <div className="schedule-paper schedule-matrix-paper">
                         <ABScheduleMatrix
+                          rotation={manualRotation}
                           team={manualSchedulePreview.team}
                           day={manualDay}
                           mode={manualMode}

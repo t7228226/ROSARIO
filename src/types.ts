@@ -81,7 +81,20 @@ export interface Qualification {
   rawStatus?: string;
 }
 
+export type OperationReceipt = {
+  operationId: string; action: string; ownerId?: string;
+  status: "processing" | "success" | "failed" | "unknown" | "reviewed";
+  code?: string; createdAt: number; updatedAt: number; revision?: number;
+};
+export type WriteProgress = OperationReceipt & { phase: "sending" | "checking" | "retrying" | "settled" };
+
 export interface AppBootstrap {
+  revision?: number;
+  capabilities?: { operationReceipts?: boolean; revision?: boolean };
+  recentOperations?: OperationReceipt[];
+  viewableRuleTeams?: string[];
+  editableRuleTeams?: string[];
+  managementStationRules?: StationRule[];
   people: Person[];
   stations: Station[];
   qualifications: Qualification[];

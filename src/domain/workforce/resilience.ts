@@ -1,9 +1,12 @@
 import {
   getApplicableRules,
   getAttendanceForTeam,
+  getCoverageQualificationStatus,
   getQualificationCountMap,
   getRuleNeed,
   solveCoverageMatching,
+  validateForcedAssignments,
+  type CoverageAssignmentViolation,
 } from "../../lib/selectors";
 import type {
   Person,
@@ -27,6 +30,8 @@ export interface ResilienceInput {
   people: Person[];
   qualifications: Qualification[];
   maxAbsences: number;
+  unavailableIds?: string[];
+  forcedAssignments?: Array<{ employeeId: string; stationId: string }>;
 }
 
 export interface ResilienceLevelResult {
@@ -91,6 +96,9 @@ export interface ResilienceTrainingSuggestion {
   coverageRateBefore: number;
   coverageRateAfter: number;
   estimated: boolean;
+  evaluatedScenarios: number;
+  availableScenarios: number;
+  shortageSlotsAdded: number;
   priority: "當前缺口" | "預防補強" | "交叉覆蓋";
   reason: string;
 }
@@ -112,6 +120,7 @@ export interface CoverageResilienceResult {
   sharedBottlenecks: SharedQualificationBottleneck[];
   supportDependencies: SupportDependency[];
   trainingSuggestions: ResilienceTrainingSuggestion[];
+  violations: CoverageAssignmentViolation[];
 }
 
 interface ScenarioSnapshot {
@@ -136,7 +145,7 @@ function isOfficer(person: Person) {
 }
 
 function clampMaxAbsences(value: number, workerCount: number) {
-  return Math.max(1, Math.min(5, workerCount, Math.floor(Number(value) || 1)));
+  return Math.max(0, Math.min(5, workerCount, Math.floor(Number(value) || 1)));
 }
 
 export function countCombinations(total: number, selected: number) {
@@ -210,7 +219,8 @@ function solveScenario(
   mode: ShiftMode,
   unavailableIds: Set<string>,
   ownIds: Set<string>,
-  supportIds: Set<string>
+  supportIds: Set<string>,
+  forcedAssignments = new Map<string, string>()
 ): SolvedScenario {
   const { assignedByStation, qualifiedByStation } = solveCoverageMatching(
     rules,
@@ -220,7 +230,8 @@ function solveScenario(
     unavailableIds,
     mode === "當班" ? "資格優先" : "支援優先",
     ownIds,
-    supportIds
+    supportIds,
+    forcedAssignments
   );
   const shortageByStation = new Map<string, number>();
   let totalShortage = 0;
@@ -323,31 +334,19 @@ function buildSupportDependencies(
     );
 }
 
-function selectTrainingEvaluationScenarios(scenarios: ScenarioSnapshot[]) {
-  if (scenarios.length <= TRAINING_EVALUATION_LIMIT) return scenarios;
-  const sorted = [...scenarios].sort((a, b) =>
-    b.addedShortage - a.addedShortage || a.absenceCount - b.absenceCount
-  );
-  const selected: ScenarioSnapshot[] = [];
-  const step = sorted.length / TRAINING_EVALUATION_LIMIT;
-  for (let index = 0; index < TRAINING_EVALUATION_LIMIT; index += 1) {
-    selected.push(sorted[Math.min(sorted.length - 1, Math.floor(index * step))]);
-  }
-  return selected;
-}
-
 function buildTrainingSuggestions(
   rules: StationRule[],
   workingPeople: Person[],
   qualifications: Qualification[],
   mode: ShiftMode,
   baseline: SolvedScenario,
-  riskScenarios: ScenarioSnapshot[],
+  evaluationScenarios: ScenarioSnapshot[],
   stationRisks: StationResilienceRisk[],
   testedCombinations: number,
-  fullyCoveredScenarios: number,
+  exhaustive: boolean,
   ownIds: Set<string>,
-  supportIds: Set<string>
+  supportIds: Set<string>,
+  forcedAssignments: Map<string, string>
 ) {
   const qualificationCountMap = getQualificationCountMap(workingPeople, qualifications);
   const targetStationIds = [
@@ -360,27 +359,24 @@ function buildTrainingSuggestions(
 
   if (!targetStationIds.length) return [];
 
-  const evaluationScenarios = selectTrainingEvaluationScenarios(riskScenarios);
-  const exactRiskEvaluation = evaluationScenarios.length === riskScenarios.length
-    && riskScenarios.every((scenario) => scenario.exhaustiveLevel);
-  const coverageRateBefore = testedCombinations
-    ? (fullyCoveredScenarios / testedCombinations) * 100
+  const exactRiskEvaluation = exhaustive && evaluationScenarios.length === testedCombinations;
+  const fullyCoveredBefore = evaluationScenarios.filter((scenario) => scenario.totalShortage === 0).length;
+  const coverageRateBefore = evaluationScenarios.length
+    ? (fullyCoveredBefore / evaluationScenarios.length) * 100
     : baseline.totalShortage === 0 ? 100 : 0;
   const candidates: ResilienceTrainingSuggestion[] = [];
 
   const trainingPeople = mode === "當班"
-    ? workingPeople
-    : workingPeople.filter((person) => ownIds.has(person.id));
+    ? workingPeople.filter((person) => !forcedAssignments.has(person.id))
+    : workingPeople.filter((person) => ownIds.has(person.id) && !forcedAssignments.has(person.id));
   const baselineAssignedIds = new Set([...baseline.assignedByStation.values()].flat());
 
   for (const stationId of targetStationIds) {
     const stationCandidateEvaluations = trainingPeople
-      .filter((person) => !qualifications.some((item) =>
-        item.employeeId === person.id && item.stationId === stationId && Boolean(item.status)
-      ))
+      .filter((person) => !["合格", "不可排"].includes(getCoverageQualificationStatus(qualifications, person.id, stationId)))
       .map((person) => {
         const simulatedQualifications: Qualification[] = [
-          ...qualifications,
+          ...qualifications.filter((item) => item.employeeId !== person.id || item.stationId !== stationId),
           {
             employeeId: person.id,
             employeeName: person.name,
@@ -395,7 +391,8 @@ function buildTrainingSuggestions(
           mode,
           new Set<string>(),
           ownIds,
-          supportIds
+          supportIds,
+          new Map([...forcedAssignments, [person.id, stationId]])
         );
         return {
           person,
@@ -404,7 +401,8 @@ function buildTrainingSuggestions(
           baselineShortageReduced: Math.max(0, baseline.totalShortage - simulatedBaseline.totalShortage),
           currentlyUnassigned: !baselineAssignedIds.has(person.id),
         };
-      });
+      })
+      .filter((candidate) => candidate.simulatedBaseline.totalShortage <= baseline.totalShortage);
     const stationCandidates = [
       ...stationCandidateEvaluations.filter((item) => item.baselineShortageReduced > 0),
       ...stationCandidateEvaluations.filter((item) => item.currentlyUnassigned),
@@ -420,36 +418,37 @@ function buildTrainingSuggestions(
       .slice(0, TRAINING_CANDIDATE_LIMIT);
 
     for (const candidate of stationCandidates) {
-      const { person, simulatedQualifications, simulatedBaseline, baselineShortageReduced } = candidate;
+      const { person, simulatedQualifications, baselineShortageReduced } = candidate;
       let riskScenariosResolved = 0;
       let shortageSlotsReduced = 0;
-      let evaluated = 0;
+      let shortageSlotsAdded = 0;
+      let fullyCoveredAfter = 0;
+      const trainingAssignments = new Map([...forcedAssignments, [person.id, stationId]]);
 
       for (const scenario of evaluationScenarios) {
-        if (scenario.absentIds.includes(person.id)) continue;
-        evaluated += 1;
-        const simulated = solveScenario(
+        // Candidate-absent cases stay in the same denominator and cannot benefit.
+        const simulatedShortage = scenario.absentIds.includes(person.id) ? scenario.totalShortage : solveScenario(
           rules,
           workingPeople,
           simulatedQualifications,
           mode,
           new Set(scenario.absentIds),
           ownIds,
-          supportIds
-        );
-        shortageSlotsReduced += Math.max(0, scenario.totalShortage - simulated.totalShortage);
-        if (scenario.addedShortage > 0 && simulated.totalShortage <= baseline.totalShortage) {
+          supportIds,
+          trainingAssignments
+        ).totalShortage;
+        if (simulatedShortage === 0) fullyCoveredAfter += 1;
+        shortageSlotsReduced += Math.max(0, scenario.totalShortage - simulatedShortage);
+        shortageSlotsAdded += Math.max(0, simulatedShortage - scenario.totalShortage);
+        if (scenario.addedShortage > 0 && simulatedShortage <= baseline.totalShortage) {
           riskScenariosResolved += 1;
         }
       }
 
-      if (!baselineShortageReduced && !riskScenariosResolved && !shortageSlotsReduced) continue;
+      if (!baselineShortageReduced && (shortageSlotsReduced <= shortageSlotsAdded || fullyCoveredAfter < fullyCoveredBefore)) continue;
 
-      const resolvedEstimate = exactRiskEvaluation || !evaluated
-        ? riskScenariosResolved
-        : (riskScenariosResolved / evaluated) * riskScenarios.length;
-      const coverageRateAfter = baseline.totalShortage === 0 && testedCombinations
-        ? Math.min(100, ((fullyCoveredScenarios + resolvedEstimate) / testedCombinations) * 100)
+      const coverageRateAfter = evaluationScenarios.length
+        ? (fullyCoveredAfter / evaluationScenarios.length) * 100
         : coverageRateBefore;
       const priority: ResilienceTrainingSuggestion["priority"] = baselineShortageReduced > 0
         ? "當前缺口"
@@ -469,9 +468,12 @@ function buildTrainingSuggestions(
         baselineShortageReduced,
         riskScenariosResolved,
         shortageSlotsReduced,
+        shortageSlotsAdded,
         coverageRateBefore,
         coverageRateAfter,
         estimated: !exactRiskEvaluation,
+        evaluatedScenarios: evaluationScenarios.length,
+        availableScenarios: testedCombinations,
         priority,
         reason,
       });
@@ -481,7 +483,7 @@ function buildTrainingSuggestions(
   candidates.sort((a, b) =>
     b.baselineShortageReduced - a.baselineShortageReduced ||
     b.riskScenariosResolved - a.riskScenariosResolved ||
-    b.shortageSlotsReduced - a.shortageSlotsReduced ||
+    (b.shortageSlotsReduced - b.shortageSlotsAdded) - (a.shortageSlotsReduced - a.shortageSlotsAdded) ||
     a.qualificationCount - b.qualificationCount ||
     a.stationId.localeCompare(b.stationId, "zh-Hant", { numeric: true })
   );
@@ -495,11 +497,23 @@ function buildTrainingSuggestions(
 
 export function analyzeCoverageResilience(input: ResilienceInput): CoverageResilienceResult {
   const attendance = getAttendanceForTeam(input.people, input.team, input.mode);
-  const workingPeople = attendance.all.filter((person) => !isOfficer(person));
+  const rules = getApplicableRules(input.team, input.mode, input.stationRules);
+  const unavailableIds = new Set(input.unavailableIds || []);
+  const requestedAssignments = new Map<string, string>();
+  const duplicateAssignments: CoverageAssignmentViolation[] = [];
+  (input.forcedAssignments || []).forEach(({ employeeId, stationId }) => {
+    if (requestedAssignments.has(employeeId)) duplicateAssignments.push({
+      code: "DUPLICATE_ASSIGNMENT", employeeId, stationId, message: `${employeeId} 同時被指定到多個站點`,
+    });
+    else requestedAssignments.set(employeeId, stationId);
+  });
+  const { validAssignments: forcedAssignments, violations } = validateForcedAssignments(rules, attendance.all, input.qualifications,
+    unavailableIds, requestedAssignments);
+  violations.push(...duplicateAssignments);
+  const workingPeople = attendance.all.filter((person) => !unavailableIds.has(person.id) && (!isOfficer(person) || forcedAssignments.has(person.id)));
   const workingPersonIds = new Set(workingPeople.map((person) => person.id));
   const ownIds = new Set(attendance.own.map((person) => person.id).filter((id) => workingPersonIds.has(id)));
   const supportIds = new Set(attendance.support.map((person) => person.id).filter((id) => workingPersonIds.has(id)));
-  const rules = getApplicableRules(input.team, input.mode, input.stationRules);
   const maxAbsences = clampMaxAbsences(input.maxAbsences, workingPeople.length);
   const baseline = solveScenario(
     rules,
@@ -508,7 +522,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     input.mode,
     new Set<string>(),
     ownIds,
-    supportIds
+    supportIds,
+    forcedAssignments
   );
   const withoutSupport = supportIds.size
     ? solveScenario(
@@ -518,7 +533,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         input.mode,
         new Set(supportIds),
         ownIds,
-        supportIds
+        supportIds,
+        forcedAssignments
       )
     : null;
   const baselineRequired = rules.reduce((sum, rule) => sum + getRuleNeed(rule, input.mode), 0);
@@ -528,9 +544,11 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
   const levels: ResilienceLevelResult[] = [];
   const riskScenarios: ScenarioSnapshot[] = [];
   const minimalRiskScenarios: ScenarioSnapshot[] = [];
+  const trainingScenarios: ScenarioSnapshot[] = [];
+  const trainingRandom = createSeededRandom(workerIds.length * 65_537 + maxAbsences);
+  let seenTrainingScenarios = 0;
   let totalCombinations = 0;
   let testedCombinations = 0;
-  let fullyCoveredScenarios = 0;
 
   for (let absenceCount = 1; absenceCount <= maxAbsences; absenceCount += 1) {
     const possible = countCombinations(workerIds.length, absenceCount);
@@ -551,14 +569,12 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         input.mode,
         new Set(absentIds),
         ownIds,
-        supportIds
+        supportIds,
+        forcedAssignments
       );
       const addedShortage = Math.max(0, scenario.totalShortage - baseline.totalShortage);
       if (scenario.totalShortage === 0) levelFullyCovered += 1;
       if (scenario.totalShortage <= baseline.totalShortage) levelBaselineMaintained += 1;
-      if (addedShortage <= 0) continue;
-
-      levelRiskScenarios += 1;
       const affectedStations = rules
         .map((rule) => {
           const shortage = scenario.shortageByStation.get(rule.stationId) || 0;
@@ -578,6 +594,16 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         affectedStations,
         exhaustiveLevel: exhaustive,
       };
+      // A shared uniform reservoir keeps before/after estimates paired, including safe cases.
+      seenTrainingScenarios += 1;
+      if (trainingScenarios.length < TRAINING_EVALUATION_LIMIT) trainingScenarios.push(snapshot);
+      else {
+        const index = Math.floor(trainingRandom() * seenTrainingScenarios);
+        if (index < TRAINING_EVALUATION_LIMIT) trainingScenarios[index] = snapshot;
+      }
+      if (addedShortage <= 0) continue;
+
+      levelRiskScenarios += 1;
       riskScenarios.push(snapshot);
       const isMinimal = !minimalRiskScenarios.some((item) => isSubset(item.absentIds, absentIds));
       if (isMinimal) minimalRiskScenarios.push(snapshot);
@@ -585,7 +611,6 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
 
     totalCombinations += possible;
     testedCombinations += combinations.length;
-    fullyCoveredScenarios += levelFullyCovered;
     levels.push({
       absenceCount,
       totalCombinations: possible,
@@ -646,12 +671,13 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     input.qualifications,
     input.mode,
     baseline,
-    riskScenarios,
+    trainingScenarios,
     stationRisks,
     testedCombinations,
-    fullyCoveredScenarios,
+    levels.every((item) => item.exhaustive),
     ownIds,
-    supportIds
+    supportIds,
+    forcedAssignments
   );
 
   return {
@@ -671,5 +697,6 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     sharedBottlenecks,
     supportDependencies,
     trainingSuggestions,
+    violations,
   };
 }

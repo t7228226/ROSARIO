@@ -55,6 +55,8 @@ function useDialogFocusManagement(open: boolean, onClose: () => void) {
     }, 0);
 
     function handleKeyDown(event: KeyboardEvent) {
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== panelRef.current) return;
       if (event.key === "Escape") {
         event.preventDefault();
         onCloseRef.current();

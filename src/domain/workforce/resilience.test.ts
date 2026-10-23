@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Person, Qualification, StationRule } from "../../types";
 import { analyzeCoverageResilience, countCombinations } from "./resilience";
+import { evaluateWorkforceScenario } from "./engine";
 
 const team = "翊展班" as const;
 
@@ -180,5 +181,105 @@ describe("analyzeCoverageResilience", () => {
     assert.equal(result.exhaustive, false);
     assert.equal(result.trainingSuggestions.length > 0, true);
     assert.equal(result.trainingSuggestions.every((item) => item.estimated), true);
+  });
+
+  it("includes existing trainees as completion candidates but never blocked workers", () => {
+    const result = analyzeCoverageResilience({
+      team, mode: "當班", people: [person("Q"), person("T"), person("BLOCKED")], stationRules: [rule("A")],
+      qualifications: [qualification("Q", "A"), { employeeId: "T", stationId: "A", status: "訓練中" }, { employeeId: "BLOCKED", stationId: "A", status: "不可排" }],
+      maxAbsences: 1,
+    });
+    const completion = result.trainingSuggestions.find((item) => item.employeeId === "T");
+    assert.ok(completion);
+    assert.ok(Math.abs(completion.coverageRateBefore - 200 / 3) < 1e-10);
+    assert.equal(completion.coverageRateAfter, 100);
+    assert.equal(result.trainingSuggestions.some((item) => item.employeeId === "BLOCKED"), false);
+  });
+
+  it("includes candidate-absent cases in the common counterfactual denominator", () => {
+    const result = analyzeCoverageResilience({
+      team, mode: "當班", people: [person("Q"), person("T")], stationRules: [rule("A")],
+      qualifications: [qualification("Q", "A")], maxAbsences: 2,
+    });
+    const suggestion = result.trainingSuggestions.find((item) => item.employeeId === "T");
+    assert.ok(suggestion);
+    assert.equal(suggestion.evaluatedScenarios, 3);
+    assert.equal(suggestion.availableScenarios, 3);
+    assert.ok(Math.abs(suggestion.coverageRateBefore - 100 / 3) < 1e-10);
+    assert.ok(Math.abs(suggestion.coverageRateAfter - 200 / 3) < 1e-10);
+    assert.equal(suggestion.estimated, false);
+  });
+
+  it("does not extrapolate candidate-present success to 100% in a capped training sample", () => {
+    const people = Array.from({ length: 25 }, (_, index) => person(`P-${index}`));
+    const result = analyzeCoverageResilience({ team, mode: "當班", people, stationRules: [rule("A")],
+      qualifications: [qualification(people[0].id, "A")], maxAbsences: 4 });
+    assert.equal(result.exhaustive, true);
+    assert.equal(result.testedCombinations, 15_275);
+    assert.ok(result.trainingSuggestions.length);
+    for (const suggestion of result.trainingSuggestions) {
+      assert.equal(suggestion.estimated, true);
+      assert.equal(suggestion.evaluatedScenarios, 600);
+      assert.equal(suggestion.availableScenarios, 15_275);
+      assert.ok(suggestion.coverageRateAfter < 100);
+      assert.ok(suggestion.coverageRateAfter >= suggestion.coverageRateBefore);
+    }
+  });
+
+  it("preserves worker locks in baseline, absences and training counterfactuals", () => {
+    const result = analyzeCoverageResilience({
+      team, mode: "當班", people: [person("X"), person("Y"), person("T")], stationRules: [rule("A"), rule("B")],
+      qualifications: [qualification("X", "A"), qualification("X", "B"), qualification("Y", "A"), { employeeId: "T", stationId: "B", status: "不可排" }],
+      forcedAssignments: [{ employeeId: "X", stationId: "A" }], maxAbsences: 1,
+    });
+    assert.equal(result.baselineShortage, 1);
+    assert.equal(result.trainingSuggestions.some((item) => item.employeeId === "T" && item.baselineShortageReduced > 0), false);
+    assert.equal(result.trainingSuggestions.some((item) => item.employeeId === "X"), false);
+  });
+
+  it("counts improvement over an already-short baseline instead of freezing the after rate", () => {
+    const result = analyzeCoverageResilience({ team, mode: "當班", people: [person("T"), person("OTHER")],
+      stationRules: [rule("A")], qualifications: [], maxAbsences: 1 });
+    const suggestion = result.trainingSuggestions.find((item) => item.employeeId === "T");
+    assert.ok(suggestion);
+    assert.equal(suggestion.coverageRateBefore, 0);
+    assert.equal(suggestion.coverageRateAfter, 50);
+  });
+
+  it("uses the same locked training placement as the engine in all small absence cases", () => {
+    const people = [person("A"), person("B"), person("FLEX"), person("T")];
+    const qualifications = [qualification("A", "A"), qualification("B", "B"), qualification("FLEX", "A"), qualification("FLEX", "B")];
+    const result = analyzeCoverageResilience({ team, mode: "當班", people, stationRules: [rule("A"), rule("B")], qualifications,
+      forcedAssignments: [{ employeeId: "A", stationId: "A" }], maxAbsences: 2 });
+    assert.ok(result.trainingSuggestions.length);
+    for (const suggestion of result.trainingSuggestions) {
+      let coveredBefore = 0;
+      let coveredAfter = 0;
+      let scenarios = 0;
+      for (let mask = 1; mask < 1 << people.length; mask += 1) {
+        const unavailableIds = people.filter((_, index) => mask & (1 << index)).map((person) => person.id);
+        if (unavailableIds.length > 2) continue;
+        const assignments = [{ employeeId: "A", stationId: "A", source: "manual" as const }].filter((item) => !unavailableIds.includes(item.employeeId));
+        const snapshot = { people, qualifications, stationRules: [rule("A"), rule("B")], stations: [] };
+        const before = evaluateWorkforceScenario(snapshot, { team, mode: "當班", unavailableIds, assignments });
+        const after = evaluateWorkforceScenario(snapshot, { team, mode: "當班", unavailableIds, assignments: [
+          ...assignments, ...(!unavailableIds.includes(suggestion.employeeId) ? [{ employeeId: suggestion.employeeId, stationId: suggestion.stationId, source: "training" as const }] : []),
+        ] });
+        if (before.analysis.shortage === 0) coveredBefore += 1;
+        if (after.analysis.shortage === 0) coveredAfter += 1;
+        scenarios += 1;
+      }
+      assert.equal(suggestion.evaluatedScenarios, scenarios);
+      assert.equal(suggestion.coverageRateBefore, coveredBefore / scenarios * 100);
+      assert.equal(suggestion.coverageRateAfter, coveredAfter / scenarios * 100);
+    }
+  });
+
+  it("rejects duplicate lock entries instead of silently replacing their station", () => {
+    const result = analyzeCoverageResilience({ team, mode: "當班", people: [person("X")], stationRules: [rule("A"), rule("B")],
+      qualifications: [qualification("X", "A"), qualification("X", "B")], maxAbsences: 1,
+      forcedAssignments: [{ employeeId: "X", stationId: "A" }, { employeeId: "X", stationId: "B" }] });
+    assert.ok(result.violations.some((item) => item.code === "DUPLICATE_ASSIGNMENT"));
+    assert.equal(result.baselineAssigned, 1);
   });
 });

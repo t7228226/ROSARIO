@@ -36,6 +36,13 @@ function createSheet(rows, { failAppend = false } = {}) {
           sheet.rows[rowNumber - 1][columnNumber - 1] = value;
           return range;
         },
+        setValues(values) {
+          values.forEach((cells, y) => cells.forEach((value, x) => {
+            while (sheet.rows.length < rowNumber + y) sheet.rows.push([]);
+            sheet.rows[rowNumber + y - 1][columnNumber + x - 1] = value;
+          }));
+          return range;
+        },
         copyTo(_target, options) {
           presentationCopies.push({ rowNumber, columnNumber, rowCount, columnCount, options });
           return range;
@@ -55,7 +62,7 @@ function createSheet(rows, { failAppend = false } = {}) {
 }
 
 function createGasContext({ matrixRows, failMatrixAppend = false } = {}) {
-  const context = vm.createContext({ console });
+  const context = vm.createContext({ console, SpreadsheetApp: { flush() {} } });
   vm.runInContext(gasSource, context);
 
   const peopleSheet = createSheet([peopleHeaders]);

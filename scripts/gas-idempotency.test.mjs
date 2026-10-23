@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -19,6 +20,13 @@ function createGasContext() {
   };
   const context = vm.createContext({
     console,
+    SpreadsheetApp: { flush() {} },
+    Utilities: {
+      Charset: { UTF_8: "utf8" },
+      DigestAlgorithm: { SHA_256: "sha256" },
+      computeDigest: (_algorithm, value) => [...createHash("sha256").update(String(value)).digest()],
+      base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url"),
+    },
     LockService: {
       getDocumentLock: () => lock,
       getScriptLock: () => lock,

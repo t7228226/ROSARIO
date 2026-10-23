@@ -21,6 +21,7 @@ function createGasContext({ role = "技術員", allowedPermissions = ["PERM_005"
   let uuidCounter = 0;
   const context = vm.createContext({
     console,
+    SpreadsheetApp: { flush() {} },
     LockService: {
       getDocumentLock: () => lock,
       getScriptLock: () => lock,
@@ -67,6 +68,8 @@ function createGasContext({ role = "技術員", allowedPermissions = ["PERM_005"
     return [];
   };
   context.assertWritableAppVersion_ = () => true;
+  context.syncDataRevision_ = () => context.getDataRevision_();
+  context.storeDataFingerprint_ = () => {};
 
   return { context, properties, accountRows, peopleRows };
 }
@@ -161,7 +164,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   const allowed = context.executeWriteRequest_(
     "upsertQualification",
-    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
+    { appVersion: "2026-10-23-012", sessionToken: login.sessionToken, operationId: "OP_auth_allowed_00000001", expectedRevision: 0 },
     {},
     () => { qualificationWrites += 1; return { ok: true }; }
   );
@@ -170,7 +173,7 @@ test("server permissions allow the matching action and reject privilege escalati
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
+    { appVersion: "2026-10-23-012", sessionToken: login.sessionToken, operationId: "OP_auth_denied_00000001", expectedRevision: 1 },
     {},
     () => { ruleWrites += 1; return { ok: true }; }
   ), /權限不足/);
@@ -184,7 +187,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
+    { appVersion: "2026-10-23-012", sessionToken: login.sessionToken, operationId: "OP_auth_own_team_00000001", expectedRevision: 0 },
     { team: "翊展班" },
     () => { writes += 1; return { ok: true }; }
   );
@@ -192,7 +195,7 @@ test("station rule writes are limited to the signed-in director's own team", () 
 
   assert.throws(() => context.executeWriteRequest_(
     "updateStationRule",
-    { appVersion: "2026-08-10-004", sessionToken: login.sessionToken },
+    { appVersion: "2026-10-23-012", sessionToken: login.sessionToken, operationId: "OP_auth_other_team_00000001", expectedRevision: 1 },
     { team: "俊志班" },
     () => { writes += 1; return { ok: true }; }
   ), /自己班別/);

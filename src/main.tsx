@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import AppErrorBoundary from "./components/AppErrorBoundary";
 import "./styles.css";
 import "./app-shell.css";
 import "./manual-schedule.css";
@@ -16,13 +17,16 @@ declare global {
 function showFatalError(title: string, detail: string) {
   const root = document.getElementById("root");
   if (!root) return;
-  root.innerHTML = `
-    <div style="padding:24px;font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif;background:#fff7f7;color:#7f1d1d;min-height:100vh;box-sizing:border-box;">
-      <h1 style="margin:0 0 12px;font-size:24px;">${title}</h1>
-      <p style="margin:0 0 12px;line-height:1.7;">頁面載入失敗，請把下方錯誤截圖提供給我。</p>
-      <pre style="white-space:pre-wrap;background:#fff;border:1px solid #fecaca;border-radius:12px;padding:12px;color:#991b1b;overflow:auto;">${detail}</pre>
-    </div>
-  `;
+  const panel = document.createElement("div");
+  panel.className = "fatal-error-panel";
+  const heading = document.createElement("h1");
+  heading.textContent = title;
+  const message = document.createElement("p");
+  message.textContent = "頁面載入失敗，請重新整理；若持續發生，請提供下方錯誤資訊。";
+  const info = document.createElement("pre");
+  info.textContent = detail;
+  panel.append(heading, message, info);
+  root.replaceChildren(panel);
 }
 
 function formatError(error: unknown) {
@@ -58,7 +62,7 @@ try {
 
   ReactDOM.createRoot(root).render(
     <React.StrictMode>
-      <App />
+      <AppErrorBoundary><App /></AppErrorBoundary>
     </React.StrictMode>
   );
 } catch (error) {

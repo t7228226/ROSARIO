@@ -122,14 +122,14 @@ export function ReviewDetailView({
         <div className="form-grid compact-form">
           <div>
             <label className="field-label">站點</label>
-            <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
+            <select aria-label="考核站點" value={stationId} onChange={(e) => setStationId(e.target.value)}>
               <option value="">請選擇站點</option>
               {stations.map((station) => <option key={station.id} value={station.id}>{station.id}｜{station.name}</option>)}
             </select>
           </div>
           <div>
             <label className="field-label">狀態</label>
-            <select value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>
+            <select aria-label="考核狀態" value={reviewStatus} onChange={(e) => setReviewStatus(e.target.value as QualificationStatus)}>
               {(["合格", "訓練中", "不可排", ""] as QualificationStatus[]).map((item) => (
                 <option key={item || "blank"} value={item}>{item || "空白"}</option>
               ))}

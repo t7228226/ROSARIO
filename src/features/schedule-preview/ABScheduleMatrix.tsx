@@ -1,6 +1,7 @@
-import { splitBalancedRotationRows } from "../../domain/workforce/rotationGroups";
+import { splitBalancedRotationRows, type RotationCoverageResult } from "../../domain/workforce/rotationGroups";
 
 export type ScheduleMatrixPerson = {
+  employeeId: string;
   name: string;
   isOfficer?: boolean;
   isTraining?: boolean;
@@ -11,9 +12,11 @@ export type ScheduleMatrixRow = {
   stationName: string;
   people: ScheduleMatrixPerson[];
   required?: number;
+  reliefRequired?: number | null;
 };
 
 type ABScheduleMatrixProps = {
+  rotation: RotationCoverageResult;
   team: string;
   day: string;
   mode: string;
@@ -66,6 +69,7 @@ function PersonCell({ person }: { person?: ScheduleMatrixPerson }) {
 }
 
 export default function ABScheduleMatrix({
+  rotation,
   team,
   day,
   mode,
@@ -109,6 +113,11 @@ export default function ABScheduleMatrix({
 
   return (
     <div className="schedule-ab-board">
+      <div className={`schedule-audit-status ${rotation.canRotate ? "is-ready" : "is-blocked"}`} role="status">
+        <strong>{rotation.canRotate ? "A/B 輪休覆蓋檢核通過" : "分組草案：輪休檢核未通過"}</strong>
+        <span>單批需求 {rotation.requiredPerGroup}｜A 組缺 {rotation.groupA.totalShortage}｜B 組缺 {rotation.groupB.totalShortage}</span>
+        {!rotation.canRotate ? <details><summary>查看輪休缺口與限制</summary><ul>{rotation.blockingIssues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></details> : null}
+      </div>
       <div className="schedule-matrix-scroll" tabIndex={0} role="region" aria-label="A、B 輪休橫向班表，可左右滑動查看">
         <div className="schedule-ab-sheet">
           <header className="schedule-ab-summary">
@@ -152,7 +161,8 @@ export default function ABScheduleMatrix({
               <tr className="schedule-ab-count-row">
                 {rows.map((row) => (
                   <th key={`count-${row.stationId}`} scope="col">
-                    <span>需求 {Math.max(0, Number(row.required || 0))}</span>
+                    <span>正班需求 {Math.max(0, Number(row.required || 0))}</span>
+                    <small>輪休單批 {row.reliefRequired ?? "未設定"}</small>
                     <strong>已排 {row.people.length}</strong>
                   </th>
                 ))}
@@ -168,7 +178,7 @@ export default function ABScheduleMatrix({
             <strong>請假人員 <span>{absentPeople.length}</span></strong>
             <div>
               {absentPeople.length
-                ? absentPeople.map((person) => <PersonCell person={person} key={person.name} />)
+                ? absentPeople.map((person) => <PersonCell person={person} key={person.employeeId} />)
                 : <span className="schedule-ab-empty">-</span>}
             </div>
           </div>

@@ -3,6 +3,7 @@ import type {
   AttendanceSummary,
   Person,
   Qualification,
+  QualificationStatus,
   ShiftMode,
   SmartAssignmentRow,
   SmartScheduleMode,
@@ -114,7 +115,7 @@ export function getAttendanceForTeam(people: Person[], selectedTeam: TeamName, m
   const supportTeam = TEAM_SUPPORT_MAP[selectedTeam];
   const ownDuty = TEAM_DUTY_MAP[selectedTeam];
   const supportDuty = TEAM_DUTY_MAP[supportTeam];
-  const baseActive = people.filter(isGeneralActivePerson);
+  const baseActive = dedupePeople(people.filter(isGeneralActivePerson));
 
   if (mode === "當班") {
     const own = baseActive.filter((person) => isOwnShiftPerson(person, selectedTeam));
@@ -170,6 +171,28 @@ export function qualificationBadge(status: string): string {
   return "badge badge-empty";
 }
 
+function mergeQualificationStatus(current: QualificationStatus, next: QualificationStatus): QualificationStatus {
+  if (current === "不可排" || next === "不可排") return "不可排";
+  if (current === "合格" || next === "合格") return "合格";
+  if (current === "訓練中" || next === "訓練中") return "訓練中";
+  return "";
+}
+
+function getStationQualificationStatuses(stationId: string, qualifications: Qualification[]) {
+  const statuses = new Map<string, QualificationStatus>();
+  qualifications.forEach((item) => {
+    if (item.stationId === stationId) {
+      statuses.set(item.employeeId, mergeQualificationStatus(statuses.get(item.employeeId) || "", item.status));
+    }
+  });
+  return statuses;
+}
+
+export function getCoverageQualificationStatus(qualifications: Qualification[], employeeId: string, stationId: string): QualificationStatus {
+  return qualifications.reduce<QualificationStatus>((status, item) =>
+    item.employeeId === employeeId && item.stationId === stationId ? mergeQualificationStatus(status, item.status) : status, "");
+}
+
 export function getStationCoverage(
   stationId: string,
   minimumNeed: number,
@@ -180,9 +203,11 @@ export function getStationCoverage(
   const activeIds = new Set(activePeople.map((person) => person.id));
   const supportIds = new Set(supportPeople.map((person) => person.id));
   const related = qualifications.filter((item) => item.stationId === stationId && activeIds.has(item.employeeId));
-  const qualifiedIds = [...new Set(related.filter((item) => item.status === "合格").map((item) => item.employeeId))];
-  const trainingIds = [...new Set(related.filter((item) => item.status === "訓練中").map((item) => item.employeeId))];
-  const blockedIds = [...new Set(related.filter((item) => item.status === "不可排").map((item) => item.employeeId))];
+  const statuses = getStationQualificationStatuses(stationId, related);
+  const idsWithStatus = (status: QualificationStatus) => [...statuses].filter(([, value]) => value === status).map(([id]) => id);
+  const qualifiedIds = idsWithStatus("合格");
+  const trainingIds = idsWithStatus("訓練中");
+  const blockedIds = idsWithStatus("不可排");
   const supportQualifiedIds = qualifiedIds.filter((id) => supportIds.has(id));
   const ownQualifiedIds = qualifiedIds.filter((id) => !supportIds.has(id));
   const shortage = Math.max(0, minimumNeed - qualifiedIds.length);
@@ -211,10 +236,10 @@ export function getQualifiedPeopleForStation(
 ) {
   const activeIds = new Set(people.map((person) => person.id));
   const allowedStatuses = allowTraining ? new Set(["合格", "訓練中"]) : new Set(["合格"]);
-  const ids = qualifications
-    .filter((item) => item.stationId === stationId && activeIds.has(item.employeeId) && allowedStatuses.has(item.status))
-    .map((item) => item.employeeId);
-  return people.filter((person) => ids.includes(person.id));
+  const ids = new Set([...getStationQualificationStatuses(stationId, qualifications)]
+    .filter(([id, status]) => activeIds.has(id) && allowedStatuses.has(status))
+    .map(([id]) => id));
+  return dedupePeople(people.filter((person) => ids.has(person.id)));
 }
 
 export function getQualificationCountMap(people: Person[], qualifications: Qualification[]) {
@@ -244,6 +269,7 @@ export interface CoverageCriticalPerson {
   employeeId: string;
   affectedStationIds: string[];
   shortage: number;
+  addedShortage: number;
 }
 
 export interface CoverageTrainingSuggestion {
@@ -277,6 +303,45 @@ export interface CoverageAnalysisResult {
   criticalPeople: CoverageCriticalPerson[];
   trainingSuggestions: CoverageTrainingSuggestion[];
   officerSuggestions: CoverageOfficerSuggestion[];
+  violations: CoverageAssignmentViolation[];
+}
+
+export interface CoverageAssignmentViolation {
+  code: "UNKNOWN_STATION" | "OUTSIDE_ATTENDANCE" | "ABSENT_ASSIGNMENT" | "QUALIFICATION_REQUIRED" | "BLOCKED_QUALIFICATION" | "DUPLICATE_ASSIGNMENT";
+  employeeId: string;
+  stationId: string;
+  message: string;
+}
+
+export function validateForcedAssignments(
+  rules: StationRule[], activePeople: Person[], qualifications: Qualification[],
+  unavailableIds: Set<string>, forcedAssignments: Map<string, string>
+) {
+  const peopleById = new Map(activePeople.map((person) => [person.id, person]));
+  const stationIds = new Set(rules.map((rule) => rule.stationId));
+  const validAssignments = new Map<string, string>();
+  const violations: CoverageAssignmentViolation[] = [];
+  forcedAssignments.forEach((stationId, employeeId) => {
+    const person = peopleById.get(employeeId);
+    const status = getCoverageQualificationStatus(qualifications, employeeId, stationId);
+    let code: CoverageAssignmentViolation["code"] | undefined;
+    if (!stationIds.has(stationId)) code = "UNKNOWN_STATION";
+    else if (unavailableIds.has(employeeId)) code = "ABSENT_ASSIGNMENT";
+    else if (!person || person.employmentStatus !== "在職") code = "OUTSIDE_ATTENDANCE";
+    else if (status === "不可排") code = "BLOCKED_QUALIFICATION";
+    else if (status !== "合格") code = "QUALIFICATION_REQUIRED";
+    if (code) {
+      const explanations = {
+        UNKNOWN_STATION: "站點不在目前規則內", OUTSIDE_ATTENDANCE: "人員不在有效出勤名單", ABSENT_ASSIGNMENT: "人員已設定缺勤",
+        BLOCKED_QUALIFICATION: "人員在此站點不可排", QUALIFICATION_REQUIRED: "人員尚無此站點正式資格",
+        DUPLICATE_ASSIGNMENT: "人員出現重複指派",
+      };
+      violations.push({ code, employeeId, stationId, message: `${person?.name || employeeId}：${explanations[code]}（${stationId}）` });
+    } else {
+      validAssignments.set(employeeId, stationId);
+    }
+  });
+  return { validAssignments, violations };
 }
 
 function getQualifiedIdsForStation(
@@ -286,11 +351,9 @@ function getQualifiedIdsForStation(
   allowedStatuses = new Set(["合格"])
 ) {
   const activeIds = new Set(activePeople.map((person) => person.id));
-  return [...new Set(
-    qualifications
-      .filter((item) => item.stationId === stationId && activeIds.has(item.employeeId) && allowedStatuses.has(item.status))
-      .map((item) => item.employeeId)
-  )];
+  return [...getStationQualificationStatuses(stationId, qualifications)]
+    .filter(([id, status]) => activeIds.has(id) && allowedStatuses.has(status))
+    .map(([id]) => id);
 }
 
 function isStationOfficer(person: Person) {
@@ -322,27 +385,25 @@ export function solveCoverageMatching(
   forcedAssignments = new Map<string, string>(),
   randomize = false
 ) {
-  const activePersonIds = new Set(activePeople.map((person) => person.id));
-  const validForcedAssignments = new Map(
-    [...forcedAssignments].filter(([personId]) => activePersonIds.has(personId) && !unavailableIds.has(personId))
-  );
+  activePeople = dedupePeople(activePeople.filter((person) => person.employmentStatus === "在職"));
+  const { validAssignments: validForcedAssignments, violations } = validateForcedAssignments(rules, activePeople, qualifications, unavailableIds, forcedAssignments);
   const forcedIds = new Set([...validForcedAssignments.keys()]);
   const forcedCountByStation = new Map<string, number>();
   validForcedAssignments.forEach((stationId) => {
     forcedCountByStation.set(stationId, (forcedCountByStation.get(stationId) || 0) + 1);
   });
-  const activeIds = new Set(activePeople.map((person) => person.id).filter((id) => !unavailableIds.has(id) && !forcedIds.has(id)));
+  const activeIds = new Set(activePeople.map((person) => person.id).filter((id) => !unavailableIds.has(id)));
   const qualifiedByStation = new Map<string, string[]>();
   const personFlex = new Map<string, number>();
 
   rules.forEach((rule) => {
     const ids = getQualifiedIdsForStation(
       rule.stationId,
-      activePeople.filter((person) => activeIds.has(person.id)),
+      activePeople.filter((person) => activeIds.has(person.id) && (!forcedIds.has(person.id) || validForcedAssignments.get(person.id) === rule.stationId)),
       qualifications
     );
     qualifiedByStation.set(rule.stationId, ids);
-    ids.forEach((id) => personFlex.set(id, (personFlex.get(id) || 0) + 1));
+    ids.filter((id) => !forcedIds.has(id)).forEach((id) => personFlex.set(id, (personFlex.get(id) || 0) + 1));
   });
 
   const slots = rules.flatMap((rule) =>
@@ -376,7 +437,7 @@ export function solveCoverageMatching(
       return [flex, supportScore, ownScore, tieBreaker];
     }
 
-    const ids = [...(qualifiedByStation.get(slot.stationId) || [])].sort((a, b) => {
+    const ids = [...(qualifiedByStation.get(slot.stationId) || [])].filter((id) => !forcedIds.has(id)).sort((a, b) => {
       const left = score(a);
       const right = score(b);
       for (let index = 0; index < left.length; index += 1) {
@@ -421,7 +482,7 @@ export function solveCoverageMatching(
     appendUniqueId(assignedByStation, stationId, personId);
   });
 
-  return { assignedByStation, qualifiedByStation };
+  return { assignedByStation, qualifiedByStation, violations };
 }
 
 export function analyzeStationCoverage(
@@ -437,7 +498,8 @@ export function analyzeStationCoverage(
   const attendance = getAttendanceForTeam(people, team, mode);
   const rules = getApplicableRules(team, mode, stationRules);
   const activePeople = attendance.all.filter((person) => !unavailableIds.has(person.id));
-  const forcedIds = new Set([...forcedAssignments.keys()]);
+  const { validAssignments, violations } = validateForcedAssignments(rules, attendance.all, qualifications, unavailableIds, forcedAssignments);
+  const forcedIds = new Set([...validAssignments.keys()]);
   const matchingPeople = options.excludeOfficersFromCoverage
     ? activePeople.filter((person) => !isStationOfficer(person) || forcedIds.has(person.id))
     : activePeople;
@@ -448,7 +510,7 @@ export function analyzeStationCoverage(
   const solveWithAttendancePriority = (
     matchingQualifications: Qualification[],
     unavailable = new Set<string>(),
-    assignments = new Map<string, string>()
+    assignments = validAssignments
   ) => solveCoverageMatching(
     rules,
     matchingPeople,
@@ -460,7 +522,7 @@ export function analyzeStationCoverage(
     supportIds,
     assignments
   );
-  const { assignedByStation, qualifiedByStation } = solveWithAttendancePriority(qualifications, new Set<string>(), forcedAssignments);
+  const { assignedByStation, qualifiedByStation } = solveWithAttendancePriority(qualifications);
   const required = rules.reduce((sum, rule) => sum + getRuleNeed(rule, mode), 0);
 
   const rows = rules.map((rule) => {
@@ -488,7 +550,7 @@ export function analyzeStationCoverage(
   });
 
   const assigned = rows.reduce((sum, row) => sum + row.assignedIds.length, 0);
-  const shortage = Math.max(0, required - assigned);
+  const shortage = rows.reduce((sum, row) => sum + row.shortage, 0);
   const assignedPersonIds = new Set(rows.flatMap((row) => row.assignedIds));
   const ownAssigned = [...assignedPersonIds].filter((id) => ownIds.has(id)).length;
   const supportAssigned = [...assignedPersonIds].filter((id) => supportIds.has(id)).length;
@@ -501,14 +563,16 @@ export function analyzeStationCoverage(
       const affectedStationIds = rules
         .map((rule) => {
           const assignedIds = next.assignedByStation.get(rule.stationId) || [];
-          return assignedIds.length < getRuleNeed(rule, mode) ? rule.stationId : "";
+          const nextShortage = Math.max(0, getRuleNeed(rule, mode) - assignedIds.length);
+          const baselineShortage = rows.find((row) => row.stationId === rule.stationId)?.shortage || 0;
+          return nextShortage > baselineShortage ? rule.stationId : "";
         })
         .filter(Boolean);
       const missing = rules.reduce((sum, rule) => {
         const assignedIds = next.assignedByStation.get(rule.stationId) || [];
         return sum + Math.max(0, getRuleNeed(rule, mode) - assignedIds.length);
       }, 0);
-      return { employeeId: person.id, affectedStationIds, shortage: missing };
+      return { employeeId: person.id, affectedStationIds, shortage: missing, addedShortage: Math.max(0, missing - shortage) };
     })
     .filter((item) => item.shortage > shortage)
     .sort((a, b) => b.shortage - a.shortage || b.affectedStationIds.length - a.affectedStationIds.length)
@@ -516,7 +580,7 @@ export function analyzeStationCoverage(
 
   const officerSuggestions = options.excludeOfficersFromCoverage
     ? activePeople
-        .filter((person) => isStationOfficer(person))
+        .filter((person) => isStationOfficer(person) && !forcedIds.has(person.id))
         .flatMap((person) =>
           rows
             .filter((row) => row.shortage > 0)
@@ -531,7 +595,7 @@ export function analyzeStationCoverage(
                 matchingStrategy,
                 ownIds,
                 supportIds,
-                new Map([[person.id, row.stationId]])
+                new Map([...validAssignments, [person.id, row.stationId]])
               );
               const simulatedShortage = countMatchingShortage(rules, simulated.assignedByStation, mode);
               return {
@@ -569,6 +633,7 @@ export function analyzeStationCoverage(
     ? matchingPeople
     : matchingPeople.filter((person) => ownIds.has(person.id));
   const trainingSuggestionCandidates = trainingPeople
+    .filter((person) => !forcedIds.has(person.id))
     .flatMap((person) => trainingTargetRows
       .filter((row) => !row.qualifiedIds.includes(person.id) && !row.blockedIds.includes(person.id))
       .map((row) => {
@@ -585,7 +650,7 @@ export function analyzeStationCoverage(
           matchingStrategy,
           ownIds,
           supportIds,
-          new Map([[person.id, row.stationId]])
+          new Map([...validAssignments, [person.id, row.stationId]])
         );
         const simulatedShortage = countMatchingShortage(rules, simulated.assignedByStation, mode);
         const shortageReduced = shortage - simulatedShortage;
@@ -643,7 +708,7 @@ export function analyzeStationCoverage(
     required,
     assigned,
     shortage,
-    fullyCovered: shortage === 0,
+    fullyCovered: shortage === 0 && violations.length === 0,
     ownAvailable,
     supportAvailable,
     ownAssigned,
@@ -654,6 +719,7 @@ export function analyzeStationCoverage(
     criticalPeople,
     trainingSuggestions,
     officerSuggestions,
+    violations,
   };
 }
 
@@ -689,6 +755,7 @@ export function buildSmartAssignments(
         .filter((item) => item.employeeId === person.id && item.status === "合格" && stationOrder.has(item.stationId))
         .map((item) => item.stationId)
         .filter((stationId, index, list) => list.indexOf(stationId) === index)
+        .filter((stationId) => getCoverageQualificationStatus(qualifications, person.id, stationId) === "合格")
         .filter((stationId) => {
           const rule = rules.find((item) => item.stationId === stationId);
           const maxAssignable = Number(rule?.maxAssignable || 0);

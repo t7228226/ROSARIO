@@ -12,7 +12,7 @@ import { evaluateWorkforceScenario } from "./engine";
 
 const team = "翊展班" as const;
 
-function person(id: string, role = "技術員", shift = team): Person {
+function person(id: string, role = "技術員", shift: Person["shift"] = team): Person {
   return {
     id,
     name: id,

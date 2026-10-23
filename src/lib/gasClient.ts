@@ -1,6 +1,7 @@
 import { appEnvironment } from "../config/environment";
 import { FRONT_WRITE_ACTIONS } from "../config/writeActions";
-import type { AppBootstrap, Person } from "../types";
+import type { AppBootstrap, Person, OperationReceipt, WriteProgress } from "../types";
+export type { OperationReceipt, WriteProgress } from "../types";
 
 export type GasResponse = {
   ok?: boolean;
@@ -18,11 +19,12 @@ export type GasSessionResponse = GasResponse & {
 type PendingWriteOperation = {
   operationId: string;
   createdAt: number;
+  expectedRevision: number;
 };
 
 type GasOperationStatus = GasResponse & {
   found?: boolean;
-  status?: "processing" | "success" | "failed" | "unknown";
+  status?: OperationReceipt["status"];
   result?: GasResponse;
 };
 
@@ -32,10 +34,10 @@ const GAS_READ_TIMEOUT_MS = 20_000;
 const GAS_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const GAS_WRITE_TIMEOUT_MS = 60_000;
 const GAS_WRITE_STATUS_TIMEOUT_MS = 12_000;
-const PENDING_WRITE_TTL_MS = 15 * 60 * 1000;
 const pendingWriteStorageKey = "stationAppPendingWrites";
 const inFlightWriteRequests = new Map<string, Promise<GasResponse>>();
 let activeSessionToken = "";
+let observedRevision: number | undefined;
 
 class RequestTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -54,12 +56,16 @@ class GasRequestRejectedError extends Error {
   }
 }
 
+class ServiceResponseError extends Error {}
+
 export function setGasSessionToken(sessionToken: string) {
+  if (activeSessionToken !== String(sessionToken || "").trim()) observedRevision = undefined;
   activeSessionToken = String(sessionToken || "").trim();
 }
 
 export function clearGasSessionToken() {
   activeSessionToken = "";
+  observedRevision = undefined;
 }
 
 function notifyExpiredSession(code: string) {
@@ -68,48 +74,6 @@ function notifyExpiredSession(code: string) {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("rosario:session-expired", { detail: { code } }));
   }
-}
-
-function showGlobalProcessingOverlay(kind: "save" | "delete") {
-  if (typeof document === "undefined") return;
-  const title = kind === "delete" ? "資料刪除中" : "資料處理中";
-  const detail = kind === "delete"
-    ? "正在更新系統資料，請勿關閉頁面或重複操作。"
-    : "正在寫入系統，請勿關閉頁面或重複操作。";
-
-  let overlay = document.getElementById("global-processing-overlay");
-  if (!overlay) {
-    overlay = document.createElement("div");
-    overlay.id = "global-processing-overlay";
-    overlay.setAttribute("role", "alertdialog");
-    overlay.setAttribute("aria-live", "assertive");
-    overlay.innerHTML = `
-      <div class="global-processing-card">
-        <div class="global-processing-spinner" aria-hidden="true"></div>
-        <h2 class="global-processing-title"></h2>
-        <p class="global-processing-detail"></p>
-      </div>
-    `;
-    document.body.appendChild(overlay);
-  }
-
-  overlay.className = `global-processing-overlay ${kind === "delete" ? "is-delete" : "is-save"}`;
-  updateGlobalProcessingOverlay(title, detail);
-}
-
-function updateGlobalProcessingOverlay(title: string, detail: string) {
-  if (typeof document === "undefined") return;
-  const overlay = document.getElementById("global-processing-overlay");
-  if (!overlay) return;
-  const titleEl = overlay.querySelector(".global-processing-title");
-  const detailEl = overlay.querySelector(".global-processing-detail");
-  if (titleEl) titleEl.textContent = title;
-  if (detailEl) detailEl.textContent = detail;
-}
-
-function hideGlobalProcessingOverlay() {
-  if (typeof document === "undefined") return;
-  document.getElementById("global-processing-overlay")?.remove();
 }
 
 function stableSerialize(value: unknown): string {
@@ -123,26 +87,11 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-function hashText(value: string) {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function getWriteFingerprint(action: string, payload: Record<string, unknown>) {
-  const serialized = stableSerialize(payload);
-  return `${action}:${serialized.length}:${hashText(serialized)}`;
-}
-
 function readPendingWrites(): Record<string, PendingWriteOperation> {
   try {
     const parsed = JSON.parse(window.sessionStorage.getItem(pendingWriteStorageKey) || "{}") as Record<string, PendingWriteOperation>;
-    const now = Date.now();
     return Object.fromEntries(
-      Object.entries(parsed).filter(([, item]) => item?.operationId && now - Number(item.createdAt || 0) < PENDING_WRITE_TTL_MS)
+      Object.entries(parsed).filter(([, item]) => item?.operationId && Number.isSafeInteger(item.expectedRevision))
     );
   } catch {
     return {};
@@ -193,43 +142,49 @@ export async function fetchWithTimeout(input: RequestInfo | URL, init: RequestIn
   }
 }
 
-function readGasResult(response: Response, fallbackMessage: string) {
-  return response.json().then((result: GasResponse) => {
-    if (!response.ok || result.ok === false) {
-      const code = String(result.code || "REQUEST_FAILED");
-      notifyExpiredSession(code);
-      throw new GasRequestRejectedError(String(result.message || fallbackMessage), code);
+async function readGasResult(response: Response, fallbackMessage: string, expectedSession?: string) {
+  let result: GasResponse;
+  const body = await response.text();
+  if (expectedSession !== undefined && expectedSession !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已忽略舊回應。", "SESSION_CHANGED");
+  try { result = JSON.parse(body) as GasResponse; }
+  catch { throw new ServiceResponseError("資料服務暫時未回傳有效內容。讀取可稍後重試；寫入須以相同操作編號核對結果。"); }
+  if (!result || typeof result !== "object" || Array.isArray(result) || typeof result.ok !== "boolean") throw new ServiceResponseError("資料服務回應格式無法辨識，請稍後重試。");
+  if (!response.ok || result.ok === false) {
+    const code = String(result.code || "REQUEST_FAILED");
+    if (expectedSession !== undefined) notifyExpiredSession(code);
+    if (code === "REVISION_CONFLICT" || code === "REVISION_REQUIRED") {
+      window.dispatchEvent(new CustomEvent("rosario:data-conflict", { detail: { message: String(result.message || fallbackMessage) } }));
     }
-    return result;
-  });
+    throw new GasRequestRejectedError(String(result.message || fallbackMessage), code);
+  }
+  return result;
 }
 
-async function sendGasAction(action: string, payload: Record<string, unknown>, operationId?: string) {
+async function sendGasAction(action: string, payload: Record<string, unknown>, operationId?: string, sessionToken = activeSessionToken) {
+  if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，請重新確認操作。", "SESSION_CHANGED");
   const response = await fetchWithTimeout(GAS_ENDPOINT, {
     method: "POST",
     body: JSON.stringify({
       action,
       appVersion: APP_VERSION,
       operationId,
-      sessionToken: activeSessionToken || undefined,
+      sessionToken: sessionToken || undefined,
       payload,
     }),
   }, operationId ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
-  return readGasResult(response, `GAS ${action} 請求失敗`);
+  if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已停止舊操作的畫面更新。", "SESSION_CHANGED");
+  return readGasResult(response, `GAS ${action} 請求失敗`, sessionToken);
 }
 
-async function fetchGasOperationStatus(operationId: string): Promise<GasOperationStatus> {
-  const result = await sendGasAction("operationStatus", { operationId }) as GasOperationStatus;
-  return result;
-}
-
-async function pollGasOperation(operationId: string, delays = [700, 1400, 2500, 4000]): Promise<GasResponse | null> {
+async function pollGasOperation(operationId: string, delays = [700, 1400, 2500, 4000], sessionToken = activeSessionToken): Promise<GasResponse | null> {
   for (const delay of delays) {
     await wait(delay);
     try {
-      const status = await fetchGasOperationStatus(operationId);
-      if (status.status === "success" && status.result) return status.result;
-      if (status.status === "failed") throw new GasRequestRejectedError(String(status.message || "資料寫入失敗。"));
+      const status = await sendGasAction("operationStatus", { operationId }, undefined, sessionToken) as GasOperationStatus;
+      if (status.status === "success" && status.operationId === operationId && status.result?.ok === true) return status.result;
+      if (status.status === "failed") throw new GasRequestRejectedError(String(status.message || "資料寫入失敗。"), String(status.code || "REQUEST_FAILED"));
+      if (status.status === "reviewed") throw new GasRequestRejectedError("原操作已由管理員核對，系統不會重新執行。", "OPERATION_REVIEWED");
+      if (status.found && status.status === "unknown") throw new GasRequestRejectedError("先前寫入結果待確認；請核對資料，系統不會重新執行。", "WRITE_OUTCOME_UNKNOWN");
       if (!status.found || status.status === "unknown") return null;
     } catch (error) {
       if (error instanceof GasRequestRejectedError) throw error;
@@ -240,97 +195,154 @@ async function pollGasOperation(operationId: string, delays = [700, 1400, 2500, 
 
 function isTransientWriteError(error: unknown) {
   return error instanceof RequestTimeoutError ||
+    error instanceof ServiceResponseError ||
     error instanceof TypeError ||
     (error instanceof Error && /network|fetch|連線|逾時/i.test(error.message));
+}
+
+function assertConfirmedWrite(result: GasResponse, operationId: string) {
+  if (result.operationId !== operationId || result.operationStatus !== "success") {
+    throw new ServiceResponseError("伺服器未提供相符的完成憑證，請核對操作結果。");
+  }
 }
 
 async function performReliableGasWrite(
   action: string,
   payload: Record<string, unknown>,
   fingerprint: string,
-  operationId: string
+  operationId: string,
+  sessionToken: string
 ): Promise<GasResponse> {
-  const processingKind = action.toLowerCase().includes("delete") ? "delete" : "save";
-  showGlobalProcessingOverlay(processingKind);
-  rememberPendingWrite(fingerprint, { operationId, createdAt: Date.now() });
+  rememberPendingWrite(fingerprint, { operationId, createdAt: Date.now(), expectedRevision: Number(payload.expectedRevision) });
+  const createdAt = Date.now();
+  function progress(status: OperationReceipt["status"], phase: WriteProgress["phase"], code?: string) {
+    if (sessionToken !== activeSessionToken) return;
+    window.dispatchEvent(new CustomEvent<WriteProgress>("rosario:write-progress", { detail: { operationId, action, status, phase, createdAt, updatedAt: Date.now(), code } }));
+  }
+  progress("processing", "sending");
 
   try {
     try {
-      const result = await sendGasAction(action, payload, operationId);
+      const result = await sendGasAction(action, payload, operationId, sessionToken);
       if (!result.pending) {
+        assertConfirmedWrite(result, operationId);
         clearPendingWrite(fingerprint);
+        if (typeof result.revision === "number") observedRevision = result.revision;
+        progress("success", "settled");
         return result;
       }
     } catch (error) {
       if (error instanceof GasRequestRejectedError) {
-        clearPendingWrite(fingerprint);
+        if (error.code !== "WRITE_OUTCOME_UNKNOWN") clearPendingWrite(fingerprint);
+        else window.dispatchEvent(new CustomEvent("rosario:write-uncertain", { detail: { message: error.message, operationId } }));
         throw error;
       }
       if (!isTransientWriteError(error)) throw error;
     }
 
-    updateGlobalProcessingOverlay("正在確認儲存結果", "連線較慢，系統正在確認資料是否已經寫入，請勿重複操作。");
-    const confirmed = await pollGasOperation(operationId);
+    progress("processing", "checking");
+    const confirmed = await pollGasOperation(operationId, undefined, sessionToken);
     if (confirmed) {
       clearPendingWrite(fingerprint);
+      if (typeof confirmed.revision === "number") observedRevision = confirmed.revision;
+      progress("success", "settled");
       return confirmed;
     }
 
-    updateGlobalProcessingOverlay("正在重新送出", "系統將沿用相同操作編號送出，以避免重複新增資料。");
     try {
-      const retried = await sendGasAction(action, payload, operationId);
+      progress("processing", "retrying");
+      const retried = await sendGasAction(action, payload, operationId, sessionToken);
       if (!retried.pending) {
+        assertConfirmedWrite(retried, operationId);
         clearPendingWrite(fingerprint);
+        if (typeof retried.revision === "number") observedRevision = retried.revision;
+        progress("success", "settled");
         return retried;
       }
     } catch (error) {
       if (error instanceof GasRequestRejectedError) {
-        clearPendingWrite(fingerprint);
+        if (error.code !== "WRITE_OUTCOME_UNKNOWN") clearPendingWrite(fingerprint);
+        else window.dispatchEvent(new CustomEvent("rosario:write-uncertain", { detail: { message: error.message, operationId } }));
         throw error;
       }
       if (!isTransientWriteError(error)) throw error;
     }
 
-    updateGlobalProcessingOverlay("仍在確認中", "伺服器仍在處理，系統會再次核對結果。");
-    const retriedConfirmation = await pollGasOperation(operationId, [1000, 2000, 4000, 6000]);
+    const retriedConfirmation = await pollGasOperation(operationId, [1000, 2000, 4000, 6000], sessionToken);
     if (retriedConfirmation) {
       clearPendingWrite(fingerprint);
+      if (typeof retriedConfirmation.revision === "number") observedRevision = retriedConfirmation.revision;
+      progress("success", "settled");
       return retriedConfirmation;
     }
 
-    throw new Error(`資料可能仍在處理，請先重新整理確認；再次操作時系統會沿用同一筆請求。操作編號：${operationId}`);
-  } finally {
-    hideGlobalProcessingOverlay();
+    throw new GasRequestRejectedError(`資料可能仍在處理，請至操作狀態核對。操作編號：${operationId}`, "WRITE_OUTCOME_UNKNOWN");
+  } catch (error) {
+    const code = error instanceof GasRequestRejectedError ? error.code : "WRITE_OUTCOME_UNKNOWN";
+    if (code !== "WRITE_OUTCOME_UNKNOWN" && code !== "SESSION_CHANGED") clearPendingWrite(fingerprint);
+    progress(code === "WRITE_OUTCOME_UNKNOWN" ? "unknown" : "failed", "settled", code);
+    throw error;
   }
 }
 
 export async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasResponse> {
   if (!FRONT_WRITE_ACTIONS.has(action)) return sendGasAction(action, payload);
   if (!appEnvironment.writesEnabled) throw new Error("升級測試環境目前為唯讀，已阻擋寫入正式資料。");
-
-  const fingerprint = getWriteFingerprint(action, payload);
-  const currentRequest = inFlightWriteRequests.get(fingerprint);
+  if (observedRevision === undefined) throw new Error("尚未取得可寫入的資料版本，請先重新載入；若仍無法儲存，請確認新版 GAS 已部署。");
+  const sessionToken = activeSessionToken;
+  const revision = observedRevision;
+  payload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  const logicalKey = `${sessionToken}\n${action}\n${stableSerialize(payload)}`;
+  const currentRequest = inFlightWriteRequests.get(logicalKey);
   if (currentRequest) return currentRequest;
-
-  const pending = readPendingWrites()[fingerprint];
-  const operationId = pending?.operationId || createOperationId(action);
-  const request = performReliableGasWrite(action, payload, fingerprint, operationId)
-    .finally(() => inFlightWriteRequests.delete(fingerprint));
-  inFlightWriteRequests.set(fingerprint, request);
+  const request = (async () => {
+    const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(logicalKey));
+    if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更。", "SESSION_CHANGED");
+    const fingerprint = Array.from(new Uint8Array(bytes), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    const pending = readPendingWrites()[fingerprint];
+    if (pending && Date.now() - pending.createdAt >= 24 * 3600000) throw new GasRequestRejectedError("先前操作已超過可自動重送期限，請先核對資料，不要直接再次新增。", "WRITE_OUTCOME_UNKNOWN");
+    const writePayload = { ...payload, expectedRevision: pending?.expectedRevision ?? revision };
+    const operationId = pending?.operationId || createOperationId(action);
+    return performReliableGasWrite(action, writePayload, fingerprint, operationId, sessionToken);
+  })().finally(() => inFlightWriteRequests.delete(logicalKey));
+  inFlightWriteRequests.set(logicalKey, request);
   return request;
 }
 
 export async function fetchGasBootstrapData(): Promise<AppBootstrap> {
+  const sessionToken = activeSessionToken;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
   const response = await fetchWithTimeout(GAS_ENDPOINT, {
     method: "POST",
     body: JSON.stringify({
       action: "bootstrap",
       appVersion: APP_VERSION,
-      sessionToken: activeSessionToken || undefined,
+      sessionToken: sessionToken || undefined,
       payload: {},
     }),
   }, GAS_BOOTSTRAP_TIMEOUT_MS);
-  return readGasResult(response, "GAS bootstrap 讀取失敗") as Promise<AppBootstrap>;
+  if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已忽略舊資料。", "SESSION_CHANGED");
+  const result = await readGasResult(response, "GAS bootstrap 讀取失敗", sessionToken);
+  observedRevision = typeof result.revision === "number" ? result.revision : undefined;
+  return result as unknown as AppBootstrap;
+    } catch (error) {
+      if (attempt > 0 || !isTransientWriteError(error)) throw error;
+      await wait(1200);
+    }
+  }
+  throw new ServiceResponseError("資料讀取失敗，請稍後重新載入。");
+}
+
+export async function fetchGasOperations(all = false): Promise<OperationReceipt[]> {
+  const result = await postGasAction("listOperations", { all });
+  if (!Array.isArray(result.operations)) throw new ServiceResponseError("操作狀態格式不完整，請稍後重新查詢。");
+  const records = result.operations as OperationReceipt[];
+  if (records.some((item) => !item || typeof item.operationId !== "string" || typeof item.action !== "string" ||
+    !["processing", "success", "failed", "unknown", "reviewed"].includes(item.status) || !Number.isFinite(item.createdAt) || !Number.isFinite(item.updatedAt))) {
+    throw new ServiceResponseError("操作紀錄內容不完整，請重新查詢。");
+  }
+  return records;
 }
 
 export async function fetchGasPermissionConfig<T>(): Promise<T> {

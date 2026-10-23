@@ -1,8 +1,17 @@
 node_modules/
 dist/
+dist-qa/
 .env
 .env.local
 .env.*.local
 .DS_Store
 npm-debug.log*
 .codex-*.log
+*.log
+*.tsbuildinfo
+*.xlsx
+*.xlsm
+*.xls
+*.xlsb
+*GAS*修正版*.txt
+private-backups/

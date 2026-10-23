@@ -45,21 +45,34 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-08-11-011',
-  MIN_WRITE_VERSION: '2026-08-11-011',
+  APP_VERSION: '2026-10-24-013',
+  MIN_WRITE_VERSION: '2026-10-24-013',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
+  OPERATION_STALE_MS: 7 * 60 * 1000,
+  OPERATION_STORAGE_BUDGET: 250000,
   WRITE_LOCK_TIMEOUT_MS: 20000,
   SESSION_DEFAULT_TTL_MS: 12 * 60 * 60 * 1000,
   SESSION_MIN_TTL_MS: 30 * 60 * 1000,
   SESSION_MAX_TTL_MS: 7 * 24 * 60 * 60 * 1000,
   SESSION_MAX_RECORDS: 240,
+  LOGIN_FAILURE_LIMIT: 5,
+  LOGIN_FAILURE_WINDOW_MS: 5 * 60 * 1000,
+  LOGIN_COOLDOWN_MS: 60 * 1000,
+  LOGIN_MAX_RECORDS: 240,
+  RULE_DIRECTOR_ROLES: ['主任'],
 };
 
 const OPERATION_PROPERTY_PREFIX = 'ROSARIO_OP_';
 const SESSION_PROPERTY_PREFIX = 'ROSARIO_SESSION_';
 const PASSWORD_HASH_PREFIX = 'rosario-v1$';
 const PASSWORD_PEPPER_PROPERTY = 'ROSARIO_PASSWORD_PEPPER';
+const LOGIN_PROPERTY_PREFIX = 'ROSARIO_LOGIN_';
+const DATA_REVISION_PROPERTY = 'ROSARIO_DATA_REVISION';
+const DATA_FINGERPRINT_PROPERTY = 'ROSARIO_DATA_FINGERPRINT';
+let scriptLockHeld_ = false;
+let requestSheetCache_ = null;
+let dataMutationAttempted_ = false;
 
 const ACTION_PERMISSION_MAP = {
   upsertQualification: 'PERM_005',
@@ -73,6 +86,7 @@ const ACTION_PERMISSION_MAP = {
   deletePersonalPermissionException: 'PERM_016',
   saveScheduleDraft: 'PERM_008',
   syncQualificationsFromMatrix: 'PERM_005',
+  acknowledgeOperation: 'PERM_016',
 };
 
 const SUPER_ADMIN_ACTIONS = {
@@ -80,6 +94,7 @@ const SUPER_ADMIN_ACTIONS = {
   updateRolePermission: true,
   upsertPersonalPermissionException: true,
   deletePersonalPermissionException: true,
+  acknowledgeOperation: true,
 };
 
 function doGet(e) {
@@ -88,7 +103,7 @@ function doGet(e) {
     if (action === 'version') {
       return jsonOutput_(buildVersionStatus_((e && e.parameter && e.parameter.appVersion) || ''));
     }
-    if (action === 'bootstrap' || action === 'syncQualificationsFromMatrix' || action === 'matrixDebug' || action === 'permissionConfig' || action === 'loadScheduleDrafts' || action === 'operationStatus') {
+    if (action === 'bootstrap' || action === 'syncQualificationsFromMatrix' || action === 'matrixDebug' || action === 'permissionConfig' || action === 'loadScheduleDrafts' || action === 'operationStatus' || action === 'listOperations') {
       return jsonOutput_({ ok: false, code: 'POST_REQUIRED', message: '此操作必須使用已驗證的 POST 請求。' });
     }
     return jsonOutput_({ ok: false, message: 'Unknown GET action', action });
@@ -98,151 +113,327 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  requestSheetCache_ = Object.create(null);
   try {
     const body = parsePostBody_(e);
     const action = String(body.action || '').trim();
     const payload = body.payload || {};
 
-    switch (action) {
-      case 'version':
-        return jsonOutput_(buildVersionStatus_(body.appVersion || body.version || payload.appVersion));
-      case 'login':
-        return jsonOutput_(login_(payload));
-      case 'session':
-        return jsonOutput_(validateSessionResponse_(resolveSessionToken_(body, payload), payload));
-      case 'logout':
-        return jsonOutput_(logout_({ sessionToken: resolveSessionToken_(body, payload) }));
-      case 'upsertQualification':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertQualification_(payload); }));
-      case 'deleteQualification':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deleteQualification_(payload); }));
-      case 'updateStationRule':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateStationRule_(payload); }));
-      case 'updatePerson':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return updatePerson_(payload, session); }));
-      case 'createPerson':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return createPerson_(payload); }));
-      case 'updatePermissionItem':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updatePermissionItem_(payload); }));
-      case 'updateRolePermission':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateRolePermission_(payload); }));
-      case 'upsertPersonalPermissionException':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertPersonalPermissionException_(payload); }));
-      case 'deletePersonalPermissionException':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deletePersonalPermissionException_(payload); }));
-      case 'saveScheduleDraft':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return saveScheduleDraft_(payload); }));
-      case 'loadScheduleDrafts':
-        assertReadPermission_(resolveSessionToken_(body, payload), 'PERM_007');
-        return jsonOutput_(loadScheduleDrafts_(payload));
-      case 'permissionConfig':
-        return jsonOutput_(buildPermissionConfigForSession_(requireSession_(resolveSessionToken_(body, payload))));
-      case 'syncQualificationsFromMatrix':
-        return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return syncQualificationsFromMatrix_(payload); }));
-      case 'operationStatus':
-        return jsonOutput_(getOperationStatus_(body.operationId || payload.operationId || '', requireSession_(resolveSessionToken_(body, payload))));
-      case 'matrixDebug':
-        assertSuperAdmin_(requireSession_(resolveSessionToken_(body, payload)));
-        return jsonOutput_(debugQualificationMatrix_());
-      case 'bootstrap':
-        return jsonOutput_(buildBootstrapForSession_(requireSession_(resolveSessionToken_(body, payload))));
-      default:
-        return jsonOutput_({ ok: false, message: 'Unknown POST action', action });
-    }
+    return withScriptLock_(function () {
+      switch (action) {
+        case 'version':
+          return jsonOutput_(buildVersionStatus_(body.appVersion || body.version || payload.appVersion));
+        case 'login':
+          return jsonOutput_(login_(payload));
+        case 'session':
+          return jsonOutput_(validateSessionResponse_(resolveSessionToken_(body, payload), payload));
+        case 'logout':
+          return jsonOutput_(logout_({ sessionToken: resolveSessionToken_(body, payload) }));
+        case 'upsertQualification':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertQualification_(payload); }));
+        case 'deleteQualification':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deleteQualification_(payload); }));
+        case 'updateStationRule':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateStationRule_(payload); }));
+        case 'updatePerson':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return updatePerson_(payload, session); }));
+        case 'createPerson':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return createPerson_(payload); }));
+        case 'acknowledgeOperation':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return acknowledgeOperation_(payload, session); }));
+        case 'updatePermissionItem':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updatePermissionItem_(payload); }));
+        case 'updateRolePermission':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return updateRolePermission_(payload); }));
+        case 'upsertPersonalPermissionException':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return upsertPersonalPermissionException_(payload); }));
+        case 'deletePersonalPermissionException':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deletePersonalPermissionException_(payload); }));
+        case 'saveScheduleDraft':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return saveScheduleDraft_(payload, session); }));
+        case 'loadScheduleDrafts': {
+          const session = assertReadPermission_(resolveSessionToken_(body, payload), 'PERM_007');
+          return jsonOutput_(readRevisionSnapshot_(function () { return loadScheduleDrafts_(payload, session); }));
+        }
+        case 'permissionConfig': {
+          const session = requireSession_(resolveSessionToken_(body, payload));
+          return jsonOutput_(readRevisionSnapshot_(function () { return buildPermissionConfigForSession_(session); }));
+        }
+        case 'syncQualificationsFromMatrix':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return syncQualificationsFromMatrix_(payload); }));
+        case 'operationStatus':
+          return jsonOutput_(getOperationStatus_(body.operationId || payload.operationId || '', requireSession_(resolveSessionToken_(body, payload))));
+        case 'listOperations':
+          return jsonOutput_(listOperations_(requireSession_(resolveSessionToken_(body, payload)), payload));
+        case 'matrixDebug':
+          assertSuperAdmin_(requireSession_(resolveSessionToken_(body, payload)));
+          return jsonOutput_(debugQualificationMatrix_());
+        case 'bootstrap': {
+          const session = requireSession_(resolveSessionToken_(body, payload));
+          return jsonOutput_(readRevisionSnapshot_(function () { return buildBootstrapForSession_(session); }));
+        }
+        default:
+          return jsonOutput_({ ok: false, message: 'Unknown POST action', action });
+      }
+    });
   } catch (error) {
     return jsonOutput_(errorPayload_(error));
+  } finally {
+    requestSheetCache_ = null;
   }
 }
 
 function executeWriteRequest_(action, body, payload, callback) {
-  const session = authorizeWriteAction_(resolveSessionToken_(body, payload), action, payload);
-  assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
-  const operationId = normalizeString_(body.operationId || payload.operationId);
-  return executeReliableWrite_(action, operationId, function () { return callback(session); }, session);
+  return withScriptLock_(function () {
+    const session = authorizeWriteAction_(resolveSessionToken_(body, payload), action, payload);
+    assertWritableAppVersion_(body.appVersion || body.version || payload.appVersion);
+    const operationId = normalizeString_(body.operationId || payload.operationId);
+    if (!operationId) throw authError_('寫入必須提供操作編號。', 'OPERATION_REQUIRED');
+    const expectedRevision = body.expectedRevision !== undefined ? body.expectedRevision : payload.expectedRevision;
+    return executeReliableWrite_(action, operationId, function () {
+      assertExpectedRevision_(expectedRevision);
+      const validationOnly = action === 'createPerson' && (payload.validateOnly === true || normalizeString_(payload.validateOnly).toUpperCase() === 'Y');
+      // Advance before mutation so a partial failure also invalidates stale snapshots.
+      const revision = validationOnly ? getDataRevision_() : advanceDataRevision_();
+      try {
+        return Object.assign({}, callback(session), { revision: revision });
+      } catch (error) {
+        error.revision = revision;
+        throw error;
+      }
+    }, session, { payload: operationPayload_(payload), expectedRevision: expectedRevision });
+  });
 }
 
-function executeReliableWrite_(action, operationId, callback, session) {
-  if (!operationId) {
-    return withDocumentWriteLock_(callback);
-  }
-  if (!/^OP_[A-Za-z0-9_-]{8,117}$/.test(operationId)) {
-    throw new Error('操作編號格式不正確');
-  }
+function executeReliableWrite_(action, operationId, callback, session, request) {
+  return withScriptLock_(function () {
+    if (!operationId) {
+      return withDocumentWriteLock_(callback);
+    }
+    if (!/^OP_[A-Za-z0-9_-]{8,117}$/.test(operationId)) {
+      throw new Error('操作編號格式不正確');
+    }
 
-  const ownerId = session ? normalizeString_(session.employeeId) : '';
-  const begin = beginOperation_(action, operationId, ownerId);
-  if (!begin.started) {
-    assertOperationOwner_(begin.record, session);
-    return operationRecordResponse_(operationId, begin.record);
-  }
+    const ownerId = session ? normalizeString_(session.employeeId) : '';
+    const requestDigest = digestText_(canonicalJson_(request || {}));
+    const begin = beginOperation_(action, operationId, ownerId, requestDigest);
+    if (!begin.started) {
+      assertOperationOwner_(begin.record, session);
+      if (begin.record.action !== action || begin.record.requestDigest !== requestDigest) {
+        throw authError_('操作編號已用於不同請求，請重新整理後建立新操作。', 'OPERATION_CONFLICT');
+      }
+      return operationRecordResponse_(operationId, begin.record);
+    }
 
-  try {
-    const result = withDocumentWriteLock_(callback);
-    finishOperation_(operationId, 'success', result, '');
+    let result;
+    const beforeFingerprint = PropertiesService.getScriptProperties().getProperty(DATA_FINGERPRINT_PROPERTY);
+    dataMutationAttempted_ = false;
+    try {
+      result = withDocumentWriteLock_(callback);
+    } catch (error) {
+      let changed = dataMutationAttempted_;
+      const baselineFingerprint = beforeFingerprint || PropertiesService.getScriptProperties().getProperty(DATA_FINGERPRINT_PROPERTY);
+      if (changed && !error.outcomeUnknown && baselineFingerprint) {
+        try { changed = dataFingerprint_() !== baselineFingerprint; } catch (_) { changed = true; }
+      }
+      if (error.outcomeUnknown || changed) {
+        const unknown = authError_('部分資料可能已寫入，請至操作狀態核對；勿重新建立相同操作。', 'WRITE_OUTCOME_UNKNOWN');
+        unknown.revision = getDataRevision_();
+        try { finishOperation_(operationId, 'unknown', null, unknown.message, unknown); } catch (_) { /* Keep the processing reservation. */ }
+        throw unknown;
+      }
+      const message = error && error.message ? error.message : String(error);
+      try {
+        finishOperation_(operationId, 'failed', null, message, error);
+      } catch (recordError) {
+        const unknown = authError_('操作結果無法保存，請重新載入確認，勿建立新操作重送。', 'WRITE_OUTCOME_UNKNOWN');
+        unknown.revision = getDataRevision_();
+        throw unknown;
+      }
+      throw error;
+    }
+    // If persisting completion fails, keep processing: never report a committed write as safe to repeat.
+    try {
+      if (request) storeDataFingerprint_();
+      finishOperation_(operationId, 'success', result, '');
+    } catch (error) {
+      const unknown = authError_('寫入可能已完成，但無法保存完成紀錄；請重新載入確認，勿建立新操作重送。', 'WRITE_OUTCOME_UNKNOWN');
+      unknown.revision = getDataRevision_();
+      try { finishOperation_(operationId, 'unknown', null, unknown.message, unknown); } catch (_) { /* Keep the processing reservation. */ }
+      throw unknown;
+    }
     return Object.assign({}, result || { ok: true }, {
       operationId: operationId,
       operationStatus: 'success',
     });
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    finishOperation_(operationId, 'failed', null, message);
-    throw error;
+  });
+}
+
+function withScriptLock_(callback) {
+  if (scriptLockHeld_) return callback();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(SETTINGS.WRITE_LOCK_TIMEOUT_MS);
+  scriptLockHeld_ = true;
+  try {
+    return callback();
+  } finally {
+    scriptLockHeld_ = false;
+    lock.releaseLock();
   }
 }
 
 function withDocumentWriteLock_(callback) {
-  const lock = LockService.getDocumentLock();
-  if (!lock) return callback();
-  lock.waitLock(SETTINGS.WRITE_LOCK_TIMEOUT_MS);
-  try {
-    return callback();
-  } finally {
-    lock.releaseLock();
+  return withScriptLock_(function () {
+    try {
+      return callback();
+    } finally {
+      try {
+        SpreadsheetApp.flush();
+      } catch (error) {
+        const unknown = authError_('試算表寫入結果無法確認，請重新載入檢查，勿建立新操作重送。', 'WRITE_OUTCOME_UNKNOWN');
+        unknown.outcomeUnknown = true;
+        unknown.revision = getDataRevision_();
+        throw unknown;
+      }
+    }
+  });
+}
+
+function getDataRevision_() {
+  const value = PropertiesService.getScriptProperties().getProperty(DATA_REVISION_PROPERTY);
+  if (value === null) return 0;
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 0) throw authError_('資料版本無效，請聯絡管理員。', 'REVISION_INVALID');
+  return revision;
+}
+
+function dataFingerprint_() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const content = Object.keys(SHEETS).sort().map(function (key) {
+    const name = SHEETS[key];
+    const sheet = spreadsheet.getSheetByName(name);
+    if (!sheet) return [name, null];
+    const range = sheet.getDataRange();
+    return [name, range.getValues(), range.getFormulas()];
+  });
+  return digestText_(canonicalJson_(content));
+}
+
+function storeDataFingerprint_() {
+  const fingerprint = dataFingerprint_();
+  PropertiesService.getScriptProperties().setProperty(DATA_FINGERPRINT_PROPERTY, fingerprint);
+  return fingerprint;
+}
+
+function syncDataRevision_() {
+  const properties = PropertiesService.getScriptProperties();
+  const fingerprint = dataFingerprint_();
+  const previous = properties.getProperty(DATA_FINGERPRINT_PROPERTY);
+  if (previous && previous !== fingerprint) advanceDataRevision_();
+  properties.setProperty(DATA_FINGERPRINT_PROPERTY, fingerprint);
+  return getDataRevision_();
+}
+
+function readRevisionSnapshot_(callback) {
+  // A script lock excludes other app requests, not a person editing the Sheet.
+  return withScriptLock_(function () {
+    const revision = syncDataRevision_();
+    const fingerprint = PropertiesService.getScriptProperties().getProperty(DATA_FINGERPRINT_PROPERTY);
+    const result = callback();
+    if (fingerprint !== dataFingerprint_()) {
+      const error = authError_('讀取期間試算表內容已變動，請重新載入。', 'REVISION_CONFLICT');
+      error.revision = syncDataRevision_();
+      throw error;
+    }
+    return Object.assign({}, result, { revision: revision });
+  });
+}
+
+function advanceDataRevision_() {
+  const revision = getDataRevision_() + 1;
+  if (!Number.isSafeInteger(revision)) throw authError_('資料版本超出範圍。', 'REVISION_INVALID');
+  PropertiesService.getScriptProperties().setProperty(DATA_REVISION_PROPERTY, String(revision));
+  return revision;
+}
+
+function assertExpectedRevision_(expectedRevision) {
+  if (typeof expectedRevision !== 'number' || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+    throw authError_('請重新載入資料並提供 expectedRevision。', 'REVISION_REQUIRED');
+  }
+  const revision = syncDataRevision_();
+  if (expectedRevision !== revision) {
+    const error = authError_('資料已被其他操作更新，請重新載入後確認再送出。', 'REVISION_CONFLICT');
+    error.revision = revision;
+    throw error;
   }
 }
 
-function beginOperation_(action, operationId, ownerId) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
+function operationPayload_(payload) {
+  const result = {};
+  Object.keys(payload || {}).forEach(function (key) {
+    if (['sessionToken', 'operationId', 'appVersion', 'expectedRevision'].indexOf(key) < 0) result[key] = payload[key];
+  });
+  return result;
+}
+
+function canonicalJson_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') return JSON.stringify(value.toISOString());
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson_).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).filter(function (key) { return value[key] !== undefined; }).sort().map(function (key) {
+      return JSON.stringify(key) + ':' + canonicalJson_(value[key]);
+    }).join(',') + '}';
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
+function beginOperation_(action, operationId, ownerId, requestDigest) {
+  return withScriptLock_(function () {
     const properties = PropertiesService.getScriptProperties();
     pruneOperationRecords_(properties);
     const existing = readOperationRecord_(properties, operationId);
     if (existing) return { started: false, record: existing };
+    const count = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; }).length;
+    if (count >= SETTINGS.OPERATION_MAX_RECORDS) throw authError_('操作紀錄容量已滿，請稍後再試；既有操作不會重複執行。', 'OPERATION_CAPACITY');
+    const stored = properties.getProperties();
+    const size = Object.keys(stored).reduce(function (total, key) { return total + (key.length + String(stored[key]).length) * 3; }, 0);
+    if (size > SETTINGS.OPERATION_STORAGE_BUDGET) throw authError_('操作儲存空間不足，本次未寫入；請聯絡管理員。', 'OPERATION_CAPACITY');
 
     const record = {
       action: action,
       ownerId: normalizeString_(ownerId),
+      requestDigest: requestDigest,
       status: 'processing',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
-    properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+    try {
+      properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+    } catch (error) {
+      throw authError_('無法保留操作紀錄，目前未執行寫入。', 'OPERATION_CAPACITY');
+    }
     return { started: true, record: record };
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
-function finishOperation_(operationId, status, result, message) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
+function finishOperation_(operationId, status, result, message, error) {
+  return withScriptLock_(function () {
     const properties = PropertiesService.getScriptProperties();
     const current = readOperationRecord_(properties, operationId) || { createdAt: Date.now() };
     const record = {
       action: current.action || '',
       ownerId: current.ownerId || '',
+      requestDigest: current.requestDigest || '',
       status: status,
       createdAt: current.createdAt || Date.now(),
       updatedAt: Date.now(),
       result: result || null,
       message: message || '',
+      code: error && error.code ? error.code : '',
+      revision: error && error.revision !== undefined ? error.revision : undefined,
     };
     properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function getOperationStatus_(operationId, session) {
@@ -259,15 +450,54 @@ function getOperationStatus_(operationId, session) {
   return {
     ok: true,
     found: true,
-    status: record.status || 'unknown',
+    status: visibleOperationStatus_(record),
     operationId: operationId,
     result: record.status === 'success' ? (record.result || { ok: true }) : undefined,
     message: record.message || '',
+    code: record.code || undefined,
+    revision: record.revision,
     updatedAt: record.updatedAt || record.createdAt || 0,
   };
 }
 
+function visibleOperationStatus_(record) {
+  if (record.status === 'processing' && Date.now() - Number(record.updatedAt || record.createdAt || 0) > SETTINGS.OPERATION_STALE_MS) return 'unknown';
+  return record.status;
+}
+
+function listOperations_(session, payload) {
+  const all = payload && payload.all === true;
+  if (all) assertSuperAdmin_(session);
+  const properties = PropertiesService.getScriptProperties();
+  pruneOperationRecords_(properties);
+  const items = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; }).map(function (key) {
+    const operationId = key.slice(OPERATION_PROPERTY_PREFIX.length);
+    const record = readOperationRecord_(properties, operationId);
+    if (!all && record.ownerId !== normalizeString_(session.employeeId)) return null;
+    return { operationId: operationId, action: record.action, ownerId: record.ownerId, status: visibleOperationStatus_(record),
+      code: record.code || '', createdAt: record.createdAt, updatedAt: record.updatedAt,
+      revision: record.result && record.result.revision !== undefined ? record.result.revision : record.revision };
+  }).filter(function (item) { return !!item; }).sort(function (a, b) { return b.updatedAt - a.updatedAt; });
+  return { ok: true, operations: items, retentionHours: SETTINGS.OPERATION_TTL_MS / 3600000 };
+}
+
+function acknowledgeOperation_(payload, session) {
+  assertSuperAdmin_(session);
+  if (payload.confirmedReview !== true) throw authError_('必須先核對最新資料，再確認處理紀錄。', 'REVIEW_REQUIRED');
+  const id = normalizeString_(payload.targetOperationId);
+  if (!/^OP_[A-Za-z0-9_-]{8,117}$/.test(id)) throw new Error('操作編號格式不正確');
+  const properties = PropertiesService.getScriptProperties();
+  const record = readOperationRecord_(properties, id);
+  if (!record || visibleOperationStatus_(record) !== 'unknown') throw authError_('只能核對結果不明或已中斷的操作。', 'REVIEW_NOT_APPLICABLE');
+  properties.setProperty(operationPropertyKey_(id), JSON.stringify(Object.assign({}, record, {
+    status: 'reviewed', updatedAt: Date.now(), result: null, code: 'OPERATION_REVIEWED',
+    message: '已由管理員人工核對；不代表系統自動認定原操作成功。', reviewedBy: session.employeeId,
+  })));
+  return { ok: true, reviewedOperationId: id };
+}
+
 function operationRecordResponse_(operationId, record) {
+  if (record.status === 'reviewed') return { ok: false, code: 'OPERATION_REVIEWED', operationId: operationId, message: '原操作已人工核對，系統不會重新執行。' };
   if (record.status === 'success') {
     return Object.assign({}, record.result || { ok: true }, {
       operationId: operationId,
@@ -282,7 +512,12 @@ function operationRecordResponse_(operationId, record) {
       operationStatus: 'failed',
       replayed: true,
       message: record.message || '先前操作失敗',
+      code: record.code || 'REQUEST_FAILED',
+      revision: record.revision,
     };
+  }
+  if (record.status === 'unknown' || visibleOperationStatus_(record) === 'unknown') {
+    return { ok: false, code: 'WRITE_OUTCOME_UNKNOWN', operationId: operationId, message: '先前寫入結果待確認；請核對資料與操作紀錄，系統不會再次執行。' };
   }
   return {
     ok: true,
@@ -301,10 +536,11 @@ function readOperationRecord_(properties, operationId) {
   const raw = properties.getProperty(operationPropertyKey_(operationId));
   if (!raw) return null;
   try {
-    return JSON.parse(raw);
+    const record = JSON.parse(raw);
+    if (!record || typeof record !== 'object' || Array.isArray(record) || ['processing', 'success', 'failed', 'unknown', 'reviewed'].indexOf(record.status) < 0) throw new Error('Invalid operation record');
+    return record;
   } catch (error) {
-    properties.deleteProperty(operationPropertyKey_(operationId));
-    return null;
+    throw authError_('操作紀錄損壞，請聯絡管理員確認原操作結果。', 'OPERATION_RECORD_INVALID');
   }
 }
 
@@ -315,15 +551,15 @@ function pruneOperationRecords_(properties) {
     .map(function (key) {
       try {
         const record = JSON.parse(properties.getProperty(key) || '{}');
-        return { key: key, updatedAt: Number(record.updatedAt || record.createdAt || 0) };
+        return { key: key, status: record.status, updatedAt: Number(record.updatedAt || record.createdAt || 0) };
       } catch (error) {
-        return { key: key, updatedAt: 0 };
+        return { key: key, status: 'invalid', updatedAt: 0 };
       }
     })
     .sort(function (left, right) { return right.updatedAt - left.updatedAt; });
 
-  records.forEach(function (item, index) {
-    if (now - item.updatedAt > SETTINGS.OPERATION_TTL_MS || index >= SETTINGS.OPERATION_MAX_RECORDS) {
+  records.forEach(function (item) {
+    if ((item.status === 'success' || item.status === 'failed' || item.status === 'reviewed') && item.updatedAt > 0 && now - item.updatedAt > SETTINGS.OPERATION_TTL_MS) {
       properties.deleteProperty(item.key);
     }
   });
@@ -361,18 +597,14 @@ function getPasswordPepper_() {
   let pepper = normalizeString_(properties.getProperty(PASSWORD_PEPPER_PROPERTY));
   if (pepper) return pepper;
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
+  return withScriptLock_(function () {
     pepper = normalizeString_(properties.getProperty(PASSWORD_PEPPER_PROPERTY));
     if (!pepper) {
       pepper = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
       properties.setProperty(PASSWORD_PEPPER_PROPERTY, pepper);
     }
     return pepper;
-  } finally {
-    lock.releaseLock();
-  }
+  });
 }
 
 function hashPassword_(password, salt) {
@@ -411,13 +643,14 @@ function upgradeLegacyPassword_(accountRow, password) {
   if (!rowNumber) return false;
   const accountSheet = getSheet_(SHEETS.ACCOUNTS);
   const headers = getHeaders_(accountSheet);
-  return setCellIfExists_(accountSheet, headers, rowNumber, '登入密碼', hashPassword_(password));
+  const hashed = hashPassword_(password);
+  const updated = setCellIfExists_(accountSheet, headers, rowNumber, '登入密碼', hashed);
+  if (updated) accountRow['登入密碼'] = hashed;
+  return updated;
 }
 
 function migrateLegacyAccountPasswords() {
-  const lock = LockService.getDocumentLock();
-  if (lock) lock.waitLock(SETTINGS.WRITE_LOCK_TIMEOUT_MS);
-  try {
+  return withDocumentWriteLock_(function () {
     const ws = getSheet_(SHEETS.ACCOUNTS);
     const headerInfo = getSheetHeaderInfo_(ws);
     const passwordColumn = headerInfo.headers.indexOf('登入密碼') + 1;
@@ -434,40 +667,45 @@ function migrateLegacyAccountPasswords() {
       migrated += 1;
       return [hashPassword_(stored)];
     });
-    if (migrated) range.setValues(nextValues);
+    if (migrated) setLiteralValues_(range, nextValues);
     return { ok: true, migrated: migrated, message: '帳號密碼雜湊轉換完成。' };
-  } finally {
-    if (lock) lock.releaseLock();
-  }
+  });
 }
 
 function createSession_(accountRow, requestedDurationMs) {
-  const account = normalizeString_(accountRow['登入帳號']);
-  const employeeId = normalizeString_(accountRow['工號']) || account;
-  const role = normalizeString_(accountRow['系統權限']) || '技術員';
-  const durationMs = clampSessionDuration_(requestedDurationMs);
-  const now = Date.now();
-  const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
-  const record = {
-    employeeId: employeeId,
-    account: account,
-    role: role,
-    createdAt: now,
-    updatedAt: now,
-    expiresAt: now + durationMs,
-  };
+  return withScriptLock_(function () {
+    const account = normalizeString_(accountRow['登入帳號']);
+    const employeeId = normalizeString_(accountRow['工號']) || account;
+    const role = normalizeString_(accountRow['系統權限']) || '技術員';
+    const durationMs = clampSessionDuration_(requestedDurationMs);
+    const now = Date.now();
+    const token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    const record = {
+      employeeId: employeeId,
+      account: account,
+      role: role,
+      credentialVersion: accountCredentialVersion_(accountRow),
+      createdAt: now,
+      updatedAt: now,
+      expiresAt: now + durationMs,
+    };
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
     const properties = PropertiesService.getScriptProperties();
     pruneSessionRecords_(properties);
+    const activeCount = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(SESSION_PROPERTY_PREFIX) === 0; }).length;
+    if (activeCount >= SETTINGS.SESSION_MAX_RECORDS) throw authError_('登入工作階段容量已滿，請稍後再試。', 'SESSION_CAPACITY');
     properties.setProperty(sessionPropertyKey_(token), JSON.stringify(record));
-  } finally {
-    lock.releaseLock();
-  }
 
-  return { token: token, record: record };
+    return { token: token, record: record };
+  });
+}
+
+function accountCredentialVersion_(accountRow) {
+  return digestText_(canonicalJson_([
+    normalizeString_(accountRow['工號']),
+    normalizeString_(accountRow['登入帳號']).toLowerCase(),
+    String(accountRow['登入密碼'] == null ? '' : accountRow['登入密碼']),
+  ]));
 }
 
 function clampSessionDuration_(value) {
@@ -477,92 +715,102 @@ function clampSessionDuration_(value) {
 }
 
 function requireSession_(sessionToken) {
-  const token = normalizeString_(sessionToken);
-  if (!token) throw authError_('登入工作階段不存在，請重新登入。', 'AUTH_REQUIRED');
-  if (!/^[A-Za-z0-9_-]{40,160}$/.test(token)) {
-    throw authError_('登入工作階段格式不正確，請重新登入。', 'AUTH_INVALID');
-  }
+  return withScriptLock_(function () {
+    const token = normalizeString_(sessionToken);
+    if (!token) throw authError_('登入工作階段不存在，請重新登入。', 'AUTH_REQUIRED');
+    if (!/^[A-Za-z0-9_-]{40,160}$/.test(token)) {
+      throw authError_('登入工作階段格式不正確，請重新登入。', 'AUTH_INVALID');
+    }
 
-  const properties = PropertiesService.getScriptProperties();
-  const key = sessionPropertyKey_(token);
-  const raw = properties.getProperty(key);
-  if (!raw) throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_REQUIRED');
+    const properties = PropertiesService.getScriptProperties();
+    const key = sessionPropertyKey_(token);
+    const raw = properties.getProperty(key);
+    if (!raw) throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_REQUIRED');
 
-  let record;
-  try {
-    record = JSON.parse(raw);
-  } catch (error) {
-    properties.deleteProperty(key);
-    throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_INVALID');
-  }
+    let record;
+    try {
+      record = JSON.parse(raw);
+    } catch (error) {
+      properties.deleteProperty(key);
+      throw authError_('登入工作階段已失效，請重新登入。', 'AUTH_INVALID');
+    }
 
-  if (!record.expiresAt || Date.now() >= Number(record.expiresAt)) {
-    properties.deleteProperty(key);
-    throw authError_('登入已逾時，請重新登入。', 'AUTH_EXPIRED');
-  }
+    if (!record.expiresAt || Date.now() >= Number(record.expiresAt)) {
+      properties.deleteProperty(key);
+      throw authError_('登入已逾時，請重新登入。', 'AUTH_EXPIRED');
+    }
 
-  const accountRow = findCurrentAccount_(record.employeeId, record.account);
-  if (!accountRow || normalizeString_(accountRow['啟用狀態']) === '停用') {
-    properties.deleteProperty(key);
-    throw authError_('帳號已停用或不存在，請重新登入。', 'AUTH_REVOKED');
-  }
+    const accountRow = findCurrentAccount_(record.employeeId, record.account);
+    const status = normalizeString_(accountRow && accountRow['啟用狀態']);
+    if (!accountRow || (status && status !== '啟用') || record.credentialVersion !== accountCredentialVersion_(accountRow)) {
+      properties.deleteProperty(key);
+      throw authError_('帳號已停用或不存在，請重新登入。', 'AUTH_REVOKED');
+    }
 
-  record.employeeId = normalizeString_(accountRow['工號']) || normalizeString_(record.employeeId) || normalizeString_(record.account);
-  record.account = normalizeString_(accountRow['登入帳號']) || normalizeString_(record.account);
-  record.role = normalizeString_(accountRow['系統權限']) || '技術員';
-  return record;
+    record.employeeId = normalizeString_(accountRow['工號']) || normalizeString_(record.employeeId) || normalizeString_(record.account);
+    record.account = normalizeString_(accountRow['登入帳號']) || normalizeString_(record.account);
+    record.role = normalizeString_(accountRow['系統權限']) || '技術員';
+    return record;
+  });
 }
 
 function validateSessionResponse_(sessionToken, payload) {
-  const record = requireSession_(sessionToken);
-  const requestedDuration = Number(payload && payload.sessionDurationMs);
-  if (isFinite(requestedDuration) && requestedDuration > 0) {
-    record.expiresAt = Date.now() + clampSessionDuration_(requestedDuration);
-    record.updatedAt = Date.now();
-    PropertiesService.getScriptProperties().setProperty(sessionPropertyKey_(sessionToken), JSON.stringify(record));
-  }
+  return withScriptLock_(function () {
+    const record = requireSession_(sessionToken);
+    const user = buildSessionUser_(record);
+    if (!user) throw authError_('找不到登入者的人員主檔，請聯絡管理員。', 'AUTH_REVOKED');
+    const requestedDuration = Number(payload && payload.sessionDurationMs);
+    if (isFinite(requestedDuration) && requestedDuration > 0) {
+      record.expiresAt = Date.now() + clampSessionDuration_(requestedDuration);
+      record.updatedAt = Date.now();
+      PropertiesService.getScriptProperties().setProperty(sessionPropertyKey_(sessionToken), JSON.stringify(record));
+    }
 
-  const user = buildSessionUser_(record);
-  if (!user) throw authError_('找不到登入者的人員主檔，請聯絡管理員。', 'AUTH_REVOKED');
-  return {
-    ok: true,
-    message: '登入工作階段有效',
-    user: user,
-    sessionExpiresAt: Number(record.expiresAt),
-  };
+    return {
+      ok: true,
+      message: '登入工作階段有效',
+      user: user,
+      sessionExpiresAt: Number(record.expiresAt),
+    };
+  });
 }
 
 function logout_(payload) {
-  const token = normalizeString_(payload && payload.sessionToken);
-  if (token) PropertiesService.getScriptProperties().deleteProperty(sessionPropertyKey_(token));
-  return { ok: true, message: '已登出' };
+  return withScriptLock_(function () {
+    const token = normalizeString_(payload && payload.sessionToken);
+    if (token) PropertiesService.getScriptProperties().deleteProperty(sessionPropertyKey_(token));
+    return { ok: true, message: '已登出' };
+  });
 }
 
 function revokeSessionsForEmployee_(employeeId) {
-  const targetId = normalizeString_(employeeId);
-  if (!targetId) return 0;
-  const properties = PropertiesService.getScriptProperties();
-  let revoked = 0;
-  Object.keys(properties.getProperties()).forEach(function (key) {
-    if (key.indexOf(SESSION_PROPERTY_PREFIX) !== 0) return;
-    try {
-      const record = JSON.parse(properties.getProperty(key) || '{}');
-      if (normalizeString_(record.employeeId) !== targetId) return;
-    } catch (error) {
-      // Invalid session records are removed together with matching sessions.
-    }
-    properties.deleteProperty(key);
-    revoked += 1;
+  return withScriptLock_(function () {
+    const targetId = normalizeString_(employeeId);
+    if (!targetId) return 0;
+    const properties = PropertiesService.getScriptProperties();
+    let revoked = 0;
+    Object.keys(properties.getProperties()).forEach(function (key) {
+      if (key.indexOf(SESSION_PROPERTY_PREFIX) !== 0) return;
+      try {
+        const record = JSON.parse(properties.getProperty(key) || '{}');
+        if (normalizeString_(record.employeeId) !== targetId) return;
+      } catch (error) {
+        // Invalid session records are removed together with matching sessions.
+      }
+      properties.deleteProperty(key);
+      revoked += 1;
+    });
+    return revoked;
   });
-  return revoked;
 }
 
 function findCurrentAccount_(employeeId, account) {
   const employeeKey = normalizeString_(employeeId);
   const accountKey = normalizeString_(account).toLowerCase();
   return getSheetObjects_(SHEETS.ACCOUNTS).find(function (row) {
-    if (employeeKey && normalizeString_(row['工號']) === employeeKey) return true;
-    return accountKey && normalizeString_(row['登入帳號']).toLowerCase() === accountKey;
+    if (!accountKey || normalizeString_(row['登入帳號']).toLowerCase() !== accountKey) return false;
+    const rowEmployee = normalizeString_(row['工號']);
+    return !rowEmployee || !employeeKey || rowEmployee === employeeKey;
   }) || null;
 }
 
@@ -596,8 +844,8 @@ function pruneSessionRecords_(properties) {
     })
     .sort(function (left, right) { return right.updatedAt - left.updatedAt; });
 
-  records.forEach(function (item, index) {
-    if (item.expiresAt <= now || index >= SETTINGS.SESSION_MAX_RECORDS) properties.deleteProperty(item.key);
+  records.forEach(function (item) {
+    if (item.expiresAt <= now) properties.deleteProperty(item.key);
   });
 }
 
@@ -616,6 +864,17 @@ function authorizeWriteAction_(sessionToken, action, payload) {
 
 function assertActionScope_(session, action, payload) {
   if (normalizeString_(session.role) === '最高權限') return true;
+  if (action === 'saveScheduleDraft') {
+    const user = buildSessionUser_(session);
+    const draft = payload.draft || payload;
+    const team = normalizeString_(user && user.shift);
+    if (!team || normalizeString_(draft.team) !== team) throw authError_('只能儲存自己班別的試排草稿。', 'FORBIDDEN');
+    const existing = getSheetObjects_(SHEETS.SCHEDULE_DRAFTS).find(function (row) {
+      return normalizeString_(row['試排ID']) === normalizeString_(draft.id);
+    });
+    if (existing && normalizeString_(existing['班別']) !== team) throw authError_('不能覆寫其他班別的試排草稿。', 'FORBIDDEN');
+    return true;
+  }
   if (action !== 'updateStationRule') return true;
 
   const user = buildSessionUser_(session);
@@ -624,7 +883,32 @@ function assertActionScope_(session, action, payload) {
   if (!ownTeam || !requestedTeam || ownTeam !== requestedTeam) {
     throw authError_('只能修改自己班別的站點規則。', 'FORBIDDEN');
   }
+  if (!isRuleManager_(session, 'PERM_012', user)) throw authError_('站點規則僅開放主任或明確授權的人員修改。', 'FORBIDDEN');
   return true;
+}
+
+function personalPermissionException_(session, permissionId) {
+  const exceptions = getSheetObjects_(SHEETS.PERSONAL_PERMISSION_EXCEPTIONS).filter(function (row) {
+    return normalizeString_(row['工號']) === session.employeeId &&
+      normalizeString_(row['權限ID']) === permissionId && normalizeString_(row['啟用狀態']) !== '停用';
+  });
+  return exceptions.find(function (row) { return normalizeString_(row['效果']).toLowerCase() === 'deny'; }) ||
+    (exceptions.length ? exceptions[exceptions.length - 1] : null);
+}
+
+function isRuleManager_(session, permissionId, user) {
+  if (normalizeString_(session.role) === '最高權限') return true;
+  const person = user || buildSessionUser_(session);
+  const exception = personalPermissionException_(session, permissionId);
+  if (exception) return normalizeString_(exception['效果']).toLowerCase() === 'allow';
+  // An explicit editor may use an independently granted read permission, never override a read deny.
+  if (permissionId === 'PERM_011') {
+    const editException = personalPermissionException_(session, 'PERM_012');
+    if (editException && normalizeString_(editException['效果']).toLowerCase() === 'allow' && hasPermission_(session, 'PERM_012')) return true;
+  }
+  return SETTINGS.RULE_DIRECTOR_ROLES.some(function (role) {
+    return !!role && (normalizeString_(session.role) === role || normalizeString_(person && person.role).indexOf(role) >= 0);
+  });
 }
 
 function assertReadPermission_(sessionToken, permissionId) {
@@ -648,13 +932,8 @@ function hasPermission_(session, permissionId) {
   });
   if (!permissionItem || normalizeString_(permissionItem['啟用狀態']) === '停用') return false;
 
-  const exceptions = getSheetObjects_(SHEETS.PERSONAL_PERMISSION_EXCEPTIONS).filter(function (row) {
-    return normalizeString_(row['工號']) === session.employeeId &&
-      normalizeString_(row['權限ID']) === permissionId &&
-      normalizeString_(row['啟用狀態']) !== '停用';
-  });
-  const exception = exceptions.length ? exceptions[exceptions.length - 1] : null;
-  if (exception) return normalizeString_(exception['效果']) !== 'deny';
+  const exception = personalPermissionException_(session, permissionId);
+  if (exception) return normalizeString_(exception['效果']).toLowerCase() === 'allow';
 
   const rolePermissions = getSheetObjects_(SHEETS.ROLE_PERMISSIONS).filter(function (row) {
     return normalizeString_(row['角色']) === session.role &&
@@ -718,6 +997,25 @@ function buildBootstrap_() {
 
 function buildBootstrapForSession_(session) {
   const bootstrap = buildBootstrap_();
+  bootstrap.capabilities = { operationReceipts: true, revision: true };
+  bootstrap.recentOperations = listOperations_(session, {}).operations;
+  bootstrap.revision = getDataRevision_();
+  const rules = bootstrap.stationRules || [];
+  const ownUser = buildSessionUser_(session);
+  const ownTeam = normalizeString_(ownUser && ownUser.shift);
+  const teams = rules.map(function (rule) { return rule.team; }).concat(bootstrap.people.map(function (person) { return person.shift; }))
+    .filter(function (team, index, all) { return team && all.indexOf(team) === index; });
+  const isAdmin = normalizeString_(session.role) === '最高權限';
+  bootstrap.viewableRuleTeams = isAdmin ? teams :
+    (ownTeam && hasPermission_(session, 'PERM_011') && isRuleManager_(session, 'PERM_011', ownUser) ? [ownTeam] : []);
+  bootstrap.editableRuleTeams = isAdmin ? teams :
+    (ownTeam && hasPermission_(session, 'PERM_012') && isRuleManager_(session, 'PERM_012', ownUser) ? [ownTeam] : []);
+  bootstrap.managementStationRules = rules.filter(function (rule) { return bootstrap.viewableRuleTeams.indexOf(rule.team) >= 0; });
+  const canAnalyze = isAdmin || ['PERM_001', 'PERM_006', 'PERM_007', 'PERM_009', 'PERM_010'].some(function (permissionId) {
+    return hasPermission_(session, permissionId);
+  });
+  // Analysis may need cross-team numeric rules, but never management notes or internal rule IDs.
+  bootstrap.stationRules = canAnalyze ? rules.map(analysisStationRule_) : [];
   if (normalizeString_(session.role) === '最高權限') return bootstrap;
   bootstrap.people = bootstrap.people.map(function (person) {
     const sanitized = Object.assign({}, person);
@@ -734,6 +1032,15 @@ function buildBootstrapForSession_(session) {
     return sanitized;
   });
   return bootstrap;
+}
+
+function analysisStationRule_(rule) {
+  const result = { id: 'RULE_' + rule.team + '_' + rule.stationId };
+  ['team', 'stationId', 'dayKey', 'minRequired', 'reliefMinPerBatch', 'backupTarget', 'maxAssignable',
+    'priority', 'isMandatory', 'trainingCanFill', 'qualificationLimit', 'canShare', 'enabled'].forEach(function (key) {
+    if (rule[key] !== undefined) result[key] = rule[key];
+  });
+  return result;
 }
 
 function mergeAccountFieldsIntoPeople_(people, accountRows) {
@@ -761,6 +1068,48 @@ function mergeAccountFieldsIntoPeople_(people, accountRows) {
 }
 
 function login_(payload) {
+  return withDocumentWriteLock_(function () { return loginLocked_(payload || {}); });
+}
+
+function loginThrottleError_(until) {
+  const error = authError_('登入嘗試過於頻繁，請稍後再試。', 'LOGIN_THROTTLED');
+  error.retryAfterSeconds = Math.max(1, Math.ceil((until - Date.now()) / 1000));
+  return error;
+}
+
+function loginThrottleState_(accountKey) {
+  const properties = PropertiesService.getScriptProperties();
+  const now = Date.now();
+  Object.keys(properties.getProperties()).forEach(function (key) {
+    if (key.indexOf(LOGIN_PROPERTY_PREFIX) !== 0) return;
+    try {
+      const record = JSON.parse(properties.getProperty(key));
+      if ((record.blockedUntil && record.blockedUntil <= now) || (!record.blockedUntil && now - record.windowStartedAt >= SETTINGS.LOGIN_FAILURE_WINDOW_MS)) properties.deleteProperty(key);
+    } catch (error) {
+      properties.deleteProperty(key);
+    }
+  });
+  const key = LOGIN_PROPERTY_PREFIX + digestText_(accountKey);
+  const raw = properties.getProperty(key);
+  const count = Object.keys(properties.getProperties()).filter(function (item) { return item.indexOf(LOGIN_PROPERTY_PREFIX) === 0; }).length;
+  if (!raw && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(now + SETTINGS.LOGIN_COOLDOWN_MS);
+  const state = raw ? JSON.parse(raw) : { failures: 0, windowStartedAt: now, blockedUntil: 0 };
+  if (state.blockedUntil > now) throw loginThrottleError_(state.blockedUntil);
+  return { key: key, state: state };
+}
+
+function recordLoginFailure_(attempt) {
+  const properties = PropertiesService.getScriptProperties();
+  const state = attempt.state;
+  state.failures += 1;
+  if (state.failures >= SETTINGS.LOGIN_FAILURE_LIMIT) state.blockedUntil = Date.now() + SETTINGS.LOGIN_COOLDOWN_MS;
+  const count = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(LOGIN_PROPERTY_PREFIX) === 0; }).length;
+  if (!properties.getProperty(attempt.key) && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(Date.now() + SETTINGS.LOGIN_COOLDOWN_MS);
+  properties.setProperty(attempt.key, JSON.stringify(state));
+  if (state.blockedUntil) throw loginThrottleError_(state.blockedUntil);
+}
+
+function loginLocked_(payload) {
   const account = normalizeString_(payload.account);
   const password = normalizeString_(payload.password);
   const accountKey = account.toLowerCase();
@@ -769,6 +1118,7 @@ function login_(payload) {
     return { ok: false, message: '請輸入登入帳號與密碼。' };
   }
 
+  const attempt = loginThrottleState_(accountKey);
   const accountRows = getSheetObjects_(SHEETS.ACCOUNTS);
   const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
   const peopleMap = mapByKey_(normalizePeople_(peopleRows), 'id');
@@ -778,6 +1128,7 @@ function login_(payload) {
   });
 
   if (!matched || !verifyPassword_(password, matched['登入密碼'])) {
+    recordLoginFailure_(attempt);
     return { ok: false, message: '帳號或密碼錯誤。' };
   }
 
@@ -811,6 +1162,7 @@ function login_(payload) {
   }
 
   const session = createSession_(matched, payload.sessionDurationMs);
+  PropertiesService.getScriptProperties().deleteProperty(attempt.key);
   return {
     ok: true,
     message: '登入成功',
@@ -867,7 +1219,7 @@ function upsertQualification_(payload) {
         default: return '';
       }
     });
-    ws.appendRow(newRow);
+    appendLiteralRow_(ws, newRow);
   }
 
   try {
@@ -914,6 +1266,7 @@ function deleteQualification_(payload) {
   }
 
   const oldStatus = normalizeString_(rows[existingIndex]['資格狀態']);
+  invalidateSheetReads_();
   ws.deleteRow(getSourceRowNumber_(rows, existingIndex));
 
   try {
@@ -957,7 +1310,7 @@ function appendQualificationLog_(args) {
     }
   });
 
-  ws.appendRow(row);
+  appendLiteralRow_(ws, row);
 }
 
 
@@ -1022,7 +1375,7 @@ function syncQualificationsFromMatrix_(payload) {
   }
 
   if (rows.length > 0) {
-    detailSheet.getRange(startRow, 1, rows.length, detailHeaders.length).setValues(rows);
+    setLiteralValues_(detailSheet.getRange(startRow, 1, rows.length, detailHeaders.length), rows);
   }
 
   return {
@@ -1257,10 +1610,12 @@ function ensureQualificationMatrixPersonRow_(person) {
   const now = new Date();
   if (matchingRows.length === 1) {
     const rowNumber = matchingRows[0] + 1;
-    matrixInfo.headers.forEach(function (header, colIndex) {
+    const fields = {};
+    matrixInfo.headers.forEach(function (header) {
       const cell = getQualificationMatrixPersonCell_(header, person, now);
-      if (cell.recognized) matrixInfo.sheet.getRange(rowNumber, colIndex + 1).setValue(cell.value || '');
+      if (cell.recognized) fields[header] = cell.value || '';
     });
+    setRowFields_(matrixInfo.sheet, matrixInfo.headers, rowNumber, fields);
     return { created: false, rowNumber: rowNumber };
   }
 
@@ -1280,7 +1635,7 @@ function ensureQualificationMatrixPersonRow_(person) {
     }
   }
 
-  matrixInfo.sheet.appendRow(rowValues);
+  appendLiteralRow_(matrixInfo.sheet, rowValues);
   const rowNumber = matrixInfo.sheet.getLastRow();
   copyQualificationMatrixRowPresentation_(matrixInfo.sheet, presentationSourceRow, rowNumber, matrixInfo.headers.length);
   return { created: true, rowNumber: rowNumber };
@@ -1309,7 +1664,7 @@ function setQualificationMatrixCell_(employeeId, stationId, status) {
   }
   if (targetRow < 0) throw new Error('03_站點矩陣 找不到工號：' + employeeId);
 
-  matrixInfo.sheet.getRange(targetRow + 1, stationCol + 1).setValue(status || '');
+  setLiteralValue_(matrixInfo.sheet.getRange(targetRow + 1, stationCol + 1), status || '');
 }
 
 /** =========================
@@ -1369,7 +1724,7 @@ function updateStationRule_(payload) {
         default: return '';
       }
     });
-    rulesSheet.appendRow(newRow);
+    appendLiteralRow_(rulesSheet, newRow);
   } else {
     matchedIndexes.forEach(function (rowNumber) {
       if (payload.id !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '規則ID', normalizeString_(payload.id));
@@ -1455,16 +1810,14 @@ function updatePerson_(payload, session) {
 
   const rowNumber = getSourceRowNumber_(peopleRows, peopleIndex);
 
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '姓名', payload.name);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '班別', payload.shift);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '職務', payload.role);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '國籍', payload.nationality);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '(A)第一天', payload.aDay1);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '(A)第二天', payload.aDay2);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '(B)第一天', payload.bDay1);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '(B)第二天', payload.bDay2);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '在職狀態', payload.employmentStatus);
-  setCellIfExists_(peopleSheet, peopleHeaders, rowNumber, '備註', payload.note);
+  const profileFields = { '姓名': payload.name, '班別': payload.shift, '職務': payload.role, '國籍': payload.nationality,
+    '(A)第一天': payload.aDay1, '(A)第二天': payload.aDay2, '(B)第一天': payload.bDay1, '(B)第二天': payload.bDay2,
+    '在職狀態': payload.employmentStatus, '備註': payload.note };
+  setRowFields_(peopleSheet, peopleHeaders, rowNumber, profileFields);
+  if (Object.keys(profileFields).some(function (key) { return profileFields[key] !== undefined; })) {
+    const person = Object.assign({}, normalizePeople_([peopleRows[peopleIndex]])[0], payload);
+    ensureQualificationMatrixPersonRow_(person);
+  }
 
   // 帳號權限、狀態與密碼屬敏感欄位，只允許最高權限工作階段修改。
   if (
@@ -1570,7 +1923,7 @@ function createPerson_(payload) {
   }
 
   const personRowNumber = peopleSheet.getLastRow() + 1;
-  peopleSheet.appendRow(peopleHeaders.map(function (header) {
+  appendLiteralRow_(peopleSheet, peopleHeaders.map(function (header) {
     return Object.prototype.hasOwnProperty.call(valuesByHeader, header) ? valuesByHeader[header] : '';
   }));
 
@@ -1579,6 +1932,7 @@ function createPerson_(payload) {
     matrixResult = ensureQualificationMatrixPersonRow_(person);
   } catch (error) {
     try {
+      invalidateSheetReads_();
       peopleSheet.deleteRow(personRowNumber);
     } catch (rollbackError) {
       throw new Error(
@@ -1588,6 +1942,14 @@ function createPerson_(payload) {
       );
     }
     throw new Error('新增人員未完成：站點矩陣同步失敗，已回滾人員主表。' + (error && error.message ? error.message : String(error)));
+  }
+
+  SpreadsheetApp.flush();
+  const savedPeople = getSheetObjects_(SHEETS.PEOPLE).filter(function (row) { return normalizeString_(row['工號']).toUpperCase() === employeeId; });
+  const savedMatrix = readQualificationMatrix_();
+  const savedRows = savedMatrix.values.slice(savedMatrix.headerRowIndex + 1).filter(function (row) { return normalizeString_(row[savedMatrix.employeeIdCol]).toUpperCase() === employeeId; });
+  if (savedPeople.length !== 1 || normalizeString_(savedPeople[0]['姓名']) !== name || savedRows.length !== 1 || normalizeString_(savedRows[0][savedMatrix.employeeNameCol]) !== name) {
+    throw new Error('新增人員後主表與矩陣核對不一致，請先檢查資料，不要再次新增。');
   }
 
   return {
@@ -1606,6 +1968,7 @@ function createPerson_(payload) {
 function buildPermissionConfig_() {
   return {
     ok: true,
+    revision: getDataRevision_(),
     permissionItems: normalizePermissionItems_(getSheetObjects_(SHEETS.PERMISSION_ITEMS)),
     rolePermissionMaps: normalizeRolePermissionMaps_(getSheetObjects_(SHEETS.ROLE_PERMISSIONS)),
     personalPermissionExceptions: normalizePersonalPermissionExceptions_(getSheetObjects_(SHEETS.PERSONAL_PERMISSION_EXCEPTIONS)),
@@ -1645,7 +2008,7 @@ function updatePermissionItem_(payload) {
     setCellIfExists_(ws, headers, rowNumber, '更新時間', now);
     setCellIfExists_(ws, headers, rowNumber, '更新人', normalizeString_(payload.updatedBy) || '系統');
   } else {
-    ws.appendRow(headers.map(function (header) {
+    appendLiteralRow_(ws, headers.map(function (header) {
       switch (header) {
         case '權限ID': return item.id;
         case '權限名稱': return item.name;
@@ -1700,7 +2063,7 @@ function updateRolePermission_(payload) {
     setCellIfExists_(ws, headers, rowNumber, '更新時間', now);
     setCellIfExists_(ws, headers, rowNumber, '更新人', normalizeString_(payload.updatedBy) || '系統');
   } else {
-    ws.appendRow(headers.map(function (header) {
+    appendLiteralRow_(ws, headers.map(function (header) {
       switch (header) {
         case '權限設定ID': return item.id;
         case '角色': return item.role;
@@ -1747,7 +2110,7 @@ function upsertPersonalPermissionException_(payload) {
     setCellIfExists_(ws, headers, rowNumber, '更新時間', now);
     setCellIfExists_(ws, headers, rowNumber, '更新人', normalizeString_(payload.updatedBy) || '系統');
   } else {
-    ws.appendRow(headers.map(function (header) {
+    appendLiteralRow_(ws, headers.map(function (header) {
       switch (header) {
         case '例外ID': return item.id;
         case '工號': return item.employeeId;
@@ -1787,7 +2150,9 @@ function deletePersonalPermissionException_(payload) {
   return { ok: true, message: '個人例外權限已停用' };
 }
 
-function saveScheduleDraft_(payload) {
+function saveScheduleDraft_(payload, session) {
+  if (!session) throw authError_('缺少登入工作階段。', 'AUTH_REQUIRED');
+  assertActionScope_(session, 'saveScheduleDraft', payload || {});
   payload = payload || {};
   const draft = payload.draft || payload;
   const draftId = normalizeString_(draft.id) || ('DRAFT_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss_SSS'));
@@ -1809,7 +2174,7 @@ function saveScheduleDraft_(payload) {
     setCellIfExists_(draftSheet, draftHeaders, rowNumber, '更新時間', now);
     setCellIfExists_(draftSheet, draftHeaders, rowNumber, '備註', normalizeString_(draft.note));
   } else {
-    draftSheet.appendRow(draftHeaders.map(function (header) {
+    appendLiteralRow_(draftSheet, draftHeaders.map(function (header) {
       switch (header) {
         case '試排ID': return draftId;
         case '名稱': return name;
@@ -1817,7 +2182,7 @@ function saveScheduleDraft_(payload) {
         case '日別': return normalizeString_(draft.dayKey);
         case '模式': return normalizeString_(draft.mode);
         case '狀態': return normalizeString_(draft.status) || '草稿';
-        case '建立人': return normalizeString_(draft.createdBy || payload.updatedBy) || '系統';
+        case '建立人': return normalizeString_(session.employeeId);
         case '建立時間': return now;
         case '更新時間': return now;
         case '備註': return normalizeString_(draft.note);
@@ -1842,21 +2207,28 @@ function saveScheduleDraft_(payload) {
         }
       });
     });
-    detailSheet.getRange(detailSheet.getLastRow() + 1, 1, values.length, detailHeaders.length).setValues(values);
+    setLiteralValues_(detailSheet.getRange(detailSheet.getLastRow() + 1, 1, values.length, detailHeaders.length), values);
   }
   return { ok: true, message: '站點試排草稿已儲存', draftId: draftId, assignmentCount: assignments.length };
 }
 
-function loadScheduleDrafts_(payload) {
+function loadScheduleDrafts_(payload, session) {
+  if (!session) throw authError_('缺少登入工作階段。', 'AUTH_REQUIRED');
   payload = payload || {};
   const drafts = normalizeScheduleDrafts_(getSheetObjects_(SHEETS.SCHEDULE_DRAFTS));
   const includeDetails = String(payload.includeDetails || '').toLowerCase() === 'true' || payload.includeDetails === true;
-  const team = normalizeString_(payload.team);
+  let team = normalizeString_(payload.team);
+  if (normalizeString_(session.role) !== '最高權限') {
+    const user = buildSessionUser_(session);
+    const ownTeam = normalizeString_(user && user.shift);
+    if (!ownTeam || (team && team !== ownTeam)) throw authError_('只能讀取自己班別的試排草稿。', 'FORBIDDEN');
+    team = ownTeam;
+  }
   const dayKey = normalizeString_(payload.dayKey);
   let filtered = drafts;
   if (team) filtered = filtered.filter(function (item) { return item.team === team; });
   if (dayKey) filtered = filtered.filter(function (item) { return item.dayKey === dayKey; });
-  const result = { ok: true, drafts: filtered };
+  const result = { ok: true, drafts: filtered, revision: getDataRevision_() };
   if (includeDetails) {
     const details = normalizeScheduleDraftDetails_(getSheetObjects_(SHEETS.SCHEDULE_DRAFT_DETAILS));
     result.details = details.filter(function (detail) { return filtered.some(function (draft) { return draft.id === detail.draftId; }); });
@@ -1868,6 +2240,7 @@ function removeScheduleDraftDetails_(detailSheet, draftId) {
   const rows = getSheetObjects_(SHEETS.SCHEDULE_DRAFT_DETAILS);
   for (var i = rows.length - 1; i >= 0; i--) {
     if (normalizeString_(rows[i]['試排ID']) === draftId) {
+      invalidateSheetReads_();
       detailSheet.deleteRow(getSourceRowNumber_(rows, i));
     }
   }
@@ -2112,6 +2485,7 @@ function buildPermissionConfigForSession_(session) {
   if (normalizeString_(session.role) === '最高權限') return config;
   return {
     ok: true,
+    revision: config.revision,
     permissionItems: config.permissionItems,
     rolePermissionMaps: config.rolePermissionMaps.filter(function (item) { return item.role === session.role; }),
     personalPermissionExceptions: config.personalPermissionExceptions.filter(function (item) { return item.employeeId === session.employeeId; }),
@@ -2178,12 +2552,12 @@ function ensureSheetWithHeaders_(name, headers) {
   }
   const existingHeaders = getHeaders_(ws);
   if (existingHeaders.length === 0) {
-    ws.getRange(1, 1, 1, headers.length).setValues([headers]);
+    setLiteralValues_(ws.getRange(1, 1, 1, headers.length), [headers]);
     return ws;
   }
   headers.forEach(function (header) {
     if (existingHeaders.indexOf(header) < 0) {
-      ws.getRange(1, ws.getLastColumn() + 1).setValue(header);
+      setLiteralValue_(ws.getRange(1, ws.getLastColumn() + 1), header);
       existingHeaders.push(header);
     }
   });
@@ -2191,6 +2565,7 @@ function ensureSheetWithHeaders_(name, headers) {
 }
 
 function getSheetObjects_(sheetName) {
+  if (requestSheetCache_ && requestSheetCache_[sheetName]) return requestSheetCache_[sheetName].map(function (row) { return Object.assign({}, row); });
   const ws = getSheet_(sheetName, true);
   if (!ws) return [];
   const values = ws.getDataRange().getValues();
@@ -2198,7 +2573,7 @@ function getSheetObjects_(sheetName) {
   const headerInfo = getSheetHeaderInfo_(ws, values);
   const headers = headerInfo.headers;
 
-  return values.slice(headerInfo.rowIndex + 1).map(function (row, rowOffset) {
+  const rows = values.slice(headerInfo.rowIndex + 1).map(function (row, rowOffset) {
     const obj = {};
     headers.forEach(function (header, index) {
       obj[header] = row[index];
@@ -2206,6 +2581,8 @@ function getSheetObjects_(sheetName) {
     obj.__rowNumber = headerInfo.rowIndex + rowOffset + 2;
     return obj;
   });
+  if (requestSheetCache_) requestSheetCache_[sheetName] = rows;
+  return rows.map(function (row) { return Object.assign({}, row); });
 }
 
 function getSheetHeaderInfo_(ws, existingValues) {
@@ -2253,8 +2630,43 @@ function getSourceRowNumber_(rows, index) {
 function setCellIfExists_(ws, headers, rowNumber, headerName, value) {
   const colIndex = headers.indexOf(headerName);
   if (colIndex < 0 || value === undefined) return false;
-  ws.getRange(rowNumber, colIndex + 1).setValue(value);
+  setLiteralValue_(ws.getRange(rowNumber, colIndex + 1), value);
   return true;
+}
+
+function literalCellValue_(value) {
+  return typeof value === 'string' && /^[\s\u0000-\u001f\u007f-\u009f]*[=+\-@]/.test(value) ? "'" + value : value;
+}
+
+function setLiteralValue_(range, value) {
+  invalidateSheetReads_();
+  return range.setValue(literalCellValue_(value));
+}
+
+function setLiteralValues_(range, values) {
+  invalidateSheetReads_();
+  return range.setValues(values.map(function (row) { return row.map(literalCellValue_); }));
+}
+
+function appendLiteralRow_(sheet, values) {
+  invalidateSheetReads_();
+  return sheet.appendRow(values.map(literalCellValue_));
+}
+
+function invalidateSheetReads_() {
+  dataMutationAttempted_ = true;
+  if (requestSheetCache_) requestSheetCache_ = Object.create(null);
+}
+
+function setRowFields_(sheet, headers, rowNumber, fields) {
+  const cells = headers.map(function (header, index) { return { column: index + 1, value: fields[header] }; })
+    .filter(function (cell) { return cell.value !== undefined; });
+  for (let i = 0; i < cells.length;) {
+    const start = cells[i].column;
+    const values = [cells[i++].value];
+    while (i < cells.length && cells[i].column === start + values.length) values.push(cells[i++].value);
+    setLiteralValues_(sheet.getRange(rowNumber, start, 1, values.length), [values]);
+  }
 }
 
 /** =========================
@@ -2277,6 +2689,8 @@ function errorPayload_(error) {
     ok: false,
     code: error && error.code ? String(error.code) : 'REQUEST_FAILED',
     message: error && error.message ? error.message : String(error),
+    revision: error && error.revision !== undefined ? error.revision : undefined,
+    retryAfterSeconds: error && error.retryAfterSeconds ? error.retryAfterSeconds : undefined,
   };
 }
 

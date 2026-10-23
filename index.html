@@ -60,59 +60,7 @@
         overflow: auto;
       }
     </style>
-    <script>
-      (function () {
-        function ensureBootStatus() {
-          var el = document.getElementById('boot-status');
-          if (!el) {
-            el = document.createElement('div');
-            el.id = 'boot-status';
-            el.innerHTML = '<h1>TSEC 人力站點</h1><p>系統載入中，請稍候。</p>';
-            document.addEventListener('DOMContentLoaded', function () {
-              var root = document.getElementById('root');
-              if (root && !document.getElementById('boot-status')) {
-                root.before(el);
-              } else if (!root && document.body && !document.getElementById('boot-status')) {
-                document.body.prepend(el);
-              }
-            });
-          }
-          return el;
-        }
-
-        function showEarlyError(title, detail) {
-          var el = ensureBootStatus();
-          el.className = 'error';
-          el.innerHTML = '<h1>' + title + '</h1><p>請把下方錯誤截圖提供給我。</p><pre>' + String(detail || '') + '</pre>';
-        }
-
-        window.__hideBootStatus = function () {
-          var el = document.getElementById('boot-status');
-          if (el) el.style.display = 'none';
-        };
-
-        window.__showBootError = showEarlyError;
-
-        window.addEventListener('error', function (event) {
-          showEarlyError('系統啟動失敗', (event.message || '') + '\n' + (event.filename || '') + ':' + (event.lineno || 0) + ':' + (event.colno || 0));
-        });
-
-        window.addEventListener('unhandledrejection', function (event) {
-          var reason = event.reason;
-          var detail = typeof reason === 'object' ? JSON.stringify(reason, null, 2) : String(reason);
-          showEarlyError('系統啟動失敗', detail);
-        });
-
-        setTimeout(function () {
-          var el = document.getElementById('boot-status');
-          if (el && el.style.display !== 'none' && !el.classList.contains('error')) {
-            showEarlyError('系統啟動逾時', '主程式在預期時間內未完成載入。這通常代表入口模組或打包後資產未成功載入。');
-          }
-        }, 4000);
-
-        ensureBootStatus();
-      })();
-    </script>
+    <script type="module" src="/boot-status.js"></script>
   </head>
   <body>
     <div id="boot-status">

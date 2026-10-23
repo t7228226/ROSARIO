@@ -4,6 +4,12 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const release = JSON.parse(await readFile(path.join(root, "release.json"), "utf8"));
+const publishedVersion = JSON.parse(await readFile(path.join(root, "public/version.json"), "utf8"));
+assert.equal(publishedVersion.version, release.version, "前端版本必須與 release manifest 一致");
+for (const file of [".env.preview", ".env.production"]) {
+  assert.ok((await readFile(path.join(root, file), "utf8")).includes(`VITE_APP_VERSION=${release.version}`), `${file} 版本必須一致`);
+}
 const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, precisionUiSource, mobileCommandSource, mobileCommandPositionSource, gasClientSource, gasSource] = await Promise.all([
   readFile(path.join(root, "src/config/writeActions.ts"), "utf8"),
   readFile(path.join(root, "src/App.tsx"), "utf8"),
@@ -47,7 +53,7 @@ assert.match(gasSource, /setCellIfExists_\([^\n]+?'登入密碼', hashPassword_\
 
 const createPersonStart = gasSource.indexOf("function createPerson_");
 const validateOnlyIndex = gasSource.indexOf("validatedOnly: true", createPersonStart);
-const appendPersonIndex = gasSource.indexOf("peopleSheet.appendRow", createPersonStart);
+const appendPersonIndex = gasSource.indexOf("appendLiteralRow_(peopleSheet", createPersonStart);
 const ensureMatrixIndex = gasSource.indexOf("ensureQualificationMatrixPersonRow_(person)", createPersonStart);
 const rollbackPersonIndex = gasSource.indexOf("peopleSheet.deleteRow(personRowNumber)", createPersonStart);
 assert.ok(
@@ -62,19 +68,28 @@ assert.ok(
 assert.match(doPostSource, /case 'operationStatus':/, "GAS 必須提供 operationStatus 查詢");
 assert.match(gasSource, /function executeReliableWrite_\(/, "GAS 必須具備防重複寫入流程");
 assert.match(gasSource, /PropertiesService\.getScriptProperties\(\)/, "GAS 必須保存操作執行結果");
-assert.match(gasSource, /function withDocumentWriteLock_\(/, "GAS 寫入必須使用文件鎖");
-assert.match(gasSource, /MIN_WRITE_VERSION: '2026-08-11-011'/, "舊版前端不得繞過可靠寫入");
+assert.match(gasSource, /LockService\.getScriptLock\(\)/, "Web App 寫入必須取得有效 script lock");
+assert.doesNotMatch(gasSource, /LockService\.getDocumentLock\(\)/, "Web App 不可依賴可能為 null 的 document lock");
+assert.ok(gasSource.includes(`APP_VERSION: '${release.version}'`) && gasSource.includes(`MIN_WRITE_VERSION: '${release.version}'`), "GAS 與前端版本必須同步");
 assert.match(gasSource, /function authorizeWriteAction_\(/, "GAS 寫入前必須執行伺服器端授權");
 assert.match(gasSource, /const session = authorizeWriteAction_\([^;]+;/, "寫入端點不得只依賴前端權限");
 assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工作階段");
 assert.match(gasSource, /assertOperationOwner_\(record, session\)/, "寫入結果查詢必須綁定操作人");
 assert.match(doGetSource, /action === 'bootstrap'.+POST_REQUIRED/s, "bootstrap 不得透過公開 GET 讀取主檔");
 assert.doesNotMatch(doGetSource, /buildBootstrap_\(/, "公開 GET 不得直接建立 bootstrap 資料");
-assert.match(doPostSource, /case 'bootstrap':[\s\S]+buildBootstrapForSession_\(requireSession_\(/, "bootstrap POST 必須驗證登入工作階段");
+assert.match(doPostSource, /case 'bootstrap':\s*\{\s*const session = requireSession_\([\s\S]+buildBootstrapForSession_\(session\)/, "bootstrap POST 必須驗證登入工作階段");
 assert.match(gasSource, /assertActionScope_\(session, action, payload\)/, "寫入必須執行資料範圍檢查");
 assert.match(gasSource, /if \(action !== 'updateStationRule'\) return true;[\s\S]+ownTeam !== requestedTeam/, "站點規則寫入必須限制在登入者所屬班別");
-assert.match(gasClientSource, /sessionToken: activeSessionToken \|\| undefined/, "前端 GAS client 必須附帶 session token");
-assert.match(gasClientSource, /action: "bootstrap"[\s\S]+sessionToken: activeSessionToken \|\| undefined/, "前端 bootstrap 必須使用已驗證 POST");
+assert.match(gasClientSource, /sessionToken: sessionToken \|\| undefined/, "前端 GAS client 必須附帶本次操作的 session token");
+assert.match(gasClientSource, /action: "bootstrap"[\s\S]+sessionToken: sessionToken \|\| undefined/, "前端 bootstrap 必須使用已驗證 POST");
+assert.match(gasClientSource, /sessionToken !== activeSessionToken/, "舊登入請求不得污染新登入狀態");
+assert.match(doPostSource, /case 'listOperations':/, "GAS 必須提供已驗證操作清單");
+assert.match(appSource, /<OperationCenter/, "前端必須提供操作狀態中心");
+assert.doesNotMatch(appSource, /window\.(confirm|prompt)\(/, "操作確認不可阻塞瀏覽器主執行緒");
+const customAssign = appSource.slice(appSource.indexOf("async function handleCustomAssign"), appSource.indexOf("function renderPermissionPage"));
+assert.doesNotMatch(customAssign, /persistQualification\(/, "班表試排不得偷偷修改正式資格");
+const typecheckScript = await readFile(path.join(root, "scripts/check-types.mjs"), "utf8");
+assert.match(typecheckScript, /tsconfig.app.json.+tsconfig.node.json.+tsconfig.tests.json/, "型別檢查必須涵蓋真實應用、設定與測試");
 assert.match(gasClientSource, /operationId/, "前端寫入必須傳送 operationId");
 assert.match(gasClientSource, /pollGasOperation/, "前端逾時後必須查詢操作結果");
 assert.match(gasClientSource, /inFlightWriteRequests/, "前端必須阻擋相同內容的重複送出");
@@ -89,7 +104,7 @@ assert.ok(mainSource.indexOf('import "./precision-ui.css";') > mainSource.indexO
 assert.match(precisionUiSource, /html,[\s\S]+overflow-x: clip;/, "行動版必須裁切全頁水平溢位且不得建立額外捲動容器");
 assert.match(precisionUiSource, /\.mobile-command-center/, "手機必須提供避開底部手勢區的快速選單");
 assert.match(mobileCommandSource, /window\.addEventListener\("pointermove", handlePointerMove/, "手機快速選單按鈕必須支援拖曳移動");
-assert.match(mobileCommandSource, /className="mobile-command-dismiss"/, "手機快速選單必須支援點選外部關閉");
+assert.match(mobileCommandSource, /backdropClassName="mobile-command-dismiss"[\s\S]*?closeOnBackdrop/, "手機快速選單必須使用焦點管理並支援點選外部關閉");
 assert.doesNotMatch(mobileCommandSource, />\s*收合\s*</, "手機快速選單不得保留額外收合按鈕");
 assert.match(mobileCommandPositionSource, /MOBILE_COMMAND_POSITION_STORAGE_KEY/, "手機快速選單位置必須保存於裝置端");
 assert.doesNotMatch(precisionUiSource, /text-align:\s*left/, "全域介面不得退回靠左對齊規則");

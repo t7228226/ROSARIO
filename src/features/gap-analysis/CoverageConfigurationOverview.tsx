@@ -1,6 +1,6 @@
 import AppDialog from "../../components/ui/AppDialog";
 
-export type CoverageAssignmentKind = "own" | "support" | "officer";
+export type CoverageAssignmentKind = "own" | "support" | "officer" | "training";
 
 export interface CoverageConfigurationRow {
   stationId: string;
@@ -36,9 +36,10 @@ function AssignmentNames({ row }: { row: CoverageConfigurationRow }) {
       {row.assigned.map((person) => (
         <span
           key={person.id}
-          className={person.kind === "officer" ? "officer-support-name" : person.kind === "support" ? "support-assignment-name" : ""}
+          className={person.kind === "officer" ? "officer-support-name" : person.kind === "training" ? "training-assumption-name" : person.kind === "support" ? "support-assignment-name" : ""}
         >
           {person.name}
+          {person.kind === "training" ? "（補訓假設）" : ""}
         </span>
       ))}
     </span>
@@ -74,14 +75,14 @@ export default function CoverageConfigurationOverview({
       <dl className="coverage-overview-metrics" aria-label="全站配置摘要">
         <div><dt>分析站點</dt><dd>{rows.length}</dd></div>
         <div><dt>完整覆蓋</dt><dd>{rows.length - shortageRows.length}</dd></div>
-        <div><dt>瓶頸站點</dt><dd>{bottleneckRows.length}</dd></div>
+        <div><dt>已覆蓋但低備援</dt><dd>{bottleneckRows.length}</dd></div>
         <div className={totalShortage ? "is-danger" : "is-success"}><dt>合計缺口</dt><dd>{totalShortage}</dd></div>
       </dl>
 
       {attentionRows.length ? (
         <div className="coverage-attention-list" aria-label="目前需要關注的站點">
           <div className="coverage-attention-header"><strong>需關注站點</strong><span>僅顯示缺口、瓶頸或模擬變動</span></div>
-          {attentionRows.map((row) => (
+          {attentionRows.slice().sort((a, b) => b.shortage - a.shortage).slice(0, 4).map((row) => (
             <div className={`coverage-attention-row ${row.shortage ? "has-shortage" : "is-bottleneck"}`} key={row.stationId}>
               <div><strong>{row.stationName}</strong><span>需求 {row.required}｜總合格 {row.totalQualified}</span></div>
               <div className="coverage-attention-status"><strong>{row.shortage ? `缺 ${row.shortage}` : row.status}</strong><span>{row.assigned.length}/{row.required}</span></div>
@@ -92,7 +93,7 @@ export default function CoverageConfigurationOverview({
         <p className="coverage-overview-safe">目前沒有缺口或瓶頸；完整人員來源可在詳細資料中核對。</p>
       )}
 
-      <button type="button" className="ghost coverage-details-trigger" onClick={onOpenDetails}>查看全部站點詳細資料</button>
+      <button type="button" className="ghost coverage-details-trigger" onClick={onOpenDetails}>查看全部 {rows.length} 站詳細資料{attentionRows.length > 4 ? `（另有 ${attentionRows.length - 4} 站需關注）` : ""}</button>
 
       <AppDialog
         open={detailsOpen}
@@ -103,7 +104,7 @@ export default function CoverageConfigurationOverview({
         footer={<button type="button" className="primary" onClick={onCloseDetails}>完成核對</button>}
       >
         <div className="coverage-detail-legend" aria-label="人員來源說明">
-          <span>一般文字：本班</span><span className="support-assignment-name">藍色：支援</span><span className="officer-support-name">綠色：幹部支援</span>
+          <span>一般文字：本班</span><span className="support-assignment-name">藍色：支援</span><span className="officer-support-name">綠色：幹部支援</span><span className="training-assumption-name">黃色：假設補訓完成</span>
         </div>
         <div className="table-wrap coverage-detail-table-wrap">
           <table className="table coverage-detail-table">

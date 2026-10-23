@@ -2,6 +2,15 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), {
+    name: "production-security-policy",
+    apply: "build",
+    transformIndexHtml() {
+      return [{ tag: "meta", attrs: {
+        "http-equiv": "Content-Security-Policy",
+        content: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://script.google.com https://*.googleusercontent.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'",
+      }, injectTo: "head-prepend" }];
+    },
+  }],
   base: "/ROSARIO/",
 });
