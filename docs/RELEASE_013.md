@@ -44,6 +44,7 @@ GAS 為網站唯一寫入端；script lock、資料 revision、內容指紋與 d
 - `npm run check:contracts`：11 個寫入動作通過。
 - `node --check gas-login-fallback-2026-07-01.js`、敏感檔 guard 通過。
 - `npm run build` 與 `npm run build:qa` 通過。
+- npm 官方 audit：0 個已知漏洞；不是所有資安風險均為零的保證。
 - 既有容量一人一站、固定配置、支援優先、缺勤反事實、訓練與輪休測試，以及 4,096 個小圖窮舉對照仍納入上述測試。
 
 瀏覽器實測使用實際 GAS 來源的本機 VM 服務，所有人員均為合成資料：
