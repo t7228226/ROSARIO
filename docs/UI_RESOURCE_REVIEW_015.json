@@ -13,7 +13,22 @@
   "implementation": [
     { "source_id": "motion-primitives", "target": "src/features/gap-analysis/CoverageConfigurationOverview.tsx", "detail": "統一桌機及手機的逐站配置摘要，固定與候補位於展開區；比較全站缺口及調動影響。", "evidence_role": "after" }
   ],
-  "evidence": [],
-  "verification": [],
-  "reviewer": { "role": "independent-verifier", "summary": "待實作及實際畫面驗證。" }
+  "evidence": [
+    { "role": "before", "path": "private-backups/upgrade-015/desktop-before.png", "sha256": "363ce0ceea69d2c3152bf2ea6c4c2fd25acc9a4e6095eb1a253264a71763d43c" },
+    { "role": "after", "path": "private-backups/upgrade-015/production-desktop.png", "sha256": "14659f56eff12819b1a30797d8bfdc1d8f16432c7b6c5af54b19bef7651327f6" },
+    { "role": "mobile", "path": "private-backups/upgrade-015/production-mobile.png", "sha256": "378cab0e92fbb470170a03cfca4ef8d55bff93a6be60e06b6d04aba8bc443f60" },
+    { "role": "narrow", "path": "private-backups/upgrade-015/production-320.png", "sha256": "1e66070565858cd4b53edf372ed14936ade4e0ab85318a995143d5201aaccf6f" },
+    { "role": "leader", "path": "private-backups/upgrade-015/production-leader-mobile.png", "sha256": "522258e51181bfc142a45deba53829f76f8886e65d67d7fa2fb660b3a20331a4" },
+    { "role": "leader-desktop", "path": "private-backups/upgrade-015/production-leader-desktop.png", "sha256": "d3e67da8f23563669a14072e5e80b2d4c0800ded3c28d788d8f89bcc87893b14" },
+    { "role": "interaction", "path": "private-backups/upgrade-015/production-moves-mobile.png", "sha256": "85818398f646ee9c9fad1e4ddc2cc382ad8fc4ccde93bbfd8cec9ca8f55e0fef" },
+    { "role": "error", "path": "private-backups/upgrade-015/production-error.png", "sha256": "bec11e75cb4dbec0a3fb125fc9e07e3a478cdc971619b8bffbc19266497191ec" },
+    { "role": "observations", "path": "private-backups/upgrade-015/browser-qa.json", "sha256": "ff541cd3ce78dc3ba135ce899dd605309b5afa92f34d0dd5af9f262caaf4be14" }
+  ],
+  "verification": [
+    { "id": "visual-comparison", "status": "pass", "evidence_roles": ["before", "after", "mobile", "leader", "leader-desktop"] },
+    { "id": "viewport-fit", "status": "pass", "evidence_roles": ["mobile", "narrow", "observations"] },
+    { "id": "interaction-states", "status": "pass", "evidence_roles": ["interaction", "error", "observations"] },
+    { "id": "keyboard-focus", "status": "pass", "evidence_roles": ["observations"] }
+  ],
+  "reviewer": { "role": "independent-verifier", "summary": "Socrates 獨立審閱桌機及經確認尺寸的 390/320 實際畫面，未見發布阻斷缺陷；指出 320 的摘要區偏高，列為 P3。前三項修正為摘要缺少姓名、手機重複指派標題造成空白、站長綠底配白字對比不足，主工作者已重看修正後畫面與計算樣式。獨立審閱者早期站長截圖未取到姓名，不列為該項獨立證明；後續主工作者重新擷取正式桌機與手機姓名及綠字。主流程實測固定、復原、上限警示、焦點及五主題，另發現夜間缺口顏色偏暗並依主題修正。不是原生 iPhone 或多人同時寫入驗收；錯誤套用分頁尺寸的早期影像未列為證據。" }
 }
