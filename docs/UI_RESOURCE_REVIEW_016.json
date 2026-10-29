@@ -14,7 +14,9 @@
     { "role": "narrow", "path": "private-backups/upgrade-016/rules-mobile320.png", "sha256": "8d3234e5e146f1bdfe64720c0d9f27a45af0522c585bf162c68fa22333454265" },
     { "role": "presets", "path": "private-backups/upgrade-016/presets-green.png", "sha256": "175633bf7ee8b799b2d0e4dba3d09950d266592a4352009e9183d93d041e87c8" },
     { "role": "night", "path": "private-backups/upgrade-016/rules-night.png", "sha256": "9505eb299ae6e49735d07b4c43404aa8d65f8d76d5c758a98b4eedf121f35ac1" },
-    { "role": "contrast", "path": "private-backups/upgrade-016/rules-contrast.png", "sha256": "529722b6e62a3277d215a5331e4f122fcc3178ed505c4211d1ae5ec140894db1" }
+    { "role": "contrast", "path": "private-backups/upgrade-016/rules-contrast.png", "sha256": "529722b6e62a3277d215a5331e4f122fcc3178ed505c4211d1ae5ec140894db1" },
+    { "role": "production", "path": "private-backups/upgrade-016/production-presets.png", "sha256": "e3af8d8bcc7fe3ada3fe6931c633bbc1393621202fc07e985d1033905db6caa5" },
+    { "role": "production-mobile", "path": "private-backups/upgrade-016/production-mobile390.png", "sha256": "b41a4aba06928b192ae7023e2024430bc5e954d40a183adbf55e4b0906a30da6" }
   ],
   "verification": [
     { "id": "visual-comparison", "status": "pass", "evidence_roles": ["before", "after", "mobile", "narrow", "presets", "night", "contrast"] },
