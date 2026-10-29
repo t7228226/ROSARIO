@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "scope": "material",
+  "change_kind": "existing",
+  "platform": "react",
+  "surface": "operate",
+  "objective": "讓手機先看到缺口，保留置中風格，以逐站展開取代十欄橫表；新增可選離職情境。",
+  "exemption": null,
+  "candidates": [
+    {
+      "source_id": "motion-primitives",
+      "inspected": "https://motion-primitives.com/docs/disclosure",
+      "decision": "adapt_method",
+      "detail": "摘要與展開內容分離，展開狀態不改變分析條件。",
+      "reason": "採漸進揭露的互動原則，獨立以原生 details 實作；不加入動畫依賴。",
+      "target": "src/features/gap-analysis/CoverageConfigurationOverview.tsx",
+      "checks": { "free_only": true, "license_reviewed": true, "compatible": true, "evidence": "僅參考公開互動原則，沒有複製第三方程式碼、素材或字型，沿用現有 React 與 HTML。" }
+    },
+    {
+      "source_id": "animate-ui",
+      "inspected": "https://animate-ui.com/docs/primitives/headless/disclosure",
+      "decision": "reject",
+      "detail": "DisclosureButton 與 DisclosurePanel 的分離範例及動畫屬性。",
+      "reason": "此工作介面已有 AppDialog；額外 Headless/Motion 元件不會改善缺口資訊，故不匯入元件或動畫套件。"
+    }
+  ],
+  "implementation": [
+    { "source_id": "motion-primitives", "target": "src/features/gap-analysis/CoverageConfigurationOverview.tsx", "detail": "以原生 details 獨立實作手機逐站摘要及展開內容，桌機表格維持，加入展開箭頭；不導入第三方元件。", "evidence_role": "mobile-detail" }
+  ],
+  "evidence": [
+    { "role": "before", "path": "private-backups/upgrade-014/upgrade-014-mobile-before.png", "sha256": "f43a25ae3ebae0786e391382449cb4c383098b0b63d1fdc75e752165b02a1cab" },
+    { "role": "after", "path": "private-backups/upgrade-014/upgrade-014-mobile-final.png", "sha256": "f56534baf685e13b7e76027976ec8658ee4d3659b7188dd67097de9e63f7d243" },
+    { "role": "mobile-detail", "path": "private-backups/upgrade-014/upgrade-014-mobile-final-detail.png", "sha256": "19b05e49bd3b779f79902a77043ca6effc09cfe1bbee21725ea2320da0aba24c" },
+    { "role": "narrow-viewport", "path": "private-backups/upgrade-014/upgrade-014-320-dialog.png", "sha256": "daab029f27c7d89a1d00bca850ecb063d7b2c3cdae7092e51967b941ba406c44" },
+    { "role": "desktop-detail", "path": "private-backups/upgrade-014/upgrade-014-desktop-detail.png", "sha256": "b4b459c2fd40fdfc5a0aeffc5d0bccae63b87d3236de5f4aac31a4da997dd3ff" },
+    { "role": "error-state", "path": "private-backups/upgrade-014/upgrade-014-confirmed-field-error.png", "sha256": "0cd190e17a097fbe649eea8d09c74368e9bb510b7a07ed7b0561dc124028d4ae" },
+    { "role": "browser-observations", "path": "private-backups/upgrade-014/browser-qa-014.json", "sha256": "2bfc9a4b24b0392537581ff922b008e5a6d9a82e22b3add0f3bbbb533473a7dc" }
+  ],
+  "verification": [
+    { "id": "visual-comparison", "status": "pass", "evidence_roles": ["before", "after", "mobile-detail"] },
+    { "id": "viewport-fit", "status": "pass", "evidence_roles": ["narrow-viewport", "desktop-detail", "browser-observations"] },
+    { "id": "interaction-states", "status": "pass", "evidence_roles": ["error-state", "mobile-detail", "browser-observations"] },
+    { "id": "keyboard-focus", "status": "pass", "evidence_roles": ["browser-observations"] }
+  ],
+  "reviewer": { "role": "independent-verifier", "summary": "Hilbert 獨立檢視七張實際截圖：基準／異動分區及逐站差異改善，未見阻擋主要操作的問題；指出手機輔助文字偏小偏淡、展開提示弱。主工作者已增字級與對比、加入箭頭、修正姓名置中並實際重看。before 是014初期畫面，不是正式站基準，與 after 的取景和展開狀態不完全一致；互動、焦點、儲存及320/390/1440尺寸由主工作者實測，獨立審閱者未重測互動。原生手機、全站五主題及雲端多人驗收不在本次已通過範圍。" }
+}

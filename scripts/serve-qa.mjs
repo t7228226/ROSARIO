@@ -33,7 +33,7 @@ function action(body) {
     if (payload.expectedRevision !== revision) return { ok: false, code: "REVISION_CONFLICT", message: "隔離測試資料版本已變更", revision };
     const id = `QA-DRAFT-${drafts.length + 1}`;
     drafts.push({ ...payload, id, updatedAt: new Date().toISOString() });
-    details.push(...(payload.details || []).map((item) => ({ ...item, draftId: id })));
+    details.push(...(payload.assignments || []).map((item) => ({ ...item, draftId: id })));
     const result = { ok: true, revision: ++revision, id };
     operations.set(body.operationId, result);
     return result;

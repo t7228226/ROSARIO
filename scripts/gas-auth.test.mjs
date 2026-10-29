@@ -1,43 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
-import vm from "node:vm";
-import { fileURLToPath } from "node:url";
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const gasSource = await readFile(path.join(root, "gas-login-fallback-2026-07-01.js"), "utf8");
+import { fixture } from "./helpers/gasFixture.mjs";
 
 function createGasContext({ role = "技術員", allowedPermissions = ["PERM_005"] } = {}) {
-  const properties = new Map();
-  const lock = { waitLock() {}, releaseLock() {} };
-  const propertyStore = {
-    getProperty(key) { return properties.has(key) ? properties.get(key) : null; },
-    setProperty(key, value) { properties.set(key, String(value)); },
-    deleteProperty(key) { properties.delete(key); },
-    getProperties() { return Object.fromEntries(properties); },
-  };
-  let uuidCounter = 0;
-  const context = vm.createContext({
-    console,
-    SpreadsheetApp: { flush() {} },
-    LockService: {
-      getDocumentLock: () => lock,
-      getScriptLock: () => lock,
-    },
-    PropertiesService: {
-      getScriptProperties: () => propertyStore,
-    },
-    Utilities: {
-      Charset: { UTF_8: "utf8" },
-      DigestAlgorithm: { SHA_256: "sha256" },
-      getUuid: () => `00000000-0000-4000-8000-${String(++uuidCounter).padStart(12, "0")}`,
-      computeDigest: (_algorithm, value) => [...createHash("sha256").update(String(value)).digest()],
-      base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url"),
-    },
-  });
-  vm.runInContext(gasSource, context);
+  const { context, properties } = fixture({ role, permissions: allowedPermissions });
 
   const accountRows = [{
     工號: "P1001",
@@ -59,13 +25,14 @@ function createGasContext({ role = "技術員", allowedPermissions = ["PERM_005"
   }));
 
   context.normalizePeople_ = (rows) => rows;
+  const getSheetObjects = context.getSheetObjects_;
   context.getSheetObjects_ = (sheetName) => {
     if (sheetName === "07_帳號管理") return accountRows;
     if (sheetName === "01_人員主表") return peopleRows;
     if (sheetName === "08_權限項目") return permissionItems;
     if (sheetName === "09_角色權限設定") return rolePermissions;
     if (sheetName === "10_個人例外權限") return [];
-    return [];
+    return getSheetObjects(sheetName);
   };
   context.assertWritableAppVersion_ = () => true;
   context.syncDataRevision_ = () => context.getDataRevision_();
@@ -85,7 +52,7 @@ test("login issues a server session without returning the password", () => {
   assert.equal(result.ok, true);
   assert.equal(result.user.id, "P1001");
   assert.match(result.sessionToken, /^[A-Za-z0-9_-]{40,}$/);
-  assert.ok(result.sessionExpiresAt > Date.now());
+  assert.ok(result.sessionExpiresAt > context.Date.now());
   assert.equal("password" in result.user, false);
   assert.equal("loginPassword" in result.user, false);
 });
@@ -211,7 +178,7 @@ test("logout revokes the token and expired sessions cannot be reused", () => {
   const secondLogin = context.login_({ account: "worker", password: "correct-password" });
   const propertyKey = context.sessionPropertyKey_(secondLogin.sessionToken);
   const session = JSON.parse(properties.get(propertyKey));
-  properties.set(propertyKey, JSON.stringify({ ...session, expiresAt: Date.now() - 1 }));
+  properties.set(propertyKey, JSON.stringify({ ...session, expiresAt: context.Date.now() - 1 }));
   assert.throws(() => context.requireSession_(secondLogin.sessionToken), /逾時|登入/);
   assert.equal(properties.has(propertyKey), false);
 });

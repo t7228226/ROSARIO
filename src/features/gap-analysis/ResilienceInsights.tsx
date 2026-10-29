@@ -34,7 +34,7 @@ export default function ResilienceInsights({ result, people, stations }: Resilie
         {result.levels.map((level) => (
           <div className={`resilience-level-item ${level.riskScenarios ? "has-risk" : "is-safe"}`} key={level.absenceCount}>
             <strong>缺勤 {level.absenceCount} 人</strong>
-            <span>維持全勤基準 {level.baselineMaintainedRate.toFixed(1)}%</span>
+            <span>維持情境基準 {level.baselineMaintainedRate.toFixed(1)}%</span>
             <small>{level.riskScenarios} 個風險組合｜{level.exhaustive ? "完整排列" : `抽樣 ${level.testedCombinations.toLocaleString()}`}</small>
           </div>
         ))}

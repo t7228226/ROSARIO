@@ -38,6 +38,9 @@ const pendingWriteStorageKey = "stationAppPendingWrites";
 const inFlightWriteRequests = new Map<string, Promise<GasResponse>>();
 let activeSessionToken = "";
 let observedRevision: number | undefined;
+let observedBackendVersion = "";
+
+export function getObservedDataRevision() { return observedRevision; }
 
 class RequestTimeoutError extends Error {
   constructor(timeoutMs: number) {
@@ -59,13 +62,14 @@ class GasRequestRejectedError extends Error {
 class ServiceResponseError extends Error {}
 
 export function setGasSessionToken(sessionToken: string) {
-  if (activeSessionToken !== String(sessionToken || "").trim()) observedRevision = undefined;
+  if (activeSessionToken !== String(sessionToken || "").trim()) { observedRevision = undefined; observedBackendVersion = ""; }
   activeSessionToken = String(sessionToken || "").trim();
 }
 
 export function clearGasSessionToken() {
   activeSessionToken = "";
   observedRevision = undefined;
+  observedBackendVersion = "";
 }
 
 function notifyExpiredSession(code: string) {
@@ -161,6 +165,7 @@ async function readGasResult(response: Response, fallbackMessage: string, expect
 }
 
 async function sendGasAction(action: string, payload: Record<string, unknown>, operationId?: string, sessionToken = activeSessionToken) {
+  if (!GAS_ENDPOINT) throw new GasRequestRejectedError("尚未設定隔離測試資料服務，請啟動本機 QA 或指定測試 GAS。", "TEST_ENDPOINT_REQUIRED");
   if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，請重新確認操作。", "SESSION_CHANGED");
   const response = await fetchWithTimeout(GAS_ENDPOINT, {
     method: "POST",
@@ -285,12 +290,13 @@ async function performReliableGasWrite(
   }
 }
 
-export async function postGasAction(action: string, payload: Record<string, unknown>): Promise<GasResponse> {
+export async function postGasAction(action: string, payload: Record<string, unknown>, options: { expectedRevision?: number } = {}): Promise<GasResponse> {
   if (!FRONT_WRITE_ACTIONS.has(action)) return sendGasAction(action, payload);
   if (!appEnvironment.writesEnabled) throw new Error("升級測試環境目前為唯讀，已阻擋寫入正式資料。");
   if (observedRevision === undefined) throw new Error("尚未取得可寫入的資料版本，請先重新載入；若仍無法儲存，請確認新版 GAS 已部署。");
+  if (observedBackendVersion !== APP_VERSION) throw new Error("前後端版本不一致，已暫停寫入；請先完成相符版本的 GAS 部署並重新載入資料。");
   const sessionToken = activeSessionToken;
-  const revision = observedRevision;
+  const revision = options.expectedRevision ?? observedRevision;
   payload = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
   const logicalKey = `${sessionToken}\n${action}\n${stableSerialize(payload)}`;
   const currentRequest = inFlightWriteRequests.get(logicalKey);
@@ -310,6 +316,7 @@ export async function postGasAction(action: string, payload: Record<string, unkn
 }
 
 export async function fetchGasBootstrapData(): Promise<AppBootstrap> {
+  if (!GAS_ENDPOINT) throw new GasRequestRejectedError("尚未設定隔離測試資料服務，不會連線至正式資料。", "TEST_ENDPOINT_REQUIRED");
   const sessionToken = activeSessionToken;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -324,6 +331,7 @@ export async function fetchGasBootstrapData(): Promise<AppBootstrap> {
   }, GAS_BOOTSTRAP_TIMEOUT_MS);
   if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已忽略舊資料。", "SESSION_CHANGED");
   const result = await readGasResult(response, "GAS bootstrap 讀取失敗", sessionToken);
+  observedBackendVersion = String(result.serverVersion || "");
   observedRevision = typeof result.revision === "number" ? result.revision : undefined;
   return result as unknown as AppBootstrap;
     } catch (error) {
@@ -356,6 +364,7 @@ export async function fetchGasVersionStatus(): Promise<{
   writeBlocked: boolean;
   message?: string;
 }> {
+  if (!GAS_ENDPOINT) throw new GasRequestRejectedError("尚未設定隔離測試資料服務。", "TEST_ENDPOINT_REQUIRED");
   const response = await fetchWithTimeout(
     `${GAS_ENDPOINT}?action=version&appVersion=${encodeURIComponent(APP_VERSION)}`,
     { cache: "no-store" },
@@ -365,8 +374,8 @@ export async function fetchGasVersionStatus(): Promise<{
   return {
     latestVersion: String(result.latestVersion || APP_VERSION),
     minWriteVersion: String(result.minWriteVersion || result.latestVersion || APP_VERSION),
-    outdated: Boolean(result.outdated),
-    writeBlocked: Boolean(result.writeBlocked),
-    message: typeof result.message === "string" ? result.message : undefined,
+    outdated: Boolean(result.outdated) || String(result.latestVersion || "") !== APP_VERSION,
+    writeBlocked: Boolean(result.writeBlocked) || String(result.latestVersion || "") !== APP_VERSION,
+    message: String(result.latestVersion || "") !== APP_VERSION ? "前後端版本不一致，請完成相符版本部署；目前暫停寫入。" : typeof result.message === "string" ? result.message : undefined,
   };
 }

@@ -7,10 +7,10 @@ export const VERSION = JSON.parse(await readFile(new URL("../../release.json", i
 const PERMISSIONS = ["PERM_001", "PERM_005", "PERM_006", "PERM_007", "PERM_008", "PERM_011", "PERM_012", "PERM_014"];
 
 // All accounts, sheets and service calls in this suite are synthetic and in memory.
-export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions = [], personRole = "技術員" } = {}) {
+export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions = [], personRole = "技術員", timeZone = "UTC" } = {}) {
   let now = Date.UTC(2026, 9, 23), uuid = 0, operation = 0, locked = false, beforeAcquire;
   const events = [], properties = new Map(), sheets = new Map(), stats = { reads: 0 };
-  const faults = { flush: false, finishOperation: false, beforeDataWrite: false, duringFingerprint: undefined };
+  const faults = { flush: false, finishOperation: false, beforeDataWrite: false, ledgerWrite: false, ledgerFlush: false, ledgerDelete: false, ledgerReadback: false, duringFingerprint: undefined };
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
@@ -29,11 +29,18 @@ export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions
       mutate(kind, data) {
         assert.equal(locked, true, `unlocked ${name} ${kind}`);
         events.push({ kind, name, data });
+        if (name === "13_操作收據" && faults.ledgerWrite) throw new Error("synthetic ledger write failure");
         if (this.failNextWrite) { this.failNextWrite = false; throw new Error("synthetic sheet failure"); }
       },
       getRange(row, column, height = 1, width = 1) {
         const range = {
-          getValues: () => { stats.reads++; return Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => value.rows[row + y - 1]?.[column + x - 1] ?? "")); },
+          getValues: () => {
+            stats.reads++;
+            return Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => {
+              const cell = value.rows[row + y - 1]?.[column + x - 1] ?? "";
+              return faults.ledgerReadback && name === "13_操作收據" && row + y > 1 && column + x === 2 ? `${cell} ` : cell;
+            }));
+          },
           getFormulas() {
             if (faults.duringFingerprint) faults.duringFingerprint(name);
             return Array.from({ length: height }, (_, y) => Array.from({ length: width }, (_, x) => value.formulas.get(`${row + y},${column + x}`) || ""));
@@ -76,7 +83,8 @@ export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions
     ["INTERNAL_B", "TEAM_B", "ST01", 2, "management-B"],
   ]);
   sheet("06_資格異動紀錄", [["異動ID", "工號", "站點代碼", "新狀態", "異動人"]]);
-  sheet("08_權限項目", [["權限ID", "啟用狀態"], ...PERMISSIONS.map(p => [p, "啟用"])]);
+  const catalog = Array.from({ length: 16 }, (_, i) => `PERM_${String(i + 1).padStart(3, "0")}`);
+  sheet("08_權限項目", [["權限ID", "啟用狀態"], ...catalog.map(p => [p, "啟用"])]);
   const roleMaps = sheet("09_角色權限設定", [["角色", "權限ID", "允許", "啟用狀態"], ...permissions.map(p => [role, p, "Y", "啟用"])]);
   const exceptionSheet = sheet("10_個人例外權限", [["工號", "權限ID", "效果", "啟用狀態"], ...exceptions.map(e => ["P1001", e.permissionId, e.effect, "啟用"])]);
   const drafts = sheet("11_站點試排紀錄", [
@@ -102,7 +110,11 @@ export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions
       if (faults.beforeDataWrite && key.startsWith("ROSARIO_OP_")) throw new Error("synthetic reservation quota failure");
       properties.set(key, String(value));
     },
-    deleteProperty(key) { assert.equal(locked, true, `unlocked property delete ${key}`); properties.delete(key); },
+    deleteProperty(key) {
+      assert.equal(locked, true, `unlocked property delete ${key}`);
+      if (faults.ledgerDelete && key.startsWith("ROSARIO_OP_")) throw new Error("synthetic property delete failure");
+      properties.delete(key);
+    },
   };
   const context = vm.createContext({
     Date: Clock, console,
@@ -111,17 +123,21 @@ export function fixture({ role = "主任", permissions = PERMISSIONS, exceptions
     SpreadsheetApp: {
       flush() {
         assert.equal(locked, true); events.push({ kind: "flush" });
-        if (faults.flush) throw new Error("synthetic flush failure");
+        if (faults.flush || (faults.ledgerFlush && sheets.has("13_操作收據"))) throw new Error("synthetic flush failure");
       },
       getActiveSpreadsheet: () => ({ getSheetByName: name => sheets.get(name) || null, insertSheet: name => sheet(name) }),
     },
-    Session: { getScriptTimeZone: () => "UTC" },
+    Session: { getScriptTimeZone: () => timeZone },
     Utilities: {
       Charset: { UTF_8: "utf8" }, DigestAlgorithm: { SHA_256: "sha256" },
       getUuid: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, "0")}`,
       computeDigest: (_, value) => [...createHash("sha256").update(String(value)).digest()],
       base64EncodeWebSafe: bytes => Buffer.from(bytes).toString("base64url"),
-      formatDate: date => String(date.getTime()),
+      formatDate: (date, zone, format) => {
+        if (format !== "yyyy-MM-dd") return String(date.getTime());
+        const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date).map(p => [p.type, p.value]));
+        return `${parts.year}-${parts.month}-${parts.day}`;
+      },
     },
     ContentService: { MimeType: { JSON: "json" }, createTextOutput: body => ({ setMimeType: () => body }) },
   });

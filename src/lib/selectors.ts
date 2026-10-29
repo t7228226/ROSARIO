@@ -243,14 +243,13 @@ export function getQualifiedPeopleForStation(
 }
 
 export function getQualificationCountMap(people: Person[], qualifications: Qualification[]) {
-  const map = new Map<string, number>();
-  for (const person of people) {
-    map.set(
-      person.id,
-      qualifications.filter((item) => item.employeeId === person.id && item.status === "合格").length
-    );
+  const statusesByPerson = new Map(people.map((person) => [person.id, new Map<string, QualificationStatus>()]));
+  for (const item of qualifications) {
+    const statuses = statusesByPerson.get(item.employeeId);
+    if (statuses) statuses.set(item.stationId, mergeQualificationStatus(statuses.get(item.stationId) || "", item.status));
   }
-  return map;
+  return new Map([...statusesByPerson].map(([id, statuses]) =>
+    [id, [...statuses.values()].filter((status) => status === "合格").length]));
 }
 
 export interface CoverageStationRow {
@@ -406,13 +405,12 @@ export function solveCoverageMatching(
     ids.filter((id) => !forcedIds.has(id)).forEach((id) => personFlex.set(id, (personFlex.get(id) || 0) + 1));
   });
 
-  const slots = rules.flatMap((rule) =>
-    Array.from({ length: Math.max(0, getRuleNeed(rule, mode) - (forcedCountByStation.get(rule.stationId) || 0)) }, (_, index) => ({
-      key: `${rule.stationId}#${index}`,
-      stationId: rule.stationId,
-      priority: rule.priority ?? 999,
-    }))
-  ).sort((a, b) => {
+  // Keep capacities numeric: even untrusted demand must not allocate one object per vacancy.
+  const stations = rules.map((rule) => ({
+    stationId: rule.stationId,
+    capacity: Math.min(activeIds.size, Math.max(0, Math.floor(getRuleNeed(rule, mode) - (forcedCountByStation.get(rule.stationId) || 0)))) || 0,
+    priority: rule.priority ?? 999,
+  })).sort((a, b) => {
     const aCandidates = qualifiedByStation.get(a.stationId)?.length || 0;
     const bCandidates = qualifiedByStation.get(b.stationId)?.length || 0;
     if (aCandidates !== bCandidates) return aCandidates - bCandidates;
@@ -420,66 +418,82 @@ export function solveCoverageMatching(
     return a.stationId.localeCompare(b.stationId, "zh-Hant", { numeric: true });
   });
 
-  const personBySlot = new Map<string, string>();
-  const slotByPerson = new Map<string, string>();
-  const slotStation = new Map(slots.map((slot) => [slot.key, slot.stationId]));
-  const candidatesBySlot = new Map<string, string[]>();
+  const capacityByStation = new Map(stations.map((station) => [station.stationId, station.capacity]));
+  const stationsByPerson = new Map<string, string[]>();
+  stations.forEach((station) => {
+    if (station.capacity <= 0) return;
+    for (const id of qualifiedByStation.get(station.stationId) || []) {
+      if (forcedIds.has(id)) continue;
+      const candidates = stationsByPerson.get(id) || [];
+      candidates.push(station.stationId);
+      stationsByPerson.set(id, candidates);
+    }
+  });
   const randomRank = new Map(activePeople.map((person) => [person.id, Math.random()]));
 
-  slots.forEach((slot) => {
-    function score(id: string) {
-      const flex = personFlex.get(id) || 0;
-      const ownScore = ownIds.has(id) ? 0 : 1;
-      const supportScore = supportIds.has(id) ? 0 : 1;
-      const tieBreaker = randomize ? randomRank.get(id) || 0 : id;
-      if (strategy === "當班優先") return [ownScore, flex, tieBreaker];
-      if (strategy === "支援優先") return [supportScore, flex, tieBreaker];
-      return [flex, supportScore, ownScore, tieBreaker];
-    }
-
-    const ids = [...(qualifiedByStation.get(slot.stationId) || [])].filter((id) => !forcedIds.has(id)).sort((a, b) => {
-      const left = score(a);
-      const right = score(b);
-      for (let index = 0; index < left.length; index += 1) {
-        if (left[index] === right[index]) continue;
-        if (typeof left[index] === "number" && typeof right[index] === "number") {
-          return (left[index] as number) - (right[index] as number);
-        }
-        return String(left[index]).localeCompare(String(right[index]), "zh-Hant", { numeric: true });
+  function score(id: string) {
+    const flex = personFlex.get(id) || 0;
+    const ownScore = ownIds.has(id) ? 0 : 1;
+    const supportScore = supportIds.has(id) ? 0 : 1;
+    const tieBreaker = randomize ? randomRank.get(id) || 0 : id;
+    if (strategy === "當班優先") return [ownScore, flex, tieBreaker];
+    if (strategy === "支援優先") return [supportScore, flex, tieBreaker];
+    return [flex, supportScore, ownScore, tieBreaker];
+  }
+  const orderedPeople = [...stationsByPerson.keys()].sort((a, b) => {
+    const left = score(a);
+    const right = score(b);
+    for (let index = 0; index < left.length; index += 1) {
+      if (left[index] === right[index]) continue;
+      if (typeof left[index] === "number" && typeof right[index] === "number") {
+        return (left[index] as number) - (right[index] as number);
       }
-      if (randomize) return (randomRank.get(a) || 0) - (randomRank.get(b) || 0);
-      return a.localeCompare(b, "zh-Hant", { numeric: true });
-    });
-    candidatesBySlot.set(slot.key, ids);
+      return String(left[index]).localeCompare(String(right[index]), "zh-Hant", { numeric: true });
+    }
+    if (randomize) return (randomRank.get(a) || 0) - (randomRank.get(b) || 0);
+    return a.localeCompare(b, "zh-Hant", { numeric: true });
   });
 
-  function tryAssign(slotKey: string, visitedPeople: Set<string>): boolean {
-    const candidates = candidatesBySlot.get(slotKey) || [];
-    for (const personId of candidates) {
-      if (visitedPeople.has(personId)) continue;
-      visitedPeople.add(personId);
-      const previousSlot = slotByPerson.get(personId);
-      if (!previousSlot || tryAssign(previousSlot, visitedPeople)) {
-        personBySlot.set(slotKey, personId);
-        slotByPerson.set(personId, slotKey);
-        return true;
+  const peopleByStation = new Map<string, Set<string>>();
+  const stationByPerson = new Map<string, string>();
+  function tryAssign(personId: string) {
+    const queue = [personId];
+    const previousPersonByStation = new Map<string, string>();
+    for (let index = 0; index < queue.length; index += 1) {
+      const currentId = queue[index];
+      for (const stationId of stationsByPerson.get(currentId) || []) {
+        if (previousPersonByStation.has(stationId)) continue;
+        previousPersonByStation.set(stationId, currentId);
+        const assigned = peopleByStation.get(stationId) || new Set<string>();
+        if (assigned.size < (capacityByStation.get(stationId) || 0)) {
+          let nextStation: string | undefined = stationId;
+          while (nextStation !== undefined) {
+            const nextPerson = previousPersonByStation.get(nextStation)!;
+            const previousStation = stationByPerson.get(nextPerson);
+            if (previousStation !== undefined) peopleByStation.get(previousStation)!.delete(nextPerson);
+            const nextPeople = peopleByStation.get(nextStation) || new Set<string>();
+            nextPeople.add(nextPerson);
+            peopleByStation.set(nextStation, nextPeople);
+            stationByPerson.set(nextPerson, nextStation);
+            nextStation = previousStation;
+          }
+          return;
+        }
+        assigned.forEach((id) => queue.push(id));
       }
     }
-    return false;
   }
 
-  slots.forEach((slot) => {
-    tryAssign(slot.key, new Set<string>());
-  });
+  // Augmenting preserves every admitted worker. Preferred workers first maximize their
+  // usage; extending that matching still reaches maximum total coverage.
+  orderedPeople.forEach(tryAssign);
 
   const assignedByStation = new Map<string, string[]>();
   validForcedAssignments.forEach((stationId, personId) => {
     appendUniqueId(assignedByStation, stationId, personId);
   });
-  personBySlot.forEach((personId, slotKey) => {
-    const stationId = slotStation.get(slotKey);
-    if (!stationId) return;
-    appendUniqueId(assignedByStation, stationId, personId);
+  peopleByStation.forEach((personIds, stationId) => {
+    personIds.forEach((personId) => appendUniqueId(assignedByStation, stationId, personId));
   });
 
   return { assignedByStation, qualifiedByStation, violations };

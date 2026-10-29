@@ -30,6 +30,7 @@ export interface Person {
   nationality: string;
   employmentStatus: string;
   note?: string;
+  departureDate?: string;
   aDay1?: string;
   aDay2?: string;
   bDay1?: string;
@@ -89,6 +90,7 @@ export type OperationReceipt = {
 export type WriteProgress = OperationReceipt & { phase: "sending" | "checking" | "retrying" | "settled" };
 
 export interface AppBootstrap {
+  serverVersion?: string;
   revision?: number;
   capabilities?: { operationReceipts?: boolean; revision?: boolean };
   recentOperations?: OperationReceipt[];

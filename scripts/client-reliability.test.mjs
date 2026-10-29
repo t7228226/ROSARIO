@@ -18,6 +18,7 @@ function fixture(respond, { fastTimers = false } = {}) {
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body); requests.push(body);
       let result = await respond(body);
+      if (body.action === "bootstrap" && !(result instanceof Response) && result.ok) result = { serverVersion: "test", ...result };
       if (result instanceof Response) return result;
       if (body.operationId && result.ok && !result.pending) result = { ...result, operationId: body.operationId, operationStatus: "success" };
       return new Response(JSON.stringify(result), { status: 200 });
@@ -34,6 +35,27 @@ test("writes carry bootstrap revision and advance only after a confirmed success
   await f.client.postGasAction("updatePerson", { id: "X" });
   await f.client.postGasAction("updatePerson", { id: "Y" });
   assert.deepEqual(f.requests.slice(1).map((body) => body.payload.expectedRevision), [7, 8]);
+});
+
+test("edits can retain the revision captured before a confirmation dialog", async () => {
+  let revision = 7;
+  const f = fixture((body) => body.action === "bootstrap" ? { ok: true, revision } : { ok: true, revision: body.payload.expectedRevision + 1 });
+  await f.client.fetchGasBootstrapData();
+  const captured = f.client.getObservedDataRevision();
+  revision = 9;
+  await f.client.fetchGasBootstrapData();
+  await f.client.postGasAction("updatePerson", { id: "X", note: "changed field only" }, { expectedRevision: captured });
+  assert.equal(f.requests.at(-1).payload.expectedRevision, 7);
+  assert.equal("name" in f.requests.at(-1).payload, false);
+});
+
+test("a frontend cannot write through an older or unidentified GAS contract", async () => {
+  for (const serverVersion of ["", "old-version"]) {
+    const f = fixture(() => ({ ok: true, revision: 7, serverVersion }));
+    await f.client.fetchGasBootstrapData();
+    await assert.rejects(f.client.postGasAction("updatePerson", { id: "X" }), /前後端版本不一致/);
+    assert.equal(f.requests.length, 1);
+  }
 });
 test("revision conflicts are surfaced without a blind retry or adopting a stale edit", async () => {
   const f = fixture((body) => body.action === "bootstrap" ? { ok: true, revision: 1, people: [] } : { ok: false, code: "REVISION_CONFLICT", revision: 2, message: "synthetic conflict" });

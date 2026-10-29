@@ -25,7 +25,7 @@ const [frontendSource, appSource, bootstrapSanitizerSource, mainSource, precisio
 const frontendActions = [...frontendSource.matchAll(/^\s+"([A-Za-z][A-Za-z0-9]+)",$/gm)]
   .map((match) => match[1]);
 const doPostStart = gasSource.indexOf("function doPost(e)");
-const doPostEnd = gasSource.indexOf("function buildBootstrap_()", doPostStart);
+const doPostEnd = gasSource.indexOf("function buildBootstrap_(", doPostStart);
 assert.ok(doPostStart >= 0 && doPostEnd > doPostStart, "找不到 GAS doPost 區塊");
 const doPostSource = gasSource.slice(doPostStart, doPostEnd);
 const doGetStart = gasSource.indexOf("function doGet(e)");
@@ -109,6 +109,8 @@ assert.doesNotMatch(mobileCommandSource, />\s*收合\s*</, "手機快速選單�
 assert.match(mobileCommandPositionSource, /MOBILE_COMMAND_POSITION_STORAGE_KEY/, "手機快速選單位置必須保存於裝置端");
 assert.doesNotMatch(precisionUiSource, /text-align:\s*left/, "全域介面不得退回靠左對齊規則");
 assert.match(appSource, /CoverageConfigurationOverview/, "覆蓋分析必須提供精簡摘要與詳細視窗");
+assert.match(appSource, /postGasAction\("saveScheduleDraft",\s*\{[\s\S]*?assignments:\s*details/, "草稿必須傳送後端實際消費的 assignments");
+assert.match(appSource, /unavailableIds: gapUnavailableIds/, "離職與缺勤必須使用相同排除名單");
 assert.match(appSource, /if \(!currentUser\) return;[\s\S]+fetchGasBootstrapData\(\)/, "未登入時不得載入 bootstrap 主檔");
 assert.match(appSource, /setCurrentUser\(null\);[\s\S]{0,160}setData\(emptyBootstrap\);/, "登出或 session 逾時後必須清空主檔資料");
 assert.doesNotMatch(appSource, /setPermissionItemStates\(permissionItems\)/, "session 清理不得引用不存在的權限變數");

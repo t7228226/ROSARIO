@@ -15,7 +15,7 @@ export const appEnvironment = {
   isPreview,
   writesEnabled:
     !isPreview || String(import.meta.env.VITE_ENABLE_WRITES || "").toLowerCase() === "true",
-  gasEndpoint: String(import.meta.env.VITE_GAS_API_URL || fallbackGasEndpoint).trim(),
+  gasEndpoint: String(import.meta.env.VITE_GAS_API_URL || (isPreview ? "" : fallbackGasEndpoint)).trim(),
   version: String(
     import.meta.env.VITE_APP_VERSION ||
       release.version

@@ -8,10 +8,13 @@ import OperationCenter from "./features/operations/OperationCenter";
 import { Info, PersonDetailView, ReviewDetailView, StationDetailView } from "./components/detailViews";
 import AppDialog, { DialogShell } from "./components/ui/AppDialog";
 import { useActionDialog } from "./components/ui/useActionDialog";
+import ConfirmedField from "./components/ui/ConfirmedField";
 import { appEnvironment } from "./config/environment";
 import { emptyBootstrap, sanitizeBootstrapData } from "./domain/bootstrap/sanitizeBootstrap";
 import { compareBootstrap, type SnapshotChange } from "./domain/bootstrap/compareBootstrap";
-import { buildPersonProfilePayload, createEmptyPersonDraft, prepareNewPerson } from "./domain/people/newPerson";
+import { createEmptyPersonDraft, prepareNewPerson } from "./domain/people/newPerson";
+import { buildDepartureScenario } from "./domain/workforce/departures";
+import DepartureScenarioPanel from "./features/gap-analysis/DepartureScenarioPanel";
 import {
   readStoredUiTheme,
   storeUiTheme,
@@ -48,6 +51,7 @@ import {
   fetchGasPermissionConfig,
   fetchGasVersionStatus,
   postGasAction,
+  getObservedDataRevision,
   setGasSessionToken,
   type GasResponse as GasWriteResponse,
   type GasSessionResponse,
@@ -245,7 +249,7 @@ function normalizePermission(raw?: string): UserRole {
 
 function getSystemPermission(person?: Person | null): UserRole | null {
   if (!person) return null;
-  if (person.isSuperAdmin || person.id === "P0033") return "最高權限";
+  if (person.isSuperAdmin) return "最高權限";
   const explicit = String(person.systemPermission ?? person.permissionLevel ?? "").trim();
   return normalizePermission(explicit);
 }
@@ -324,6 +328,7 @@ export default function App() {
   const [gapHelpOpen, setGapHelpOpen] = useState(false);
   const [gapConfigurationDetailsOpen, setGapConfigurationDetailsOpen] = useState(false);
   const [gapAbsentIds, setGapAbsentIds] = useState<string[]>([]);
+  const [gapDepartureIds, setGapDepartureIds] = useState<string[]>([]);
   const [gapAbsentDialogOpen, setGapAbsentDialogOpen] = useState(false);
   const [gapAbsentKeyword, setGapAbsentKeyword] = useState("");
   const [gapTrainingHelpOpen, setGapTrainingHelpOpen] = useState(false);
@@ -859,46 +864,43 @@ export default function App() {
   }, [data.qualifications, reviewPeople]);
 
   const gapAttendance = useMemo(() => getAttendanceForTeam(data.people, gapShift, gapDay), [data.people, gapShift, gapDay]);
+  const gapDepartureScenario = useMemo(() => buildDepartureScenario(data.people, gapShift, gapDay, gapDepartureIds, gapAbsentIds), [data.people, gapShift, gapDay, gapDepartureIds, gapAbsentIds]);
+  const gapUnavailableIds = gapDepartureScenario.unavailableIds;
   const gapRules = useMemo(() => getApplicableRules(gapShift, gapDay, data.stationRules || []), [data.stationRules, gapShift, gapDay]);
   const gapCoverageAnalysis = useMemo(
     () => analyzeStationCoverage(gapShift, gapDay, data.stationRules || [], data.people, data.qualifications, new Set<string>(), new Map<string, string>(), { excludeOfficersFromCoverage: true }),
     [data.people, data.qualifications, data.stationRules, gapShift, gapDay]
   );
   const gapAbsentAnalysis = useMemo(
-    () => analyzeStationCoverage(gapShift, gapDay, data.stationRules || [], data.people, data.qualifications, new Set(gapAbsentIds), new Map<string, string>(), { excludeOfficersFromCoverage: true }),
-    [data.people, data.qualifications, data.stationRules, gapShift, gapDay, gapAbsentIds]
+    () => analyzeStationCoverage(gapShift, gapDay, data.stationRules || [], data.people, data.qualifications, new Set(gapUnavailableIds), new Map<string, string>(), { excludeOfficersFromCoverage: true }),
+    [data.people, data.qualifications, data.stationRules, gapShift, gapDay, gapUnavailableIds]
   );
-  const gapActiveCoverageAnalysis = gapAbsentIds.length ? gapAbsentAnalysis : gapCoverageAnalysis;
+  const gapActiveCoverageAnalysis = gapUnavailableIds.length ? gapAbsentAnalysis : gapCoverageAnalysis;
   const gapCombinedTrainingSuggestions = useMemo(() => {
-    const source = gapAbsentIds.length
-      ? [
-          ...gapAbsentAnalysis.trainingSuggestions,
-          ...gapCoverageAnalysis.trainingSuggestions.filter((item) => !gapAbsentIds.includes(item.employeeId)),
-        ]
-      : gapCoverageAnalysis.trainingSuggestions;
+    const source = gapActiveCoverageAnalysis.trainingSuggestions;
     const used = new Set<string>();
     return source.filter((item) => {
       if (used.has(item.employeeId)) return false;
       used.add(item.employeeId);
       return true;
     }).slice(0, 10);
-  }, [gapAbsentAnalysis.trainingSuggestions, gapCoverageAnalysis.trainingSuggestions, gapAbsentIds]);
+  }, [gapActiveCoverageAnalysis.trainingSuggestions]);
   const gapAbsentCandidates = useMemo(() => {
     const keyword = gapAbsentKeyword.trim().toLowerCase();
     return gapAttendance.all
-      .filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => !gapUnavailableIds.includes(person.id))
       .filter((person) => {
         if (!keyword) return true;
         return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
       })
       .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }))
       .slice(0, 40);
-  }, [gapAbsentIds, gapAbsentKeyword, gapAttendance.all]);
+  }, [gapUnavailableIds, gapAbsentKeyword, gapAttendance.all]);
   const gapOfficerCandidates = useMemo(() => {
     const keyword = gapOfficerKeyword.trim().toLowerCase();
     return gapAttendance.all
       .filter((person) => isSupportOfficerPerson(person))
-      .filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => !gapUnavailableIds.includes(person.id))
       .filter((person) => {
         if (!keyword) return true;
         return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
@@ -912,18 +914,18 @@ export default function App() {
         return a.name.localeCompare(b.name, "zh-Hant", { numeric: true });
       })
       .slice(0, 40);
-  }, [gapAbsentIds, gapAttendance.all, gapOfficerKeyword]);
+  }, [gapUnavailableIds, gapAttendance.all, gapOfficerKeyword]);
   const gapTrainingCustomCandidates = useMemo(() => {
     const keyword = gapTrainingKeyword.trim().toLowerCase();
     return gapAttendance.all
-      .filter((person) => !gapAbsentIds.includes(person.id))
+      .filter((person) => !gapUnavailableIds.includes(person.id))
       .filter((person) => {
         if (!keyword) return true;
         return person.id.toLowerCase().includes(keyword) || person.name.toLowerCase().includes(keyword);
       })
       .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant", { numeric: true }))
       .slice(0, 50);
-  }, [gapAbsentIds, gapAttendance.all, gapTrainingKeyword]);
+  }, [gapUnavailableIds, gapAttendance.all, gapTrainingKeyword]);
   const gapTrainingPickerPerson = gapTrainingPicker ? data.people.find((person) => person.id === gapTrainingPicker.employeeId) || null : null;
   const gapTrainingPickerQualifiedStations = useMemo(() => {
     if (!gapTrainingPickerPerson) return [];
@@ -941,17 +943,31 @@ export default function App() {
     return evaluateWorkforceScenario(data, {
       team: gapShift,
       mode: gapDay,
-      unavailableIds: gapAbsentIds,
+      unavailableIds: gapUnavailableIds,
       assignments: [
         ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
         ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
       ],
     });
-  }, [data, gapShift, gapDay, gapAbsentIds, gapOfficerSimulations, gapTrainingSimulations]);
+  }, [data, gapShift, gapDay, gapUnavailableIds, gapOfficerSimulations, gapTrainingSimulations]);
   const gapSimulationAnalysis = gapSimulationResult?.analysis || null;
   const gapTrainingSimulationAnalysis = gapSimulationAnalysis;
   const gapSimulationCount = gapTrainingSimulations.length + gapOfficerSimulations.length;
   const gapDisplayCoverageAnalysis = gapSimulationAnalysis || gapActiveCoverageAnalysis;
+  const gapBeforeDepartureAnalysis = useMemo(() => {
+    if (!gapDepartureScenario.departures.length) return gapDisplayCoverageAnalysis;
+    return evaluateWorkforceScenario(data, {
+      team: gapShift, mode: gapDay, unavailableIds: gapAbsentIds,
+      assignments: [
+        ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
+        ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
+      ],
+    }).analysis;
+  }, [data, gapShift, gapDay, gapAbsentIds, gapDepartureScenario.departures.length, gapDisplayCoverageAnalysis, gapTrainingSimulations, gapOfficerSimulations]);
+  const gapDepartureChanges = gapDisplayCoverageAnalysis.rows.flatMap((row) => {
+    const before = gapBeforeDepartureAnalysis.rows.find((item) => item.stationId === row.stationId)?.shortage || 0;
+    return before === row.shortage ? [] : [{ stationId: row.stationId, name: data.stations.find((station) => station.id === row.stationId)?.name || row.stationId, before, after: row.shortage }];
+  });
   const gapAcceptedSimulations = gapSimulationResult?.reasons.filter((item) => item.source === "training" || item.source === "officer") || [];
   const gapDisplayQualifications = useMemo(() => {
     const completed = gapSimulationResult?.reasons.filter((item) => item.source === "training") || [];
@@ -961,13 +977,13 @@ export default function App() {
     ];
   }, [data.qualifications, gapSimulationResult]);
   const gapDisplayAttendanceAll = useMemo(
-    () => gapAttendance.all.filter((person) => !gapAbsentIds.includes(person.id))
+    () => gapAttendance.all.filter((person) => !gapUnavailableIds.includes(person.id))
       .filter((person) => !isSupportOfficerPerson(person) || gapSimulationResult?.reasons.some((item) => item.employeeId === person.id && item.source === "officer")),
-    [gapAbsentIds, gapAttendance.all, gapSimulationResult]
+    [gapUnavailableIds, gapAttendance.all, gapSimulationResult]
   );
   const gapDisplayAttendanceSupport = useMemo(
-    () => gapAbsentIds.length ? gapAttendance.support.filter((person) => !gapAbsentIds.includes(person.id)) : gapAttendance.support,
-    [gapAbsentIds, gapAttendance.support]
+    () => gapAttendance.support.filter((person) => !gapUnavailableIds.includes(person.id)),
+    [gapUnavailableIds, gapAttendance.support]
   );
   const gapConfigurationRows = useMemo<CoverageConfigurationRow[]>(() => {
     const supportIds = new Set(gapDisplayAttendanceSupport.map((person) => person.id));
@@ -1250,7 +1266,7 @@ export default function App() {
       gapStressWorkerRef.current?.terminate();
       gapStressWorkerRef.current = null;
     };
-  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapAbsentIds, gapTrainingSimulations, gapOfficerSimulations]);
+  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]);
 
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
@@ -1335,7 +1351,7 @@ export default function App() {
       stationRules: data.stationRules || [],
       people: data.people,
       qualifications: gapDisplayQualifications,
-      unavailableIds: gapAbsentIds,
+      unavailableIds: gapUnavailableIds,
       forcedAssignments: gapAcceptedSimulations.map((item) => ({ employeeId: item.employeeId, stationId: item.stationId })),
       maxAbsences: gapStressMaxAbsences,
     });
@@ -1576,14 +1592,14 @@ export default function App() {
   }
 
   async function handleUpdatePerson(person: Person, patch: Partial<Person>) {
-    const next = { ...person, ...patch };
+    const expectedRevision = getObservedDataRevision();
     if (!await confirmAction(`確認修改人員 ${person.name}（${person.id}）？`)) {
       setFlashMessage("已取消修改。");
       return;
     }
-    await postGasAction("updatePerson", buildPersonProfilePayload(next));
-    setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? next : item)) }));
-    if (currentUser?.id === person.id) setCurrentUser(next);
+    await postGasAction("updatePerson", { id: person.id, ...patch }, { expectedRevision });
+    setData((current) => ({ ...current, people: current.people.map((item) => (item.id === person.id ? { ...item, ...patch } : item)) }));
+    if (currentUser?.id === person.id) setCurrentUser((current) => current ? { ...current, ...patch } : current);
     setFlashMessage(`人員 ${person.name} 已寫入試算表。`);
   }
 
@@ -1635,7 +1651,7 @@ export default function App() {
     const patch: Partial<Person> = {
       systemPermission: permission,
       permissionLevel: permission,
-      isSuperAdmin: permission === "最高權限" || person.id === "P0033",
+      isSuperAdmin: permission === "最高權限",
     };
     if (!await confirmAction(`確認將 ${person.name}（${person.id}）的系統權限調整為「${permission}」？`)) {
       setFlashMessage("已取消修改。");
@@ -1649,6 +1665,7 @@ export default function App() {
   }
 
   async function handleUpdateRule(rule: StationRule, patch: Partial<StationRule>) {
+    const expectedRevision = getObservedDataRevision();
     if (!canEditRulesForTeam(rule.team)) {
       setFlashMessage("你只能修改自己班的站點規則；最高權限才可修改全部班別。");
       return;
@@ -1663,7 +1680,7 @@ export default function App() {
       setFlashMessage("已取消修改。");
       return;
     }
-    await postGasAction("updateStationRule", next as unknown as Record<string, unknown>);
+    await postGasAction("updateStationRule", { id: rule.id, team: rule.team, stationId: rule.stationId, dayKey: rule.dayKey, ...patch }, { expectedRevision });
     setData((current) => {
       const rules = current.stationRules || [];
       const sameRule = (item: StationRule) =>
@@ -1673,10 +1690,10 @@ export default function App() {
       return {
         ...current,
         managementStationRules: current.managementStationRules?.some(sameRule)
-          ? current.managementStationRules.map((item) => sameRule(item) ? next : item)
+          ? current.managementStationRules.map((item) => sameRule(item) ? { ...item, ...patch } : item)
           : current.managementStationRules ? [...current.managementStationRules, next] : undefined,
         stationRules: exists
-          ? rules.map((item) => (sameRule(item) ? next : item))
+          ? rules.map((item) => (sameRule(item) ? { ...item, ...patch } : item))
           : [...rules, next],
       };
     });
@@ -1934,7 +1951,7 @@ export default function App() {
         status: "草稿",
         createdBy: currentUser?.name || currentUser?.id || "前端",
         note: "由站點試排頁面儲存",
-        details,
+        assignments: details,
       });
       setFlashMessage("站點試排草稿已儲存到試算表。");
     } catch (error) {
@@ -3110,8 +3127,8 @@ export default function App() {
                   <div className="mobile-form-section-title">基本資料</div>
                   <div className="mobile-edit-grid upgraded-edit-grid">
                     <label>姓名<ConfirmTextInput value={editingPerson.name} onCommit={(value) => handleUpdatePerson(editingPerson, { name: value })} /></label>
-                    <label>班別<ConfirmSelect value={String(getTeamOfPerson(editingPerson))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(editingPerson, { shift: value })} /></label>
-                    <label>職務<ConfirmTextInput value={editingPerson.role} onCommit={(value) => handleUpdatePerson(editingPerson, { role: value })} /></label>
+                    <label>班別<ConfirmSelect disabled={getSystemPermission(currentUser) !== "最高權限"} value={String(getTeamOfPerson(editingPerson))} options={TEAM_OPTIONS.map((item) => ({ label: item, value: item }))} onCommit={(value) => handleUpdatePerson(editingPerson, { shift: value })} /></label>
+                    <label>職務<ConfirmTextInput disabled={getSystemPermission(currentUser) !== "最高權限"} value={editingPerson.role} onCommit={(value) => handleUpdatePerson(editingPerson, { role: value })} /></label>
                     <label>國籍<ConfirmTextInput value={editingPerson.nationality} onCommit={(value) => handleUpdatePerson(editingPerson, { nationality: value })} /></label>
                   </div>
                 </section>
@@ -3128,6 +3145,7 @@ export default function App() {
                   <div className="mobile-form-section-title">在職狀態</div>
                   <div className="mobile-edit-grid upgraded-edit-grid single-row">
                     <label>在職<ConfirmTextInput value={editingPerson.employmentStatus} onCommit={(value) => handleUpdatePerson(editingPerson, { employmentStatus: value })} /></label>
+                    <label>預計離職日<span>{editingPerson.departureDate || "未設定"}</span></label>
                   </div>
                 </section>
               </div>
@@ -3443,7 +3461,7 @@ export default function App() {
             </EntranceLayout>
           ) : null}
 
-          {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? (
+          {currentRole && page === "gap-analysis" && canUsePage("gap-analysis") ? !data.people.length && (loading || bootstrapError) ? <Empty text={loading ? "正在載入核心資料，暫不顯示覆蓋判斷。" : "核心資料尚未載入，請重新讀取後再進行分析。"} /> : (
             <EntranceLayout pageKey="gap-analysis">
               <div className="panel analysis-context">
                 <div className="toolbar">
@@ -3458,7 +3476,7 @@ export default function App() {
                   <Info label="本籍出勤" value={String(gapAttendance.localCount)} />
                   <Info label="菲籍出勤" value={String(gapAttendance.filipinoCount)} />
                   <Info label="越籍出勤" value={String(gapAttendance.vietnamCount)} />
-                  <Info label="總出勤" value={String(gapAttendance.totalCount)} />
+                  <Info label="目前出勤" value={String(gapAttendance.totalCount)} />
                   <Info label={gapDay === "當班" ? "本班人力" : "本班出勤"} value={String(gapAttendance.own.length)} />
                   <Info label="支援人力" value={String(gapAttendance.support.length)} />
                   <Info label="支援對班" value={gapDay === "當班" ? "-" : gapAttendance.supportTeam} />
@@ -3467,6 +3485,7 @@ export default function App() {
 
               {gapRules.length ? (
                 <>
+                  <details className="coverage-baseline-details"><summary>{gapDay === "當班" ? "全勤基準" : "支援優先基準"} · 需求 {gapCoverageAnalysis.required} · 缺口 {gapCoverageAnalysis.shortage}</summary>
                   <div className={`panel coverage-summary-panel ${gapCoverageAnalysis.required <= 0 ? "is-unconfigured" : gapCoverageAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
                     <div className="panel-header">
                       <h3>{gapDay === "當班" ? "全勤基準分析" : "支援優先基準分析"}</h3>
@@ -3506,10 +3525,11 @@ export default function App() {
                     </p>
                     </details>
                   </div>
+                  </details>
 
                   <CoverageConfigurationOverview
-                    title={gapSimulationAnalysis ? "情境模擬配置" : gapAbsentIds.length ? "缺勤後配置" : "全站配置"}
-                    contextLabel={gapSimulationAnalysis ? "導入模擬後" : gapAbsentIds.length ? "缺勤模擬中" : "目前狀態"}
+                    title={gapSimulationAnalysis ? "情境模擬配置" : gapUnavailableIds.length ? "人力異動後配置" : "全站配置"}
+                    contextLabel={gapDepartureScenario.departures.length ? "已套用離職情境" : gapSimulationAnalysis ? "導入模擬後" : gapUnavailableIds.length ? "缺勤模擬中" : "目前狀態"}
                     description="先核對缺口，再查看完整指派與人員來源。"
                     assignmentLabel={gapSimulationAnalysis ? "模擬指派" : "最佳指派"}
                     shortageLabel="全站缺口"
@@ -3518,6 +3538,7 @@ export default function App() {
                     onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
                     onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
                   />
+                  <DepartureScenarioPanel candidates={gapDepartureScenario.candidates} selectedIds={gapDepartureIds} onChange={setGapDepartureIds} before={gapBeforeDepartureAnalysis.shortage} after={gapDisplayCoverageAnalysis.shortage} changes={gapDepartureChanges} />
                   {gapSimulationResult?.violations.length ? <div className="bootstrap-error-banner" role="alert">未採用的模擬：{gapSimulationResult.violations.map((item) => item.message).join("；")}</div> : null}
                   <div className="analysis-view-tabs" role="group" aria-label="分析工作項目">
                     {([ ["overview", "目前缺口"], ["absence", "缺勤測試"], ["training", "補訓計畫"], ["support", "幹部支援"] ] as const).map(([key, label]) =>
@@ -3644,7 +3665,7 @@ export default function App() {
                       <div className="panel-header">
                         <h3>補訓效益建議</h3>
                         <div className="panel-header-actions">
-                          <span>{gapStressResult ? "預防風險排序" : gapAbsentIds.length ? "全勤 + 指定缺勤" : "全勤基準"}</span>
+                          <span>{gapStressResult ? "預防風險排序" : gapUnavailableIds.length ? "人力異動情境" : "全勤基準"}</span>
                           <span className={gapSimulationCount ? "status-pill active" : "status-pill"}>{gapSimulationCount ? `已導入 ${gapSimulationCount} 項` : "未導入"}</span>
                           <button
                             type="button"
@@ -4021,45 +4042,20 @@ export default function App() {
                     );
                   })() : null}
 
-                  {gapAbsentIds.length && !gapSimulationCount ? (
+                  {gapUnavailableIds.length && !gapSimulationCount ? (
                     <div className={`panel coverage-summary-panel ${gapAbsentAnalysis.fullyCovered ? "is-covered" : "has-gap"}`}>
                       <div className="panel-header">
-                        <h3>缺勤模擬結果</h3>
-                        <span>{gapAbsentAnalysis.fullyCovered ? "缺勤後仍可覆蓋" : `缺勤後缺 ${gapAbsentAnalysis.shortage} 人`}</span>
+                        <h3>人力異動影響</h3>
+                        <span>{gapAbsentAnalysis.fullyCovered ? "異動後仍可覆蓋" : `異動後缺 ${gapAbsentAnalysis.shortage} 人`}</span>
                       </div>
-                      <p className="muted">模擬缺勤：{gapAbsentIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join("、")}</p>
+                      <p className="muted">缺勤／離職情境：{gapUnavailableIds.map((id) => data.people.find((person) => person.id === id)?.name || id).join("、")}</p>
                       <div className="detail-grid">
                         <Info label="原最佳覆蓋" value={`${gapCoverageAnalysis.assigned}/${gapCoverageAnalysis.required}`} />
-                        <Info label="缺勤後覆蓋" value={`${gapAbsentAnalysis.assigned}/${gapAbsentAnalysis.required}`} />
+                        <Info label="異動後覆蓋" value={`${gapAbsentAnalysis.assigned}/${gapAbsentAnalysis.required}`} />
                         <Info label="新增缺口" value={String(Math.max(0, gapAbsentAnalysis.shortage - gapCoverageAnalysis.shortage))} />
                         <Info label="新增／惡化站點" value={String(gapAbsentAnalysis.rows.filter((row) => row.shortage > (gapCoverageAnalysis.rows.find((before) => before.stationId === row.stationId)?.shortage || 0)).length)} />
                       </div>
-                      <table className="table">
-                        <thead>
-                          <tr>
-                            <th>站點</th>
-                            <th>需求</th>
-                            <th>缺勤後指派</th>
-                            <th>缺口</th>
-                            <th>狀態</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {gapAbsentAnalysis.rows.filter((row) => row.shortage > 0 || row.bottleneck).map((row) => {
-                            const station = data.stations.find((item) => item.id === row.stationId);
-                            const assignedNames = row.assignedIds.map((id) => data.people.find((person) => person.id === id)?.name || id);
-                            return (
-                              <tr key={row.stationId} className={row.shortage ? "danger-row" : "warning-row"}>
-                                <td>{station?.name || row.stationId}</td>
-                                <td>{row.required}</td>
-                                <td>{assignedNames.join("、") || "-"}</td>
-                                <td>{row.shortage}</td>
-                                <td>{row.shortage ? "缺口" : "瓶頸"}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                      <button type="button" className="ghost" onClick={() => setGapConfigurationDetailsOpen(true)}>核對異動後站點指派</button>
                     </div>
                   ) : null}
 
@@ -4812,16 +4808,16 @@ export default function App() {
   );
 }
 
-function ConfirmTextInput({ value, onCommit, disabled = false }: { value: string; onCommit: (value: string) => void; disabled?: boolean }) {
-  return <input className="cell-input" defaultValue={value} disabled={disabled} onBlur={(e) => { const next = e.target.value; if (next !== value) onCommit(next); }} />;
+function ConfirmTextInput({ value, onCommit, disabled = false }: { value: string; onCommit: (value: string) => unknown; disabled?: boolean }) {
+  return <ConfirmedField value={value} disabled={disabled} onCommit={onCommit} />;
 }
 
-function ConfirmNumberInput({ value, onCommit, disabled = false }: { value: number; onCommit: (value: number) => void; disabled?: boolean }) {
-  return <input className="cell-input" type="number" defaultValue={value} disabled={disabled} onBlur={(e) => { const next = Number(e.target.value); if (next !== value) onCommit(next); }} />;
+function ConfirmNumberInput({ value, onCommit, disabled = false }: { value: number; onCommit: (value: number) => unknown; disabled?: boolean }) {
+  return <ConfirmedField type="number" value={String(value)} disabled={disabled} onCommit={(next) => onCommit(Number(next))} />;
 }
 
-function ConfirmSelect({ value, options, onCommit, disabled = false }: { value: string; options: Array<{ label: string; value: string }>; onCommit: (value: string) => void; disabled?: boolean }) {
-  return <select className="cell-input" defaultValue={value} disabled={disabled} onChange={(e) => { if (e.target.value !== value) onCommit(e.target.value); }}>{options.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select>;
+function ConfirmSelect({ value, options, onCommit, disabled = false }: { value: string; options: Array<{ label: string; value: string }>; onCommit: (value: string) => unknown; disabled?: boolean }) {
+  return <ConfirmedField value={value} options={options} disabled={disabled} onCommit={onCommit} />;
 }
 
 function StatCard({ title, value, note }: { title: string; value: string; note: string }) {

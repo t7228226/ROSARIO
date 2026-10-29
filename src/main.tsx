@@ -7,6 +7,7 @@ import "./app-shell.css";
 import "./manual-schedule.css";
 import "./upgrade.css";
 import "./precision-ui.css";
+import "./scenario-analysis.css";
 
 declare global {
   interface Window {

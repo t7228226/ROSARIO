@@ -2,6 +2,7 @@ export const FRONT_WRITE_ACTIONS = new Set([
   "acknowledgeOperation",
   "upsertQualification",
   "deleteQualification",
+  "syncQualificationsFromMatrix",
   "updateStationRule",
   "updatePerson",
   "createPerson",

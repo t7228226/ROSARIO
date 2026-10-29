@@ -75,7 +75,7 @@ export default function CoverageConfigurationOverview({
       <dl className="coverage-overview-metrics" aria-label="全站配置摘要">
         <div><dt>分析站點</dt><dd>{rows.length}</dd></div>
         <div><dt>完整覆蓋</dt><dd>{rows.length - shortageRows.length}</dd></div>
-        <div><dt>已覆蓋但低備援</dt><dd>{bottleneckRows.length}</dd></div>
+        <div><dt>低備援站</dt><dd>{bottleneckRows.length}</dd></div>
         <div className={totalShortage ? "is-danger" : "is-success"}><dt>合計缺口</dt><dd>{totalShortage}</dd></div>
       </dl>
 
@@ -106,7 +106,15 @@ export default function CoverageConfigurationOverview({
         <div className="coverage-detail-legend" aria-label="人員來源說明">
           <span>一般文字：本班</span><span className="support-assignment-name">藍色：支援</span><span className="officer-support-name">綠色：幹部支援</span><span className="training-assumption-name">黃色：假設補訓完成</span>
         </div>
-        <div className="table-wrap coverage-detail-table-wrap">
+        <div className="coverage-mobile-detail-list">
+          {rows.map((row) => <details className="coverage-mobile-item" key={row.stationId}>
+            <summary><strong>{row.stationName}</strong><span>需求 {row.required} · 合格 {row.totalQualified}</span><span className={row.shortage ? "departure-shortage" : ""}>{row.shortage ? `缺 ${row.shortage} 人` : row.status}</span><span className="coverage-disclosure-arrow" aria-hidden="true">▾</span></summary>
+            <dl className="coverage-mobile-counts"><div><dt>本班合格</dt><dd>{row.ownQualified}</dd></div><div><dt>支援合格</dt><dd>{row.supportQualified}</dd></div><div><dt>訓練中</dt><dd>{row.training}</dd></div></dl>
+            <h4>{assignmentLabel}</h4><AssignmentNames row={row} />
+            <h4>支援合格人員</h4><p>{row.supportQualifiedNames.join("、") || "-"}</p>
+          </details>)}
+        </div>
+        <div className="table-wrap coverage-detail-table-wrap coverage-desktop-details">
           <table className="table coverage-detail-table">
             <thead>
               <tr>

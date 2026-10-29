@@ -1,42 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
-import vm from "node:vm";
-import { fileURLToPath } from "node:url";
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const gasSource = await readFile(path.join(root, "gas-login-fallback-2026-07-01.js"), "utf8");
+import { fixture } from "./helpers/gasFixture.mjs";
 
 function createGasContext() {
-  const properties = new Map();
-  const lock = { waitLock() {}, releaseLock() {} };
-  const propertyStore = {
-    getProperty(key) { return properties.has(key) ? properties.get(key) : null; },
-    setProperty(key, value) { properties.set(key, String(value)); },
-    deleteProperty(key) { properties.delete(key); },
-    getProperties() { return Object.fromEntries(properties); },
-  };
-  const context = vm.createContext({
-    console,
-    SpreadsheetApp: { flush() {} },
-    Utilities: {
-      Charset: { UTF_8: "utf8" },
-      DigestAlgorithm: { SHA_256: "sha256" },
-      computeDigest: (_algorithm, value) => [...createHash("sha256").update(String(value)).digest()],
-      base64EncodeWebSafe: (bytes) => Buffer.from(bytes).toString("base64url"),
-    },
-    LockService: {
-      getDocumentLock: () => lock,
-      getScriptLock: () => lock,
-    },
-    PropertiesService: {
-      getScriptProperties: () => propertyStore,
-    },
-  });
-  vm.runInContext(gasSource, context);
-  return context;
+  return fixture().context;
 }
 
 test("same operationId executes a successful write only once", () => {

@@ -40,36 +40,44 @@ const SHEETS = {
 };
 
 const SETTINGS = {
-  // 若載入速度或 Google 配額壓力變大，可改成 false，改用 action=syncQualificationsFromMatrix 手動同步。
+  // 保留舊設定；bootstrap 僅投影，不自動同步，寫入須用明確的同步 action。
   AUTO_SYNC_QUALIFICATIONS_FROM_MATRIX_ON_BOOTSTRAP: false,
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-10-24-013',
-  MIN_WRITE_VERSION: '2026-10-24-013',
+  APP_VERSION: '2026-10-29-014',
+  MIN_WRITE_VERSION: '2026-10-29-014',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   OPERATION_STALE_MS: 7 * 60 * 1000,
   OPERATION_STORAGE_BUDGET: 250000,
   WRITE_LOCK_TIMEOUT_MS: 20000,
+  NEW_OPERATION_LIMIT: 30,
+  NEW_OPERATION_WINDOW_MS: 60 * 1000,
   SESSION_DEFAULT_TTL_MS: 12 * 60 * 60 * 1000,
   SESSION_MIN_TTL_MS: 30 * 60 * 1000,
   SESSION_MAX_TTL_MS: 7 * 24 * 60 * 60 * 1000,
   SESSION_MAX_RECORDS: 240,
+  SESSION_MAX_PER_ACCOUNT: 8,
   LOGIN_FAILURE_LIMIT: 5,
   LOGIN_FAILURE_WINDOW_MS: 5 * 60 * 1000,
   LOGIN_COOLDOWN_MS: 60 * 1000,
   LOGIN_MAX_RECORDS: 240,
+  MAX_STATION_DEMAND: 1000,
   RULE_DIRECTOR_ROLES: ['主任'],
 };
 
 const OPERATION_PROPERTY_PREFIX = 'ROSARIO_OP_';
+const WRITE_RATE_PROPERTY_PREFIX = 'ROSARIO_WRITE_RATE_';
 const SESSION_PROPERTY_PREFIX = 'ROSARIO_SESSION_';
 const PASSWORD_HASH_PREFIX = 'rosario-v1$';
 const PASSWORD_PEPPER_PROPERTY = 'ROSARIO_PASSWORD_PEPPER';
 const LOGIN_PROPERTY_PREFIX = 'ROSARIO_LOGIN_';
 const DATA_REVISION_PROPERTY = 'ROSARIO_DATA_REVISION';
 const DATA_FINGERPRINT_PROPERTY = 'ROSARIO_DATA_FINGERPRINT';
+// Receipt metadata must not change the business-data revision.
+const OPERATION_LEDGER_SHEET = '13_操作收據';
+const OPERATION_LEDGER_HEADERS = ['operationId', 'receipt'];
 let scriptLockHeld_ = false;
 let requestSheetCache_ = null;
 let dataMutationAttempted_ = false;
@@ -170,6 +178,7 @@ function doPost(e) {
           return jsonOutput_(debugQualificationMatrix_());
         case 'bootstrap': {
           const session = requireSession_(resolveSessionToken_(body, payload));
+          bootstrapDataAccess_(session);
           return jsonOutput_(readRevisionSnapshot_(function () { return buildBootstrapForSession_(session); }));
         }
         default:
@@ -191,7 +200,6 @@ function executeWriteRequest_(action, body, payload, callback) {
     if (!operationId) throw authError_('寫入必須提供操作編號。', 'OPERATION_REQUIRED');
     const expectedRevision = body.expectedRevision !== undefined ? body.expectedRevision : payload.expectedRevision;
     return executeReliableWrite_(action, operationId, function () {
-      assertExpectedRevision_(expectedRevision);
       const validationOnly = action === 'createPerson' && (payload.validateOnly === true || normalizeString_(payload.validateOnly).toUpperCase() === 'Y');
       // Advance before mutation so a partial failure also invalidates stale snapshots.
       const revision = validationOnly ? getDataRevision_() : advanceDataRevision_();
@@ -201,11 +209,16 @@ function executeWriteRequest_(action, body, payload, callback) {
         error.revision = revision;
         throw error;
       }
-    }, session, { payload: operationPayload_(payload), expectedRevision: expectedRevision });
+    }, session, { payload: operationPayload_(payload), expectedRevision: expectedRevision }, function () {
+      validateWritePayloadSize_(action, payload);
+      assertExpectedRevision_(expectedRevision);
+      if (action === 'updateStationRule') validateRuleDemand_(payload);
+      if (action === 'saveScheduleDraft') draftAssignments_(payload);
+    });
   });
 }
 
-function executeReliableWrite_(action, operationId, callback, session, request) {
+function executeReliableWrite_(action, operationId, callback, session, request, preflight) {
   return withScriptLock_(function () {
     if (!operationId) {
       return withDocumentWriteLock_(callback);
@@ -216,7 +229,7 @@ function executeReliableWrite_(action, operationId, callback, session, request) 
 
     const ownerId = session ? normalizeString_(session.employeeId) : '';
     const requestDigest = digestText_(canonicalJson_(request || {}));
-    const begin = beginOperation_(action, operationId, ownerId, requestDigest);
+    const begin = beginOperation_(action, operationId, ownerId, requestDigest, preflight, session);
     if (!begin.started) {
       assertOperationOwner_(begin.record, session);
       if (begin.record.action !== action || begin.record.requestDigest !== requestDigest) {
@@ -314,7 +327,7 @@ function dataFingerprint_() {
     const sheet = spreadsheet.getSheetByName(name);
     if (!sheet) return [name, null];
     const range = sheet.getDataRange();
-    return [name, range.getValues(), range.getFormulas()];
+    return [name, range.getValues(), range.getFormulas(), range.getDisplayValues()];
   });
   return digestText_(canonicalJson_(content));
 }
@@ -376,6 +389,18 @@ function operationPayload_(payload) {
   return result;
 }
 
+function utf8Size_(value) {
+  return encodeURIComponent(value).replace(/%[0-9A-F]{2}|./g, 'x').length;
+}
+
+function validateWritePayloadSize_(action, payload) {
+  // Draft rows are not echoed into receipts; profile/rule responses are small records.
+  const limit = action === 'saveScheduleDraft' ? 200000 : 6000;
+  if (utf8Size_(JSON.stringify(payload)) > limit) {
+    throw authError_('資料內容過長，本次未寫入；請縮短文字或分次處理。', 'PAYLOAD_TOO_LARGE');
+  }
+}
+
 function canonicalJson_(value) {
   if (Object.prototype.toString.call(value) === '[object Date]') return JSON.stringify(value.toISOString());
   if (Array.isArray(value)) return '[' + value.map(canonicalJson_).join(',') + ']';
@@ -387,17 +412,21 @@ function canonicalJson_(value) {
   return JSON.stringify(value === undefined ? null : value);
 }
 
-function beginOperation_(action, operationId, ownerId, requestDigest) {
+function beginOperation_(action, operationId, ownerId, requestDigest, preflight, session) {
   return withScriptLock_(function () {
     const properties = PropertiesService.getScriptProperties();
-    pruneOperationRecords_(properties);
     const existing = readOperationRecord_(properties, operationId);
     if (existing) return { started: false, record: existing };
+    assertNewOperationRate_(session);
+    if (preflight) preflight();
+    pruneOperationRecords_(properties);
     const count = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; }).length;
-    if (count >= SETTINGS.OPERATION_MAX_RECORDS) throw authError_('操作紀錄容量已滿，請稍後再試；既有操作不會重複執行。', 'OPERATION_CAPACITY');
+    // Reserve a small recovery lane even when unresolved ordinary operations are full.
+    const recovery = action === 'acknowledgeOperation' && session && session.role === '最高權限';
+    if (count >= SETTINGS.OPERATION_MAX_RECORDS + (recovery ? 4 : 0)) throw authError_('操作紀錄容量已滿，請稍後再試；既有操作不會重複執行。', 'OPERATION_CAPACITY');
     const stored = properties.getProperties();
     const size = Object.keys(stored).reduce(function (total, key) { return total + (key.length + String(stored[key]).length) * 3; }, 0);
-    if (size > SETTINGS.OPERATION_STORAGE_BUDGET) throw authError_('操作儲存空間不足，本次未寫入；請聯絡管理員。', 'OPERATION_CAPACITY');
+    if (size > SETTINGS.OPERATION_STORAGE_BUDGET + (recovery ? 16000 : 0)) throw authError_('操作儲存空間不足，本次未寫入；請聯絡管理員。', 'OPERATION_CAPACITY');
 
     const record = {
       action: action,
@@ -416,6 +445,37 @@ function beginOperation_(action, operationId, ownerId, requestDigest) {
   });
 }
 
+function assertNewOperationRate_(session) {
+  if (!session || normalizeString_(session.role) === '最高權限') return;
+  const ownerId = normalizeString_(session.employeeId);
+  if (!ownerId) throw authError_('缺少操作擁有者。', 'AUTH_REQUIRED');
+  const properties = PropertiesService.getScriptProperties();
+  const key = WRITE_RATE_PROPERTY_PREFIX + digestText_(ownerId);
+  const now = Date.now();
+  const stored = properties.getProperties();
+  Object.keys(stored).forEach(function (otherKey) {
+    if (otherKey === key || otherKey.indexOf(WRITE_RATE_PROPERTY_PREFIX) !== 0) return;
+    try {
+      const other = JSON.parse(stored[otherKey]);
+      if (Number.isFinite(other.startedAt) && now - other.startedAt >= SETTINGS.NEW_OPERATION_WINDOW_MS) properties.deleteProperty(otherKey);
+    } catch (_) { /* Corrupt counters cannot be used to reset another owner's limit. */ }
+  });
+  let record;
+  try {
+    record = stored[key] ? JSON.parse(stored[key]) : { startedAt: now, count: 0 };
+    if (!record || !Number.isFinite(record.startedAt) || !Number.isSafeInteger(record.count) || record.count < 0) throw new Error('Invalid write counter');
+  } catch (_) { throw authError_('操作速率紀錄無效，請聯絡管理員。', 'WRITE_RATE_INVALID'); }
+  if (now - record.startedAt >= SETTINGS.NEW_OPERATION_WINDOW_MS) record = { startedAt: now, count: 0 };
+  if (record.count >= SETTINGS.NEW_OPERATION_LIMIT) {
+    const error = authError_('新操作過於頻繁，請稍後再試；既有操作查詢及重送不受影響。', 'WRITE_THROTTLED');
+    error.retryAfterSeconds = Math.max(1, Math.ceil((record.startedAt + SETTINGS.NEW_OPERATION_WINDOW_MS - now) / 1000));
+    throw error;
+  }
+  record.count++;
+  try { properties.setProperty(key, JSON.stringify(record)); }
+  catch (_) { throw authError_('無法保存操作速率紀錄，本次未執行寫入。', 'OPERATION_CAPACITY'); }
+}
+
 function finishOperation_(operationId, status, result, message, error) {
   return withScriptLock_(function () {
     const properties = PropertiesService.getScriptProperties();
@@ -432,7 +492,7 @@ function finishOperation_(operationId, status, result, message, error) {
       code: error && error.code ? error.code : '',
       revision: error && error.revision !== undefined ? error.revision : undefined,
     };
-    properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+    storeOperationRecord_(properties, operationId, record);
   });
 }
 
@@ -470,9 +530,14 @@ function listOperations_(session, payload) {
   if (all) assertSuperAdmin_(session);
   const properties = PropertiesService.getScriptProperties();
   pruneOperationRecords_(properties);
-  const items = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; }).map(function (key) {
-    const operationId = key.slice(OPERATION_PROPERTY_PREFIX.length);
-    const record = readOperationRecord_(properties, operationId);
+  const records = Object.create(null);
+  operationLedgerRows_().forEach(function (row) { records[row.operationId] = parseOperationRecord_(row.receipt); });
+  const stored = properties.getProperties();
+  Object.keys(stored).filter(function (key) { return key.indexOf(OPERATION_PROPERTY_PREFIX) === 0; }).forEach(function (key) {
+    records[key.slice(OPERATION_PROPERTY_PREFIX.length)] = parseOperationRecord_(stored[key]);
+  });
+  const items = Object.keys(records).map(function (operationId) {
+    const record = records[operationId];
     if (!all && record.ownerId !== normalizeString_(session.employeeId)) return null;
     return { operationId: operationId, action: record.action, ownerId: record.ownerId, status: visibleOperationStatus_(record),
       code: record.code || '', createdAt: record.createdAt, updatedAt: record.updatedAt,
@@ -489,10 +554,10 @@ function acknowledgeOperation_(payload, session) {
   const properties = PropertiesService.getScriptProperties();
   const record = readOperationRecord_(properties, id);
   if (!record || visibleOperationStatus_(record) !== 'unknown') throw authError_('只能核對結果不明或已中斷的操作。', 'REVIEW_NOT_APPLICABLE');
-  properties.setProperty(operationPropertyKey_(id), JSON.stringify(Object.assign({}, record, {
+  storeOperationRecord_(properties, id, Object.assign({}, record, {
     status: 'reviewed', updatedAt: Date.now(), result: null, code: 'OPERATION_REVIEWED',
     message: '已由管理員人工核對；不代表系統自動認定原操作成功。', reviewedBy: session.employeeId,
-  })));
+  }));
   return { ok: true, reviewedOperationId: id };
 }
 
@@ -533,14 +598,64 @@ function operationPropertyKey_(operationId) {
 }
 
 function readOperationRecord_(properties, operationId) {
-  const raw = properties.getProperty(operationPropertyKey_(operationId));
+  let raw = properties.getProperty(operationPropertyKey_(operationId));
+  if (!raw) {
+    const row = operationLedgerRows_().find(function (item) { return item.operationId === operationId; });
+    raw = row && row.receipt;
+  }
   if (!raw) return null;
+  return parseOperationRecord_(raw);
+}
+
+function parseOperationRecord_(raw) {
   try {
     const record = JSON.parse(raw);
     if (!record || typeof record !== 'object' || Array.isArray(record) || ['processing', 'success', 'failed', 'unknown', 'reviewed'].indexOf(record.status) < 0) throw new Error('Invalid operation record');
     return record;
   } catch (error) {
     throw authError_('操作紀錄損壞，請聯絡管理員確認原操作結果。', 'OPERATION_RECORD_INVALID');
+  }
+}
+
+function operationLedgerRows_() {
+  const sheet = getSheet_(OPERATION_LEDGER_SHEET, true);
+  if (!sheet) return [];
+  if (sheet.getLastRow() === 0) return [];
+  const headers = getHeaders_(sheet);
+  if (canonicalJson_(headers) !== canonicalJson_(OPERATION_LEDGER_HEADERS)) {
+    throw authError_('操作收據工作表格式不正確，請聯絡管理員。', 'OPERATION_RECORD_INVALID');
+  }
+  const seen = Object.create(null);
+  return getSheetObjects_(OPERATION_LEDGER_SHEET).map(function (row) {
+    const id = normalizeString_(row.operationId);
+    if (!/^OP_[A-Za-z0-9_-]{8,117}$/.test(id) || seen[id] || !row.receipt) {
+      throw authError_('操作收據工作表含無效或重複紀錄。', 'OPERATION_RECORD_INVALID');
+    }
+    seen[id] = true;
+    parseOperationRecord_(row.receipt);
+    return row;
+  });
+}
+
+function storeOperationRecord_(properties, operationId, record) {
+  // Keep the property reservation until a flushed ledger copy has been read back.
+  properties.setProperty(operationPropertyKey_(operationId), JSON.stringify(record));
+  if (['success', 'failed', 'reviewed'].indexOf(record.status) < 0) return;
+  const attempted = dataMutationAttempted_;
+  try {
+    const rows = operationLedgerRows_();
+    const existing = rows.find(function (row) { return row.operationId === operationId; });
+    const sheet = ensureSheetWithHeaders_(OPERATION_LEDGER_SHEET, OPERATION_LEDGER_HEADERS);
+    const raw = JSON.stringify(record);
+    if (raw.length > 45000) throw new Error('操作收據超出單格儲存範圍');
+    if (existing) setLiteralValues_(sheet.getRange(existing.__rowNumber, 1, 1, 2), [[operationId, raw]]);
+    else appendLiteralRow_(sheet, [operationId, raw]);
+    SpreadsheetApp.flush();
+    const saved = operationLedgerRows_().find(function (row) { return row.operationId === operationId; });
+    if (!saved || saved.receipt !== raw) throw new Error('操作收據保存核對失敗');
+    properties.deleteProperty(operationPropertyKey_(operationId));
+  } finally {
+    dataMutationAttempted_ = attempted;
   }
 }
 
@@ -561,8 +676,23 @@ function pruneOperationRecords_(properties) {
   records.forEach(function (item) {
     if ((item.status === 'success' || item.status === 'failed' || item.status === 'reviewed') && item.updatedAt > 0 && now - item.updatedAt > SETTINGS.OPERATION_TTL_MS) {
       properties.deleteProperty(item.key);
+    } else if (['success', 'failed', 'reviewed'].indexOf(item.status) >= 0) {
+      storeOperationRecord_(properties, item.key.slice(OPERATION_PROPERTY_PREFIX.length), parseOperationRecord_(properties.getProperty(item.key)));
     }
   });
+  const sheet = getSheet_(OPERATION_LEDGER_SHEET, true);
+  if (!sheet) return;
+  const attempted = dataMutationAttempted_;
+  try {
+    operationLedgerRows_().slice().reverse().forEach(function (row) {
+      const record = parseOperationRecord_(row.receipt);
+      if (['success', 'failed', 'reviewed'].indexOf(record.status) >= 0 &&
+          Number(record.updatedAt) > 0 && now - Number(record.updatedAt) > SETTINGS.OPERATION_TTL_MS) {
+        invalidateSheetReads_();
+        sheet.deleteRow(row.__rowNumber);
+      }
+    });
+  } finally { dataMutationAttempted_ = attempted; }
 }
 
 /** =========================
@@ -692,7 +822,13 @@ function createSession_(accountRow, requestedDurationMs) {
 
     const properties = PropertiesService.getScriptProperties();
     pruneSessionRecords_(properties);
-    const activeCount = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(SESSION_PROPERTY_PREFIX) === 0; }).length;
+    const activeKeys = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(SESSION_PROPERTY_PREFIX) === 0; });
+    const ownCount = activeKeys.filter(function (key) {
+      const current = JSON.parse(properties.getProperty(key));
+      return normalizeString_(current.employeeId) === employeeId || normalizeString_(current.account).toLowerCase() === account.toLowerCase();
+    }).length;
+    if (ownCount >= SETTINGS.SESSION_MAX_PER_ACCOUNT) throw authError_('此帳號的登入裝置數量已達上限，請先登出不使用的裝置。', 'SESSION_ACCOUNT_CAPACITY');
+    const activeCount = activeKeys.length;
     if (activeCount >= SETTINGS.SESSION_MAX_RECORDS) throw authError_('登入工作階段容量已滿，請稍後再試。', 'SESSION_CAPACITY');
     properties.setProperty(sessionPropertyKey_(token), JSON.stringify(record));
 
@@ -837,7 +973,7 @@ function pruneSessionRecords_(properties) {
     .map(function (key) {
       try {
         const record = JSON.parse(properties.getProperty(key) || '{}');
-        return { key: key, expiresAt: Number(record.expiresAt || 0), updatedAt: Number(record.updatedAt || record.createdAt || 0) };
+        return { key: key, record: record, expiresAt: Number(record.expiresAt || 0), updatedAt: Number(record.updatedAt || record.createdAt || 0) };
       } catch (error) {
         return { key: key, expiresAt: 0, updatedAt: 0 };
       }
@@ -845,7 +981,16 @@ function pruneSessionRecords_(properties) {
     .sort(function (left, right) { return right.updatedAt - left.updatedAt; });
 
   records.forEach(function (item) {
-    if (item.expiresAt <= now) properties.deleteProperty(item.key);
+    if (!Number.isFinite(item.expiresAt) || item.expiresAt <= now) {
+      properties.deleteProperty(item.key);
+      return;
+    }
+    // Reuse session validation rules; a failed account read must not evict valid sessions.
+    const account = findCurrentAccount_(item.record.employeeId, item.record.account);
+    const status = normalizeString_(account && account['啟用狀態']);
+    if (!account || (status && status !== '啟用') || item.record.credentialVersion !== accountCredentialVersion_(account)) {
+      properties.deleteProperty(item.key);
+    }
   });
 }
 
@@ -859,7 +1004,18 @@ function authorizeWriteAction_(sessionToken, action, payload) {
     throw authError_('權限不足，無法執行此操作。', 'FORBIDDEN');
   }
   assertActionScope_(session, action, payload);
+  if (action === 'updatePerson') assertPersonAuthorityFields_(session, payload);
   return session;
+}
+
+function assertPersonAuthorityFields_(session, payload) {
+  if (normalizeString_(session && session.role) === '最高權限') return;
+  const row = getSheetObjects_(SHEETS.PEOPLE).find(function (item) { return normalizeString_(item['工號']) === normalizeString_(payload.id); });
+  if (!row) return;
+  if ((payload.shift !== undefined && normalizeString_(payload.shift) !== normalizeString_(row['班別'])) ||
+      (payload.role !== undefined && normalizeString_(payload.role) !== normalizeString_(row['職務']))) {
+    throw authError_('班別與職務會影響資料權限，僅限最高權限管理員變更。', 'FORBIDDEN');
+  }
 }
 
 function assertActionScope_(session, action, payload) {
@@ -963,27 +1119,36 @@ function assertOperationOwner_(record, session) {
  *  Bootstrap / Login
  *  ========================= */
 
-function buildBootstrap_() {
-  let qualificationSync = null;
-  if (SETTINGS.AUTO_SYNC_QUALIFICATIONS_FROM_MATRIX_ON_BOOTSTRAP) {
-    try {
-      qualificationSync = syncQualificationsFromMatrix_({ source: 'bootstrap', silent: true });
-    } catch (error) {
-      // 同步失敗時不讓整個系統無資料，先回退讀取既有 03_資格明細。
-      qualificationSync = { ok: false, message: error && error.message ? error.message : String(error) };
-    }
-  }
+function bootstrapDataAccess_(session) {
+  const granted = function (ids) { return ids.some(function (id) { return hasPermission_(session, 'PERM_' + id); }); };
+  const access = {
+    people: granted(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '013', '014']),
+    stations: granted(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '011', '012', '013']),
+    qualifications: granted(['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', '013']),
+    analysis: granted(['001', '006', '007', '008', '009', '010']),
+    rules: granted(['011', '012']),
+    detailedProfile: granted(['002', '013', '014']),
+    departureDates: granted(['002', '006', '013', '014']),
+  };
+  if (!Object.keys(access).some(function (key) { return access[key]; })) throw authError_('沒有可讀取的功能資料。', 'FORBIDDEN');
+  return access;
+}
+
+function buildBootstrap_(access) {
+  access = access || { people: true, stations: true, qualifications: true, analysis: true, rules: true };
+  const qualificationSync = null;
+  // Bootstrap projects the matrix without writes; synchronization is an explicit write action.
 
   const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
   const stationRows = getSheetObjects_(SHEETS.STATIONS);
-  const qualificationRows = getSheetObjects_(SHEETS.QUALIFICATIONS);
-  const ruleRows = getSheetObjects_(SHEETS.RULES);
-  const accountRows = getSheetObjects_(SHEETS.ACCOUNTS);
+  const ruleRows = access.rules || access.analysis ? getSheetObjects_(SHEETS.RULES) : [];
+  const accountRows = access.people ? getSheetObjects_(SHEETS.ACCOUNTS) : [];
 
   const people = mergeAccountFieldsIntoPeople_(normalizePeople_(peopleRows), accountRows);
-  const stations = normalizeStations_(stationRows);
-  const qualifications = normalizeQualifications_(qualificationRows);
-  const stationRules = normalizeTeamOnlyRules_(ruleRows, stationRows);
+  const stations = access.stations || access.rules || access.analysis ? normalizeStations_(stationRows) : [];
+  const projection = access.qualifications ? projectMatrixQualifications_(people, stationRows) : { qualifications: [], diagnostic: null };
+  const qualifications = projection.qualifications;
+  const stationRules = access.rules || access.analysis ? normalizeTeamOnlyRules_(ruleRows, stationRows) : [];
 
   return {
     ok: true,
@@ -992,11 +1157,14 @@ function buildBootstrap_() {
     qualifications,
     stationRules,
     qualificationSync,
+    qualificationSource: projection.diagnostic,
   };
 }
 
 function buildBootstrapForSession_(session) {
-  const bootstrap = buildBootstrap_();
+  const access = bootstrapDataAccess_(session);
+  const bootstrap = buildBootstrap_(access);
+  bootstrap.serverVersion = SETTINGS.APP_VERSION;
   bootstrap.capabilities = { operationReceipts: true, revision: true };
   bootstrap.recentOperations = listOperations_(session, {}).operations;
   bootstrap.revision = getDataRevision_();
@@ -1011,11 +1179,11 @@ function buildBootstrapForSession_(session) {
   bootstrap.editableRuleTeams = isAdmin ? teams :
     (ownTeam && hasPermission_(session, 'PERM_012') && isRuleManager_(session, 'PERM_012', ownUser) ? [ownTeam] : []);
   bootstrap.managementStationRules = rules.filter(function (rule) { return bootstrap.viewableRuleTeams.indexOf(rule.team) >= 0; });
-  const canAnalyze = isAdmin || ['PERM_001', 'PERM_006', 'PERM_007', 'PERM_009', 'PERM_010'].some(function (permissionId) {
-    return hasPermission_(session, permissionId);
-  });
   // Analysis may need cross-team numeric rules, but never management notes or internal rule IDs.
-  bootstrap.stationRules = canAnalyze ? rules.map(analysisStationRule_) : [];
+  bootstrap.stationRules = access.analysis ? rules.map(analysisStationRule_) : [];
+  if (!access.people) bootstrap.people = bootstrap.people.filter(function (person) { return person.id === session.employeeId; });
+  if (!access.stations) bootstrap.stations = [];
+  if (!access.qualifications) bootstrap.qualifications = [];
   if (normalizeString_(session.role) === '最高權限') return bootstrap;
   bootstrap.people = bootstrap.people.map(function (person) {
     const sanitized = Object.assign({}, person);
@@ -1025,6 +1193,8 @@ function buildBootstrapForSession_(session) {
     delete sanitized.systemPermission;
     delete sanitized.permissionLevel;
     delete sanitized.isSuperAdmin;
+    if (!access.detailedProfile) delete sanitized.note;
+    if (!access.departureDates) delete sanitized.departureDate;
     if (person.id === session.employeeId) {
       sanitized.systemPermission = session.role;
       sanitized.permissionLevel = session.role;
@@ -1077,7 +1247,7 @@ function loginThrottleError_(until) {
   return error;
 }
 
-function loginThrottleState_(accountKey) {
+function loginThrottleState_(accountKey, knownAccount) {
   const properties = PropertiesService.getScriptProperties();
   const now = Date.now();
   Object.keys(properties.getProperties()).forEach(function (key) {
@@ -1089,13 +1259,14 @@ function loginThrottleState_(accountKey) {
       properties.deleteProperty(key);
     }
   });
-  const key = LOGIN_PROPERTY_PREFIX + digestText_(accountKey);
+  const key = LOGIN_PROPERTY_PREFIX + (knownAccount ? digestText_(accountKey) : 'UNKNOWN');
   const raw = properties.getProperty(key);
   const count = Object.keys(properties.getProperties()).filter(function (item) { return item.indexOf(LOGIN_PROPERTY_PREFIX) === 0; }).length;
-  if (!raw && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(now + SETTINGS.LOGIN_COOLDOWN_MS);
+  // Known keys are bounded by configured accounts, not arbitrary submitted names.
+  if (!knownAccount && !raw && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(now + SETTINGS.LOGIN_COOLDOWN_MS);
   const state = raw ? JSON.parse(raw) : { failures: 0, windowStartedAt: now, blockedUntil: 0 };
   if (state.blockedUntil > now) throw loginThrottleError_(state.blockedUntil);
-  return { key: key, state: state };
+  return { key: key, state: state, knownAccount: !!knownAccount };
 }
 
 function recordLoginFailure_(attempt) {
@@ -1104,7 +1275,7 @@ function recordLoginFailure_(attempt) {
   state.failures += 1;
   if (state.failures >= SETTINGS.LOGIN_FAILURE_LIMIT) state.blockedUntil = Date.now() + SETTINGS.LOGIN_COOLDOWN_MS;
   const count = Object.keys(properties.getProperties()).filter(function (key) { return key.indexOf(LOGIN_PROPERTY_PREFIX) === 0; }).length;
-  if (!properties.getProperty(attempt.key) && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(Date.now() + SETTINGS.LOGIN_COOLDOWN_MS);
+  if (!attempt.knownAccount && !properties.getProperty(attempt.key) && count >= SETTINGS.LOGIN_MAX_RECORDS) throw loginThrottleError_(Date.now() + SETTINGS.LOGIN_COOLDOWN_MS);
   properties.setProperty(attempt.key, JSON.stringify(state));
   if (state.blockedUntil) throw loginThrottleError_(state.blockedUntil);
 }
@@ -1118,7 +1289,6 @@ function loginLocked_(payload) {
     return { ok: false, message: '請輸入登入帳號與密碼。' };
   }
 
-  const attempt = loginThrottleState_(accountKey);
   const accountRows = getSheetObjects_(SHEETS.ACCOUNTS);
   const peopleRows = getSheetObjects_(SHEETS.PEOPLE);
   const peopleMap = mapByKey_(normalizePeople_(peopleRows), 'id');
@@ -1126,6 +1296,7 @@ function loginLocked_(payload) {
   const matched = accountRows.find(function (row) {
     return normalizeString_(row['登入帳號']).toLowerCase() === accountKey;
   });
+  const attempt = loginThrottleState_(accountKey, !!matched);
 
   if (!matched || !verifyPassword_(password, matched['登入密碼'])) {
     recordLoginFailure_(attempt);
@@ -1222,12 +1393,7 @@ function upsertQualification_(payload) {
     appendLiteralRow_(ws, newRow);
   }
 
-  try {
-    setQualificationMatrixCell_(employeeId, stationId, status);
-  } catch (error) {
-    // 矩陣同步失敗不阻斷資格明細更新，避免前端修改失敗。
-    console.warn('同步 03_站點矩陣失敗：' + (error && error.message ? error.message : String(error)));
-  }
+  if (getSheet_(SHEETS.QUALIFICATION_MATRIX, true)) setQualificationMatrixCell_(employeeId, stationId, status);
 
   appendQualificationLog_({
     employeeId: employeeId,
@@ -1262,6 +1428,7 @@ function deleteQualification_(payload) {
   });
 
   if (existingIndex < 0) {
+    if (getSheet_(SHEETS.QUALIFICATION_MATRIX, true)) setQualificationMatrixCell_(employeeId, stationId, '');
     return { ok: true, message: '找不到資料，視為已刪除。' };
   }
 
@@ -1269,11 +1436,7 @@ function deleteQualification_(payload) {
   invalidateSheetReads_();
   ws.deleteRow(getSourceRowNumber_(rows, existingIndex));
 
-  try {
-    setQualificationMatrixCell_(employeeId, stationId, '');
-  } catch (error) {
-    console.warn('清空 03_站點矩陣失敗：' + (error && error.message ? error.message : String(error)));
-  }
+  if (getSheet_(SHEETS.QUALIFICATION_MATRIX, true)) setQualificationMatrixCell_(employeeId, stationId, '');
 
   appendQualificationLog_({
     employeeId: employeeId,
@@ -1448,6 +1611,63 @@ function readQualificationMatrix_() {
   throw new Error('03_站點矩陣 找不到標題列：需有「工號」與「姓名」。');
 }
 
+function projectMatrixQualifications_(people, stationRows) {
+  const peopleMap = mapByKey_(people, 'id');
+  const stations = normalizeStations_(stationRows);
+  const stationMap = mapByKey_(stations, 'id');
+  const details = normalizeQualifications_(getSheetObjects_(SHEETS.QUALIFICATIONS));
+  const validDetails = details.filter(function (item) { return !!peopleMap[item.employeeId] && !!stationMap[item.stationId]; });
+  if (!getSheet_(SHEETS.QUALIFICATION_MATRIX, true)) {
+    return { qualifications: validDetails, diagnostic: { source: 'details', code: 'MATRIX_ABSENT_DETAIL_FALLBACK', orphanDetailCount: details.length - validDetails.length } };
+  }
+  let matrix;
+  try { matrix = readQualificationMatrix_(); }
+  catch (_) { throw authError_('站點矩陣存在但格式不正確，未回退使用舊資格明細。', 'MATRIX_INVALID'); }
+  if (matrix.headers.filter(function (header) { return ['工號', '員工工號', '人員工號'].indexOf(header) >= 0; }).length !== 1 ||
+      matrix.headers.filter(function (header) { return ['姓名', '人員姓名', '員工姓名'].indexOf(header) >= 0; }).length !== 1) {
+    throw authError_('站點矩陣含重複識別欄位。', 'MATRIX_INVALID');
+  }
+  const aliases = buildStationAliasMap_(stationRows);
+  const columns = [];
+  const seenStations = Object.create(null);
+  matrix.headers.forEach(function (header, index) {
+    if (isMatrixBaseColumn_(header)) return;
+    const id = aliases[normalizeStationKey_(header)];
+    if (!id) return;
+    if (seenStations[id]) throw authError_('站點矩陣含重複站點欄位。', 'MATRIX_INVALID');
+    seenStations[id] = true;
+    columns.push({ index: index, stationId: id });
+  });
+  if (!columns.length || stations.some(function (station) { return !seenStations[station.id]; })) {
+    throw authError_('站點矩陣缺少站點欄位，未回退使用舊資格明細。', 'MATRIX_INVALID');
+  }
+  const seenPeople = Object.create(null);
+  const states = Object.create(null);
+  const qualifications = [];
+  let orphanMatrixCount = 0;
+  matrix.values.slice(matrix.headerRowIndex + 1).forEach(function (row) {
+    const id = normalizeString_(row[matrix.employeeIdCol]);
+    if (isStructuralIdentity_(id, ['工號', '員工工號', '人員工號']) || /^(範例|說明|可用)/.test(id)) return;
+    if (seenPeople[id]) throw authError_('站點矩陣含重複工號。', 'MATRIX_INVALID');
+    seenPeople[id] = true;
+    if (!peopleMap[id]) { orphanMatrixCount++; return; }
+    columns.forEach(function (column) {
+      const raw = normalizeString_(row[column.index]);
+      const status = normalizeQualificationStatusFromMatrix_(raw);
+      states[id + '||' + column.stationId] = status;
+      if (status) qualifications.push({ employeeId: id, employeeName: normalizeString_(row[matrix.employeeNameCol]),
+        stationId: column.stationId, status: status, rawStatus: raw, canLead: canLeadFromMatrixStatus_(raw) });
+    });
+  });
+  let conflicts = 0;
+  validDetails.forEach(function (detail) {
+    if ((states[detail.employeeId + '||' + detail.stationId] || '') !== detail.status) conflicts++;
+  });
+  return { qualifications: qualifications, diagnostic: { source: 'matrix', code: 'MATRIX_CANONICAL',
+    headerRow: matrix.headerRowIndex + 1, qualificationCount: qualifications.length, conflictCount: conflicts,
+    orphanDetailCount: details.length - validDetails.length, orphanMatrixCount: orphanMatrixCount } };
+}
+
 function buildStationAliasMap_(stationRows) {
   const map = {};
   stationRows.forEach(function (row) {
@@ -1485,7 +1705,7 @@ function isMatrixBaseColumn_(header) {
   return [
     '工號', '姓名', '班別', '職務', '職稱', '國籍',
     '(A)第一天', '(A)第二天', '(B)第一天', '(B)第二天',
-    '在職狀態', '備註', '更新時間', '更新人',
+    '在職狀態', '離職日', '備註', '更新時間', '更新人',
   ].indexOf(key) >= 0;
 }
 
@@ -1566,6 +1786,7 @@ function getQualificationMatrixPersonCell_(header, person, now) {
     case '(B)第一天': return { recognized: true, value: person.bDay1 };
     case '(B)第二天': return { recognized: true, value: person.bDay2 };
     case '在職狀態': return { recognized: true, value: person.employmentStatus };
+    case '離職日': return { recognized: person.departureDate !== undefined, value: person.departureDate };
     case '備註': return { recognized: true, value: person.note };
     case '更新時間': return { recognized: true, value: now };
     case '更新人': return { recognized: true, value: '系統' };
@@ -1672,6 +1893,7 @@ function setQualificationMatrixCell_(employeeId, stationId, status) {
  *  ========================= */
 
 function updateStationRule_(payload) {
+  validateRuleDemand_(payload);
   const team = normalizeString_(payload.team);
   const stationId = normalizeString_(payload.stationId);
 
@@ -1701,13 +1923,13 @@ function updateStationRule_(payload) {
         case '班別': return team;
         case '日別': return '當班';
         case '站點代碼': return stationId;
-        case '最低需求': return toNumberOrBlank_(payload.minRequired);
-        case '輪休需求(單批)': return toNumberOrBlank_(payload.reliefMinPerBatch);
+        case '最低需求': return demandNumber_(payload.minRequired, 'minRequired', '');
+        case '輪休需求(單批)': return demandNumber_(payload.reliefMinPerBatch, 'reliefMinPerBatch', '');
         case '可排滿':
         case '可排滿人數':
         case 'maxAssignable':
-          return toNumberOrBlank_(payload.maxAssignable);
-        case '備援目標': return toNumberOrBlank_(payload.backupTarget);
+          return demandNumber_(payload.maxAssignable, 'maxAssignable', '');
+        case '備援目標': return demandNumber_(payload.backupTarget, 'backupTarget', '');
         case '排班優先順序': return toNumberOrBlank_(payload.priority);
         case '是否必站':
         case '必站':
@@ -1728,12 +1950,12 @@ function updateStationRule_(payload) {
   } else {
     matchedIndexes.forEach(function (rowNumber) {
       if (payload.id !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '規則ID', normalizeString_(payload.id));
-      if (payload.minRequired !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '最低需求', toNumberOrBlank_(payload.minRequired));
-      if (payload.backupTarget !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '備援目標', toNumberOrBlank_(payload.backupTarget));
+      if (payload.minRequired !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '最低需求', demandNumber_(payload.minRequired, 'minRequired', ''));
+      if (payload.backupTarget !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '備援目標', demandNumber_(payload.backupTarget, 'backupTarget', ''));
       if (payload.maxAssignable !== undefined) {
-        setCellIfExists_(rulesSheet, headers, rowNumber, '可排滿', toNumberOrBlank_(payload.maxAssignable));
-        setCellIfExists_(rulesSheet, headers, rowNumber, '可排滿人數', toNumberOrBlank_(payload.maxAssignable));
-        setCellIfExists_(rulesSheet, headers, rowNumber, 'maxAssignable', toNumberOrBlank_(payload.maxAssignable));
+        setCellIfExists_(rulesSheet, headers, rowNumber, '可排滿', demandNumber_(payload.maxAssignable, 'maxAssignable', ''));
+        setCellIfExists_(rulesSheet, headers, rowNumber, '可排滿人數', demandNumber_(payload.maxAssignable, 'maxAssignable', ''));
+        setCellIfExists_(rulesSheet, headers, rowNumber, 'maxAssignable', demandNumber_(payload.maxAssignable, 'maxAssignable', ''));
       }
       if (payload.priority !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '排班優先順序', toNumberOrBlank_(payload.priority));
       if (payload.isMandatory !== undefined) {
@@ -1752,8 +1974,8 @@ function updateStationRule_(payload) {
       if (payload.enabled !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '啟用狀態', payload.enabled === false ? '停用' : '啟用');
       if (payload.note !== undefined) setCellIfExists_(rulesSheet, headers, rowNumber, '備註', normalizeString_(payload.note));
       if (payload.reliefMinPerBatch !== undefined) {
-        const wroteDirectly = setCellIfExists_(rulesSheet, headers, rowNumber, '輪休需求(單批)', toNumberOrBlank_(payload.reliefMinPerBatch))
-          || setCellIfExists_(rulesSheet, headers, rowNumber, '輪休需求', toNumberOrBlank_(payload.reliefMinPerBatch));
+        const wroteDirectly = setCellIfExists_(rulesSheet, headers, rowNumber, '輪休需求(單批)', demandNumber_(payload.reliefMinPerBatch, 'reliefMinPerBatch', ''))
+          || setCellIfExists_(rulesSheet, headers, rowNumber, '輪休需求', demandNumber_(payload.reliefMinPerBatch, 'reliefMinPerBatch', ''));
         if (!wroteDirectly) {
           syncReliefDemandToStations_(stationId, payload.reliefMinPerBatch);
         }
@@ -1769,11 +1991,12 @@ function updateStationRule_(payload) {
   return {
     ok: true,
     message: '站點規則已更新',
-    stationRule: payload,
+    stationRule: pickFields_(payload, ['id', 'team', 'stationId', 'dayKey', 'minRequired', 'reliefMinPerBatch', 'maxAssignable', 'backupTarget', 'priority', 'isMandatory', 'trainingCanFill', 'canShare', 'qualificationLimit', 'enabled', 'note']),
   };
 }
 
 function syncReliefDemandToStations_(stationId, reliefValue) {
+  demandNumber_(reliefValue, 'reliefMinPerBatch', '');
   const ws = getSheet_(SHEETS.STATIONS);
   const headers = getHeaders_(ws);
   const rows = getSheetObjects_(SHEETS.STATIONS);
@@ -1781,7 +2004,7 @@ function syncReliefDemandToStations_(stationId, reliefValue) {
   rows.forEach(function (row, index) {
     if (normalizeString_(row['站點代碼']) === stationId) {
       const rowNumber = getSourceRowNumber_(rows, index);
-      setCellIfExists_(ws, headers, rowNumber, '輪休最低人數', toNumberOrBlank_(reliefValue));
+      setCellIfExists_(ws, headers, rowNumber, '輪休最低人數', demandNumber_(reliefValue, 'reliefMinPerBatch', ''));
     }
   });
 }
@@ -1791,6 +2014,7 @@ function syncReliefDemandToStations_(stationId, reliefValue) {
  *  ========================= */
 
 function updatePerson_(payload, session) {
+  assertPersonAuthorityFields_(session, payload);
   const employeeId = normalizeString_(payload.id);
   if (!employeeId) {
     throw new Error('updatePerson 缺少 id');
@@ -1813,9 +2037,12 @@ function updatePerson_(payload, session) {
   const profileFields = { '姓名': payload.name, '班別': payload.shift, '職務': payload.role, '國籍': payload.nationality,
     '(A)第一天': payload.aDay1, '(A)第二天': payload.aDay2, '(B)第一天': payload.bDay1, '(B)第二天': payload.bDay2,
     '在職狀態': payload.employmentStatus, '備註': payload.note };
+  if (peopleHeaders.indexOf('離職日') >= 0 && payload.departureDate !== undefined) profileFields['離職日'] = departureDate_(payload.departureDate);
   setRowFields_(peopleSheet, peopleHeaders, rowNumber, profileFields);
   if (Object.keys(profileFields).some(function (key) { return profileFields[key] !== undefined; })) {
     const person = Object.assign({}, normalizePeople_([peopleRows[peopleIndex]])[0], payload);
+    if (profileFields['離職日'] !== undefined) person.departureDate = profileFields['離職日'];
+    if (peopleHeaders.indexOf('離職日') < 0) delete person.departureDate;
     ensureQualificationMatrixPersonRow_(person);
   }
 
@@ -1859,11 +2086,9 @@ function updatePerson_(payload, session) {
     }
   }
 
-  const responsePerson = Object.assign({}, payload);
-  delete responsePerson.password;
-  delete responsePerson.loginPassword;
-  delete responsePerson.accountPassword;
-  delete responsePerson['登入密碼'];
+  const responsePerson = pickFields_(payload, ['id', 'name', 'shift', 'role', 'nationality', 'aDay1', 'aDay2', 'bDay1', 'bDay2', 'employmentStatus', 'note', 'departureDate']);
+  if (peopleHeaders.indexOf('離職日') < 0) delete responsePerson.departureDate;
+  else if (payload.departureDate !== undefined) responsePerson.departureDate = profileFields['離職日'];
   return { ok: true, person: responsePerson };
 }
 
@@ -1899,6 +2124,7 @@ function createPerson_(payload) {
     employmentStatus: normalizeString_(payload.employmentStatus) || '在職',
     note: normalizeString_(payload.note),
   };
+  if (peopleHeaders.indexOf('離職日') >= 0 && payload.departureDate !== undefined) person.departureDate = departureDate_(payload.departureDate);
   const valuesByHeader = {
     '工號': person.id,
     '姓名': person.name,
@@ -1910,6 +2136,7 @@ function createPerson_(payload) {
     '(B)第一天': person.bDay1,
     '(B)第二天': person.bDay2,
     '在職狀態': person.employmentStatus,
+    '離職日': person.departureDate || '',
     '備註': person.note,
   };
 
@@ -2154,6 +2381,7 @@ function saveScheduleDraft_(payload, session) {
   if (!session) throw authError_('缺少登入工作階段。', 'AUTH_REQUIRED');
   assertActionScope_(session, 'saveScheduleDraft', payload || {});
   payload = payload || {};
+  const assignments = draftAssignments_(payload);
   const draft = payload.draft || payload;
   const draftId = normalizeString_(draft.id) || ('DRAFT_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss_SSS'));
   const name = normalizeString_(draft.name) || ('站點試排_' + Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmm'));
@@ -2191,7 +2419,6 @@ function saveScheduleDraft_(payload, session) {
     }));
   }
   removeScheduleDraftDetails_(detailSheet, draftId);
-  const assignments = Array.isArray(payload.assignments) ? payload.assignments : [];
   if (assignments.length) {
     const values = assignments.map(function (item, index) {
       return detailHeaders.map(function (header) {
@@ -2236,6 +2463,42 @@ function loadScheduleDrafts_(payload, session) {
   return result;
 }
 
+function draftAssignments_(payload) {
+  const draft = Object.prototype.hasOwnProperty.call(payload, 'draft') ? payload.draft : payload;
+  if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw authError_('試排草稿格式不正確。', 'DRAFT_INVALID');
+  ['id', 'name', 'team', 'dayKey', 'mode', 'status', 'note'].forEach(function (key) {
+    if (draft[key] !== undefined && typeof draft[key] !== 'string') throw authError_('試排草稿欄位必須是字串。', 'DRAFT_INVALID');
+  });
+  if (!normalizeString_(draft.team)) throw authError_('試排草稿缺少班別。', 'DRAFT_INVALID');
+  const hasAssignments = Object.prototype.hasOwnProperty.call(payload, 'assignments');
+  const hasDetails = Object.prototype.hasOwnProperty.call(payload, 'details');
+  const validate = function (items) {
+    if (!Array.isArray(items)) throw authError_('試排明細必須是陣列。', 'DRAFT_INVALID');
+    const ids = Object.create(null);
+    items.forEach(function (item, index) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw authError_('試排明細項目格式不正確。', 'DRAFT_INVALID');
+      ['id', 'stationId', 'employeeId', 'personId', 'type', 'note'].forEach(function (key) {
+        if (item[key] !== undefined && typeof item[key] !== 'string') throw authError_('試排明細欄位必須是字串。', 'DRAFT_INVALID');
+      });
+      if (!normalizeString_(item.stationId) || !normalizeString_(item.employeeId || item.personId) ||
+          (item.employeeId !== undefined && item.personId !== undefined && item.employeeId !== item.personId)) {
+        throw authError_('試排明細缺少站點、工號或工號別名互相衝突。', 'DRAFT_INVALID');
+      }
+      if (item.order !== undefined && (!Number.isSafeInteger(item.order) || item.order < 1)) throw authError_('試排明細順序不正確。', 'DRAFT_INVALID');
+      const id = normalizeString_(item.id) || ('ITEM_' + (index + 1));
+      if (id && ids[id]) throw authError_('試排明細項目 ID 重複。', 'DRAFT_INVALID');
+      if (id) ids[id] = true;
+    });
+    return items;
+  };
+  if (!hasAssignments && !hasDetails) throw authError_('請明確提供 assignments 或 details；清空明細請傳入空陣列。', 'DRAFT_INVALID');
+  const items = validate(hasAssignments ? payload.assignments : payload.details);
+  if (hasAssignments && hasDetails && canonicalJson_(items) !== canonicalJson_(validate(payload.details))) {
+    throw authError_('assignments 與 details 內容互相衝突。', 'DRAFT_INVALID');
+  }
+  return items;
+}
+
 function removeScheduleDraftDetails_(detailSheet, draftId) {
   const rows = getSheetObjects_(SHEETS.SCHEDULE_DRAFT_DETAILS);
   for (var i = rows.length - 1; i >= 0; i--) {
@@ -2250,15 +2513,56 @@ function removeScheduleDraftDetails_(detailSheet, draftId) {
  *  Normalizers
  *  ========================= */
 
+function demandNumber_(value, field, blank) {
+  if (value === '' || value == null || (typeof value === 'string' && !value.trim())) return blank;
+  const number = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isSafeInteger(number) || number < 0 || number > SETTINGS.MAX_STATION_DEMAND) {
+    throw authError_(field + ' 必須是 0 到 ' + SETTINGS.MAX_STATION_DEMAND + ' 的整數。', 'DEMAND_INVALID');
+  }
+  return number;
+}
+
+function validateRuleDemand_(payload) {
+  ['minRequired', 'reliefMinPerBatch', 'backupTarget', 'maxAssignable'].forEach(function (field) {
+    if (payload[field] !== undefined) demandNumber_(payload[field], field, '');
+  });
+}
+
+function firstDemand_(rows, keys, fallback) {
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = 0; j < keys.length; j++) {
+      const value = rows[i][keys[j]];
+      if (value !== '' && value != null && !(typeof value === 'string' && !value.trim())) return demandNumber_(value, keys[j], fallback);
+    }
+  }
+  return fallback;
+}
+
+function departureDate_(value) {
+  if (value === '' || value == null) return '';
+  if (Object.prototype.toString.call(value) === '[object Date]' && isFinite(value.getTime())) {
+    return Utilities.formatDate(value, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const date = new Date(text + 'T00:00:00Z');
+    if (isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text) return text;
+  }
+  throw authError_('離職日必須是有效的 YYYY-MM-DD 日期。', 'DATE_INVALID');
+}
+
+function isStructuralIdentity_(value, headers) {
+  const id = normalizeString_(value);
+  return !id || headers.indexOf(id) >= 0 || /^唯一主鍵(?:$|[，,、：:；;])/.test(id);
+}
+
 function normalizePeople_(rows) {
   return rows
     .filter(function (row) {
-      return normalizeString_(row['工號']) &&
-        normalizeString_(row['工號']) !== '工號' &&
-        normalizeString_(row['工號']) !== '唯一主鍵';
+      return !isStructuralIdentity_(row['工號'], ['工號', '員工工號', '人員工號']);
     })
     .map(function (row) {
-      return {
+      const person = {
         id: normalizeString_(row['工號']),
         name: normalizeString_(row['姓名']),
         shift: normalizeString_(row['班別']),
@@ -2271,25 +2575,25 @@ function normalizePeople_(rows) {
         employmentStatus: normalizeString_(row['在職狀態']),
         note: normalizeString_(row['備註']),
       };
+      if (Object.prototype.hasOwnProperty.call(row, '離職日')) person.departureDate = departureDate_(row['離職日']);
+      return person;
     });
 }
 
 function normalizeStations_(rows) {
   return rows
     .filter(function (row) {
-      return normalizeString_(row['站點代碼']) &&
-        normalizeString_(row['站點代碼']) !== '站點代碼' &&
-        normalizeString_(row['站點代碼']) !== '唯一主鍵';
+      return !isStructuralIdentity_(row['站點代碼'], ['站點代碼', '站點編號']);
     })
     .map(function (row) {
       return {
         id: normalizeString_(row['站點代碼']),
         name: normalizeString_(row['站點名稱']),
-        normalMin: toNumber_(row['正班最低人數']),
-        reliefMinPerBatch: toNumber_(row['輪休最低人數']),
+        normalMin: demandNumber_(row['正班最低人數'], '正班最低人數', 0),
+        reliefMinPerBatch: demandNumber_(row['輪休最低人數'], '輪休最低人數', 0),
         priority: toNullableNumber_(row['排班優先順序']),
         isMandatory: toBoolean_(row['是否必站']),
-        backupTarget: toNullableNumber_(row['備援目標人數']),
+        backupTarget: demandNumber_(row['備援目標人數'], '備援目標人數', null),
         description: normalizeString_(row['站點群組']),
         note: normalizeString_(row['備註']),
       };
@@ -2301,8 +2605,7 @@ function normalizeQualifications_(rows) {
     .filter(function (row) {
       const employeeId = normalizeString_(row['工號']);
       const stationId = normalizeString_(row['站點代碼']);
-      if (!employeeId || !stationId) return false;
-      if (employeeId === '工號' || employeeId === '唯一主鍵') return false;
+      if (isStructuralIdentity_(employeeId, ['工號', '員工工號', '人員工號']) || isStructuralIdentity_(stationId, ['站點代碼', '站點編號'])) return false;
       if (employeeId.indexOf('對應') >= 0 || employeeId.indexOf('可用') >= 0) return false;
       if (stationId.indexOf('對應') >= 0 || stationId.indexOf('例如') >= 0) return false;
       return true;
@@ -2312,8 +2615,8 @@ function normalizeQualifications_(rows) {
         employeeId: normalizeString_(row['工號']),
         employeeName: normalizeString_(row['姓名']),
         stationId: normalizeString_(row['站點代碼']),
-        status: normalizeString_(row['資格狀態']),
-        rawStatus: normalizeString_(row['資格狀態']),
+        status: normalizeQualificationStatusFromMatrix_(row['資格狀態']),
+        rawStatus: normalizeString_(row['原始狀態'] || row['資格狀態']),
       };
     });
 }
@@ -2345,10 +2648,10 @@ function normalizeTeamOnlyRules_(ruleRows, stationRows) {
       team: normalizeString_(base['班別']),
       dayKey: normalizeString_(base['日別']),
       stationId: stationId,
-      minRequired: firstNumber_(rows, ['最低需求']),
-      reliefMinPerBatch: firstNumber_(rows, ['輪休需求(單批)', '輪休需求'], station.reliefMinPerBatch || 0),
-      backupTarget: firstNumber_(rows, ['備援目標'], station.backupTarget || 0),
-      maxAssignable: firstNumber_(rows, ['可排滿', '可排滿人數', 'maxAssignable'], 0),
+      minRequired: firstDemand_(rows, ['最低需求'], 0),
+      reliefMinPerBatch: firstDemand_(rows, ['輪休需求(單批)', '輪休需求'], station.reliefMinPerBatch || 0),
+      backupTarget: firstDemand_(rows, ['備援目標'], station.backupTarget || 0),
+      maxAssignable: firstDemand_(rows, ['可排滿', '可排滿人數', 'maxAssignable'], 0),
       priority: firstNumber_(rows, ['排班優先順序'], station.priority || 999),
       isMandatory: firstBoolean_(rows, ['是否必站', '必站'], station.isMandatory || false),
       trainingCanFill: firstBoolean_(rows, ['訓練中可補位', '訓練中'], false),
@@ -2572,11 +2875,17 @@ function getSheetObjects_(sheetName) {
   if (values.length < 2) return [];
   const headerInfo = getSheetHeaderInfo_(ws, values);
   const headers = headerInfo.headers;
+  const idColumns = headers.map(function (header, index) { return ['工號', '員工工號', '人員工號'].indexOf(header) >= 0 ? index : -1; })
+    .filter(function (index) { return index >= 0; });
+  const displayed = idColumns.some(function (index) {
+    return values.slice(headerInfo.rowIndex + 1).some(function (row) { return typeof row[index] === 'number'; });
+  }) ? ws.getDataRange().getDisplayValues() : null;
 
   const rows = values.slice(headerInfo.rowIndex + 1).map(function (row, rowOffset) {
     const obj = {};
     headers.forEach(function (header, index) {
       obj[header] = row[index];
+      if (displayed && idColumns.indexOf(index) >= 0 && typeof row[index] === 'number') obj[header] = displayed[headerInfo.rowIndex + rowOffset + 1][index];
     });
     obj.__rowNumber = headerInfo.rowIndex + rowOffset + 2;
     return obj;
@@ -2592,35 +2901,13 @@ function getSheetHeaderInfo_(ws, existingValues) {
   const values = existingValues || ws.getDataRange().getValues();
   if (!values.length) return { rowIndex: 0, headers: [] };
 
-  const knownHeaders = [
-    '工號', '姓名', '班別', '職務', '國籍', '在職狀態',
-    '登入帳號', '登入密碼', '系統權限', '啟用狀態',
-    '站點編號', '站點名稱', '站點代碼', '資格狀態',
-    '權限ID', '角色', '規則ID', '例外ID', '試排ID', '項目ID',
-  ];
-  const scanCount = Math.min(values.length, 20);
-  let bestRowIndex = 0;
-  let bestScore = -1;
-
-  for (let rowIndex = 0; rowIndex < scanCount; rowIndex += 1) {
-    const headers = values[rowIndex].map(function (value) { return normalizeString_(value); });
-    const recognized = headers.filter(function (header) { return knownHeaders.indexOf(header) >= 0; }).length;
-    const nonEmpty = headers.filter(function (header) { return !!header; }).length;
-    const unique = {};
-    headers.forEach(function (header) { if (header) unique[header] = true; });
-    const duplicatePenalty = nonEmpty - Object.keys(unique).length;
-    const score = recognized * 100 + nonEmpty - duplicatePenalty * 10;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestRowIndex = rowIndex;
-    }
-  }
-
-  return {
-    rowIndex: bestRowIndex,
-    headers: values[bestRowIndex].map(function (value) { return normalizeString_(value); }),
-  };
+  // Only leading blank rows may precede the schema. Editable data never chooses it.
+  const rowIndex = values.findIndex(function (row) { return row.some(function (value) { return normalizeString_(value) !== ''; }); });
+  if (rowIndex < 0) return { rowIndex: 0, headers: [] };
+  const headers = values[rowIndex].map(function (value) { return normalizeString_(value); });
+  const named = headers.filter(function (header) { return !!header; });
+  if (new Set(named).size !== named.length) throw authError_('工作表標題重複，請先確認欄位結構。', 'SHEET_SCHEMA_INVALID');
+  return { rowIndex: rowIndex, headers: headers };
 }
 
 function getSourceRowNumber_(rows, index) {
@@ -2696,6 +2983,12 @@ function errorPayload_(error) {
 
 function normalizeString_(value) {
   return String(value == null ? '' : value).trim();
+}
+
+function pickFields_(object, fields) {
+  const result = {};
+  fields.forEach(function (key) { if (Object.prototype.hasOwnProperty.call(object, key)) result[key] = object[key]; });
+  return result;
 }
 
 function toNumber_(value) {

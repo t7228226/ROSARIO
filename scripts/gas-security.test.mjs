@@ -104,10 +104,12 @@ test("bootstrap separates analysis projections from scoped management records", 
   assert.deepEqual(bootstrap.viewableRuleTeams, ["TEAM_A"]); assert.deepEqual(bootstrap.editableRuleTeams, ["TEAM_A"]);
 });
 
-test("no analysis or management permission yields no rule data", () => {
+test("zero effective permissions cannot read bootstrap business data or fingerprint it", () => {
   const f = fixture({ role: "技術員", permissions: [] }); const token = f.login().sessionToken;
+  f.faults.duringFingerprint = () => { throw new Error("forbidden fingerprint"); };
   const result = f.post("bootstrap", {}, { sessionToken: token });
-  assert.deepEqual(result.stationRules, []); assert.deepEqual(result.managementStationRules, []);
+  assert.equal(result.code, "FORBIDDEN");
+  for (const key of ["people", "stations", "qualifications", "stationRules", "managementStationRules"]) assert.equal(key in result, false);
 });
 
 test("role permission alone cannot bypass director qualification, a personal allow can", () => {
@@ -221,7 +223,7 @@ test("fresh records survive capacity pressure and processing records survive TTL
   const body = { sessionToken: token, operationId: id };
   const payload = { id: "P1001", note: "once", expectedRevision: 0 };
   assert.equal(f.post("updatePerson", payload, body).ok, true);
-  for (let index = 0; index < 159; index++) f.properties.set(`ROSARIO_OP_OP_fill_${index}`, JSON.stringify({ status: "processing", updatedAt: Date.now() - 10 * 86400000 }));
+  for (let index = 0; index < 160; index++) f.properties.set(`ROSARIO_OP_OP_fill_${index}`, JSON.stringify({ status: "processing", updatedAt: Date.now() - 10 * 86400000 }));
   assert.equal(f.write(token, "updatePerson", { id: "P1001", note: "must not run" }).code, "OPERATION_CAPACITY");
   assert.equal(f.post("updatePerson", payload, body).replayed, true);
   assert.equal(f.people.rows[1][4], "once");
@@ -352,15 +354,19 @@ test("flush and completion persistence failures stay unknown and never rerun wri
   }
 });
 
-test("throttle capacity is checked before password verification and cannot be used to bypass cooldown", () => {
+test("bounded unknown-account attempts cannot consume the known-account throttle budget", () => {
   const f = fixture();
   vm.runInContext("SETTINGS.LOGIN_MAX_RECORDS = 2", f.context);
-  f.login("unknown-1", "wrong"); f.login("unknown-2", "wrong");
+  for (let i = 0; i < 250; i++) f.login(`unknown-${i}`, "wrong");
   let verified = 0;
   const verify = f.context.verifyPassword_;
   f.context.verifyPassword_ = (...args) => { verified++; return verify(...args); };
-  assert.equal(f.login().code, "LOGIN_THROTTLED"); assert.equal(verified, 0);
-  f.advance(5 * 60000 + 1); assert.equal(f.login().ok, true);
+  assert.equal([...f.properties.keys()].filter(k => k.startsWith("ROSARIO_LOGIN_")).length, 1);
+  assert.equal(f.login().ok, true); assert.equal(verified, 1);
+  for (let i = 0; i < 5; i++) f.login("worker", "wrong");
+  const before = verified;
+  assert.equal(f.login().code, "LOGIN_THROTTLED"); assert.equal(verified, before);
+  f.advance(60001); assert.equal(f.login().ok, true);
 });
 
 test("operation receipts are owner-scoped, admin-only for all, and never expose payloads or digests", () => {
@@ -441,7 +447,7 @@ test("only an administrator can acknowledge an unknown receipt without claiming 
   assert.equal(f.write(root, "acknowledgeOperation", { targetOperationId: id, confirmedReview: true }).ok, true);
   const status = f.post("operationStatus", { operationId: id }, { sessionToken: token });
   assert.equal(status.status, "reviewed"); assert.equal(status.result, undefined);
-  const record = JSON.parse(f.properties.get(`ROSARIO_OP_${id}`));
+  const record = f.context.readOperationRecord_(f.context.PropertiesService.getScriptProperties(), id);
   assert.equal(f.context.operationRecordResponse_(id, record).code, "OPERATION_REVIEWED");
 });
 

@@ -33,7 +33,7 @@ function isRealPersonRecord(person: Person) {
   const id = normalizeCellText(person.id);
   const name = normalizeCellText(person.name);
   if (!id || !name) return false;
-  if ([id, name, person.shift, person.role, person.nationality, person.note].some(containsTemplateMarker)) return false;
+  if ([id, name, person.shift, person.role, person.nationality].some(containsTemplateMarker)) return false;
   if (id === "工號" || id === "姓名" || name === "姓名") return false;
   return true;
 }
@@ -42,7 +42,7 @@ function isRealStationRecord(station: AppBootstrap["stations"][number]) {
   const id = normalizeCellText(station.id);
   const name = normalizeCellText(station.name);
   if (!id || !name) return false;
-  if ([id, name, station.description, station.note].some(containsTemplateMarker)) return false;
+  if ([id, name].some(containsTemplateMarker)) return false;
   if (id === "站點代碼" || name === "站點名稱") return false;
   return true;
 }
@@ -70,7 +70,7 @@ export function sanitizeBootstrapData(source: AppBootstrap): AppBootstrap {
     const team = normalizeCellText(rule.team);
     const stationId = normalizeCellText(rule.stationId);
     if (!team || !stationId) return false;
-    if ([team, rule.dayKey, stationId, rule.note].some(containsTemplateMarker)) return false;
+    if ([team, rule.dayKey, stationId].some(containsTemplateMarker)) return false;
     return stationIds.has(stationId);
   });
   return { ...source, people, stations, qualifications, stationRules };
