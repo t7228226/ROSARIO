@@ -15,7 +15,7 @@
 .departure-selected-list li { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; padding: 6px; }
 .departure-comparison summary, .coverage-baseline-details > summary { cursor: pointer; min-height: 44px; align-content: center; text-align: center; }
 .coverage-baseline-details { margin-block: 12px; border-bottom: 1px solid var(--border, #d8dfe8); }
-.departure-shortage { color: var(--danger, #b42332); font-weight: 700; }
+.departure-shortage { color: var(--ros-danger, var(--danger, #b42332)); font-weight: 700; }
 .coverage-mobile-detail-list { display: none; }
 .coverage-detail-table .assigned-name-tags, .coverage-mobile-item > .assigned-name-tags { justify-content: center; }
 .confirmed-field { display: grid; min-width: 0; gap: 4px; }
