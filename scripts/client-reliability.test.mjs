@@ -7,14 +7,14 @@ import ts from "typescript";
 const source = await readFile(new URL("../src/lib/gasClient.ts", import.meta.url), "utf8");
 const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 function fixture(respond, { fastTimers = false } = {}) {
-  const requests = [], events = [], storage = new Map(), exports = {};
+  const requests = [], events = [], timeouts = [], storage = new Map(), exports = {};
   const context = vm.createContext({
     exports, require(name) {
       if (name.includes("environment")) return { appEnvironment: { writesEnabled: true, version: "test", gasEndpoint: "https://synthetic.invalid" } };
       if (name.includes("writeActions")) return { FRONT_WRITE_ACTIONS: new Set(["updatePerson"]) };
       throw new Error(`Unexpected import ${name}`);
     },
-    window: { setTimeout: fastTimers ? (callback) => setTimeout(callback, 0) : setTimeout, clearTimeout, dispatchEvent: (event) => events.push(event), sessionStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value) } },
+    window: { setTimeout: (callback, ms) => { timeouts.push(ms); return setTimeout(callback, fastTimers ? 0 : ms); }, clearTimeout, dispatchEvent: (event) => events.push(event), sessionStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value) } },
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body); requests.push(body);
       let result = await respond(body);
@@ -26,7 +26,7 @@ function fixture(respond, { fastTimers = false } = {}) {
     AbortController, DOMException, crypto, CustomEvent, Response, TextEncoder, Uint8Array, Error, TypeError, setTimeout, clearTimeout,
   });
   vm.runInContext(code, context);
-  return { client: exports, requests, events };
+  return { client: exports, requests, events, timeouts };
 }
 test("writes carry bootstrap revision and advance only after a confirmed success", async () => {
   const f = fixture((body) => body.action === "bootstrap" ? { ok: true, revision: 7, people: [] } : { ok: true, revision: body.payload.expectedRevision + 1 });
@@ -142,4 +142,94 @@ test("HTML service errors are never treated as a successful zero-data snapshot",
 test("receipt responses validate required fields before rendering", async () => {
   const f = fixture(() => ({ ok: true, operations: [{ operationId: "bad", createdAt: "not a date" }] }));
   await assert.rejects(f.client.fetchGasOperations(), /不完整/);
+});
+
+const inlineLogin = (sessionToken = "synthetic", bootstrap = {}) => ({
+  ok: true, sessionToken,
+  bootstrap: { ok: true, serverVersion: "test", revision: 7, people: [], stations: [], qualifications: [], ...bootstrap },
+});
+
+test("startup bootstrap requests omit operation history", async () => {
+  const f = fixture(() => ({ ok: true, revision: 7 }));
+  await f.client.fetchGasBootstrapData();
+  assert.equal(f.requests[0].payload.includeOperations, false);
+});
+
+test("inline login bootstrap primes writes without another bootstrap request", async () => {
+  const f = fixture(() => ({ ok: true, revision: 8 }));
+  const login = inlineLogin();
+  f.client.setGasSessionToken(login.sessionToken);
+  assert.equal(f.client.adoptLoginBootstrap(login, login.sessionToken), login.bootstrap);
+  assert.equal(f.client.getObservedDataRevision(), 7);
+  await f.client.postGasAction("updatePerson", { id: "X" });
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].action, "updatePerson");
+  assert.equal(f.requests[0].payload.expectedRevision, 7);
+  assert.equal(f.requests[0].sessionToken, login.sessionToken);
+});
+
+test("invalid inline bootstrap cannot initialize a writable snapshot", async () => {
+  const malformed = [
+    undefined, null, [], {}, { ok: false }, { ok: true },
+    inlineLogin("other"), inlineLogin("synthetic", { ok: false }),
+    ...[undefined, null, "", "old-version", 123].map(serverVersion => inlineLogin("synthetic", { serverVersion })),
+    ...[undefined, null, "7", -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1].map(revision => inlineLogin("synthetic", { revision })),
+    ...["people", "stations", "qualifications", "stationRules", "managementStationRules"].flatMap(key =>
+      [null, {}, "bad", [null], [[]], [7]].map(value => inlineLogin("synthetic", { [key]: value }))),
+  ];
+  for (const result of malformed) {
+    const f = fixture(() => { throw new Error("must not request"); });
+    f.client.setGasSessionToken("synthetic");
+    assert.equal(f.client.adoptLoginBootstrap(result, "synthetic"), undefined);
+    assert.equal(f.client.getObservedDataRevision(), undefined);
+    await assert.rejects(f.client.postGasAction("updatePerson", { id: "X" }), /資料版本/);
+    assert.equal(f.requests.length, 0);
+  }
+});
+
+test("inline bootstrap is bound to the active session and never restores a cleared session", async () => {
+  const f = fixture(() => { throw new Error("must not request"); });
+  const first = inlineLogin("first"), second = inlineLogin("second", { revision: 9 });
+  assert.equal(f.client.adoptLoginBootstrap(first, "first"), undefined);
+  f.client.setGasSessionToken("first");
+  assert.ok(f.client.adoptLoginBootstrap(first, "first"));
+  f.client.setGasSessionToken("second");
+  assert.equal(f.client.adoptLoginBootstrap(first, "first"), undefined);
+  assert.equal(f.client.adoptLoginBootstrap(first, "second"), undefined);
+  assert.equal(f.client.getObservedDataRevision(), undefined);
+  assert.ok(f.client.adoptLoginBootstrap(second, "second"));
+  assert.equal(f.client.adoptLoginBootstrap(first, "first"), undefined);
+  assert.equal(f.client.getObservedDataRevision(), 9);
+  f.client.clearGasSessionToken();
+  assert.equal(f.client.adoptLoginBootstrap(second, "second"), undefined);
+  assert.equal(f.client.adoptLoginBootstrap(inlineLogin(""), ""), undefined);
+  await assert.rejects(f.client.postGasAction("updatePerson", { id: "X" }), /資料版本/);
+});
+
+test("login and restore allow bootstrap-sized timeouts only when explicitly requested", async () => {
+  for (const action of ["login", "session"]) {
+    for (const includeBootstrap of [undefined, false, true]) {
+      const f = fixture(() => inlineLogin("restored"));
+      f.client.setGasSessionToken("restored");
+      const result = await f.client.postGasAction(action, { includeBootstrap });
+      assert.deepEqual(f.timeouts, [includeBootstrap === true ? 60_000 : 20_000]);
+      assert.equal(f.requests[0].payload.includeBootstrap, includeBootstrap);
+      assert.equal(f.requests[0].sessionToken, "restored");
+      if (includeBootstrap === true) assert.ok(f.client.adoptLoginBootstrap(result, "restored"));
+    }
+  }
+});
+
+test("a delayed restore bootstrap cannot prime writes for a different active session", async () => {
+  let complete;
+  const f = fixture(() => new Promise(resolve => { complete = resolve; }));
+  f.client.setGasSessionToken("first");
+  const pending = f.client.postGasAction("session", { includeBootstrap: true });
+  f.client.setGasSessionToken("second");
+  complete(inlineLogin("first"));
+  await assert.rejects(pending, error => error.code === "SESSION_CHANGED");
+  assert.equal(f.client.getObservedDataRevision(), undefined);
+  assert.equal(f.client.adoptLoginBootstrap(inlineLogin("first"), "second"), undefined);
+  await assert.rejects(f.client.postGasAction("updatePerson", { id: "X" }), /資料版本/);
+  assert.equal(f.requests.length, 1);
 });

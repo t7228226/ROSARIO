@@ -21,6 +21,18 @@ interface DialogShellProps {
   closeOnBackdrop?: boolean;
 }
 
+function visibleDialogControls(panel: HTMLElement | null) {
+  return [...(panel?.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+  ) || [])].filter((element) => {
+    if (!element.getClientRects().length || element.closest('[inert], [aria-hidden="true"]')) return false;
+    for (let details = element.closest("details"); details; details = details.parentElement?.closest("details") || null) {
+      if (!details.open && !details.querySelector(":scope > summary")?.contains(element)) return false;
+    }
+    return true;
+  });
+}
+
 function useDialogFocusManagement(open: boolean, onClose: () => void) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(
@@ -48,9 +60,7 @@ function useDialogFocusManagement(open: boolean, onClose: () => void) {
         && panelRef.current?.contains(document.activeElement)
         && document.activeElement !== panelRef.current;
       if (activeInsideDialog) return;
-      const first = panelRef.current?.querySelector<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
+      const first = visibleDialogControls(panelRef.current)[0];
       (first || panelRef.current)?.focus();
     }, 0);
 
@@ -63,9 +73,7 @@ function useDialogFocusManagement(open: boolean, onClose: () => void) {
         return;
       }
       if (event.key !== "Tab" || !panelRef.current) return;
-      const focusable = [...panelRef.current.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      )];
+      const focusable = visibleDialogControls(panelRef.current);
       if (!focusable.length) {
         event.preventDefault();
         panelRef.current.focus();

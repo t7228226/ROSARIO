@@ -44,6 +44,8 @@ import CoverageConfigurationOverview, {
 import ABScheduleMatrix from "./features/schedule-preview/ABScheduleMatrix";
 import { previewName, uniquePreviewPeople, type PreviewPerson } from "./features/schedule-preview/previewIdentity";
 import { evaluateWorkforceScenario } from "./domain/workforce/engine";
+import { compareConfigurationAssignments, mergeConfigurationAssignments, setConfigurationAssignment } from "./domain/workforce/configuration";
+import type { ScenarioAssignment } from "./domain/workforce/types";
 import { pageFromUrl, pageUrl } from "./lib/navigation";
 import ScheduleDraftPicker, { type ScheduleDraft, type ScheduleDraftDetail } from "./features/schedule-preview/ScheduleDraftPicker";
 import {
@@ -53,6 +55,7 @@ import {
   postGasAction,
   getObservedDataRevision,
   setGasSessionToken,
+  adoptLoginBootstrap,
   type GasResponse as GasWriteResponse,
   type GasSessionResponse,
 } from "./lib/gasClient";
@@ -109,6 +112,7 @@ type MobileDetailModal =
 
 type ViewMode = "desktop" | "mobile";
 const APP_VERSION = appEnvironment.version;
+const emptyConfigurationSteps: ScenarioAssignment[][] = [[]];
 
 function getStationQualificationStatus(qualifications: Qualification[], employeeId: string, stationId: string) {
   return getCoverageQualificationStatus(qualifications, employeeId, stationId);
@@ -305,6 +309,7 @@ export default function App() {
   const loginAutoSubmittedRef = useRef(false);
   const loginManualInputRef = useRef(false);
   const loginSubmittingRef = useRef(false);
+  const loginBootstrapRef = useRef<{ userId: string; data: AppBootstrap } | null>(null);
   const currentRole = getSystemPermission(currentUser);
 
   const [personTeamFilter, setPersonTeamFilter] = useState<string>("全部班別");
@@ -338,6 +343,8 @@ export default function App() {
   const [gapTrainingPickerStationId, setGapTrainingPickerStationId] = useState("");
   const [gapTrainingSimulations, setGapTrainingSimulations] = useState<Array<{ employeeId: string; stationId: string }>>([]);
   const [gapOfficerSimulations, setGapOfficerSimulations] = useState<Array<{ employeeId: string; stationId: string }>>([]);
+  const [gapConfigurationHistory, setGapConfigurationHistory] = useState<{ context: string; steps: ScenarioAssignment[][] }>({ context: "", steps: [[]] });
+  const [gapConfigurationError, setGapConfigurationError] = useState("");
   const [gapOfficerDialogOpen, setGapOfficerDialogOpen] = useState(false);
   const [gapOfficerKeyword, setGapOfficerKeyword] = useState("");
   const [gapOfficerPickerId, setGapOfficerPickerId] = useState("");
@@ -562,7 +569,9 @@ export default function App() {
       setLoading(true);
       setBootstrapError("");
       try {
-        const next = sanitizeBootstrapData(await fetchGasBootstrapData());
+        const inline = loginBootstrapRef.current;
+        loginBootstrapRef.current = null;
+        const next = sanitizeBootstrapData(inline && inline.userId === currentUser?.id ? inline.data : await fetchGasBootstrapData());
         if (!active) return;
         if (!next.people.length && next.qualifications.length > 0) {
           throw new Error("人員主表讀取為 0 筆，請確認 GAS 已部署標題列自動偵測修正版。");
@@ -603,7 +612,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser || loading || !data.people.length) return;
     let active = true;
     async function loadPermissionConfig() {
       try {
@@ -627,7 +636,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [bootstrapRetryKey, currentUser]);
+  }, [bootstrapRetryKey, currentUser, loading, data.people.length]);
 
   useEffect(() => {
     let active = true;
@@ -643,11 +652,14 @@ export default function App() {
       try {
         const result = await postGasAction("session", {
           sessionDurationMs: getLoginKeepMs(loginKeep),
+          includeBootstrap: true,
         }) as GasSessionResponse;
         if (!active) return;
         if (!result.user || !result.sessionExpiresAt) {
           throw new Error("登入工作階段回應不完整。");
         }
+        const inlineBootstrap = adoptLoginBootstrap(result, stored.sessionToken);
+        if (inlineBootstrap) loginBootstrapRef.current = { userId: result.user.id, data: inlineBootstrap };
         setCurrentUser(result.user);
         saveStoredLoginSession({
           userId: result.user.id,
@@ -876,15 +888,6 @@ export default function App() {
     [data.people, data.qualifications, data.stationRules, gapShift, gapDay, gapUnavailableIds]
   );
   const gapActiveCoverageAnalysis = gapUnavailableIds.length ? gapAbsentAnalysis : gapCoverageAnalysis;
-  const gapCombinedTrainingSuggestions = useMemo(() => {
-    const source = gapActiveCoverageAnalysis.trainingSuggestions;
-    const used = new Set<string>();
-    return source.filter((item) => {
-      if (used.has(item.employeeId)) return false;
-      used.add(item.employeeId);
-      return true;
-    }).slice(0, 10);
-  }, [gapActiveCoverageAnalysis.trainingSuggestions]);
   const gapAbsentCandidates = useMemo(() => {
     const keyword = gapAbsentKeyword.trim().toLowerCase();
     return gapAttendance.all
@@ -938,37 +941,54 @@ export default function App() {
   }, [data.qualifications, gapRules, gapTrainingPickerPerson]);
   const gapTrainingPickerSelectedStationId = gapTrainingPickerStationId || gapTrainingPicker?.recommendedStationId || gapRules[0]?.stationId || "";
   const gapTrainingPickerSelectedIsQualified = Boolean(gapTrainingPickerPerson && getStationQualificationStatus(data.qualifications, gapTrainingPickerPerson.id, gapTrainingPickerSelectedStationId) === "合格");
+  const gapConfigurationContext = useMemo(() => JSON.stringify([gapShift, gapDay, data.revision, data.people, data.qualifications, data.stationRules, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]), [gapShift, gapDay, data, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]);
+  const gapConfigurationSteps = gapConfigurationHistory.context === gapConfigurationContext ? gapConfigurationHistory.steps : emptyConfigurationSteps;
+  const gapConfigurationEdits = gapConfigurationSteps[gapConfigurationSteps.length - 1];
+  const gapBaseAssignments = useMemo<ScenarioAssignment[]>(() => [
+    ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
+    ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
+  ], [gapTrainingSimulations, gapOfficerSimulations]);
+  const gapEffectiveAssignments = mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits);
+  const gapConfigurationBaseline = useMemo(() => evaluateWorkforceScenario(data, {
+    team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds, assignments: gapBaseAssignments,
+  }), [data, gapShift, gapDay, gapUnavailableIds, gapBaseAssignments]);
   const gapSimulationResult = useMemo(() => {
-    if (!gapTrainingSimulations.length && !gapOfficerSimulations.length) return null;
+    if (!gapTrainingSimulations.length && !gapOfficerSimulations.length && !gapConfigurationEdits.length) return null;
     return evaluateWorkforceScenario(data, {
       team: gapShift,
       mode: gapDay,
       unavailableIds: gapUnavailableIds,
-      assignments: [
-        ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
-        ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
-      ],
+      assignments: mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits),
     });
-  }, [data, gapShift, gapDay, gapUnavailableIds, gapOfficerSimulations, gapTrainingSimulations]);
+  }, [data, gapShift, gapDay, gapUnavailableIds, gapOfficerSimulations, gapTrainingSimulations, gapConfigurationEdits, gapBaseAssignments]);
   const gapSimulationAnalysis = gapSimulationResult?.analysis || null;
   const gapTrainingSimulationAnalysis = gapSimulationAnalysis;
-  const gapSimulationCount = gapTrainingSimulations.length + gapOfficerSimulations.length;
+  const gapSimulationCount = gapEffectiveAssignments.length;
   const gapDisplayCoverageAnalysis = gapSimulationAnalysis || gapActiveCoverageAnalysis;
+  const gapCombinedTrainingSuggestions = useMemo(() => {
+    const used = new Set<string>();
+    return gapDisplayCoverageAnalysis.trainingSuggestions.filter((item) => {
+      if (used.has(item.employeeId)) return false;
+      used.add(item.employeeId);
+      return true;
+    }).slice(0, 10);
+  }, [gapDisplayCoverageAnalysis.trainingSuggestions]);
+  useEffect(() => {
+    setGapConfigurationHistory({ context: gapConfigurationContext, steps: [[]] });
+    setGapConfigurationError("");
+  }, [gapConfigurationContext]);
   const gapBeforeDepartureAnalysis = useMemo(() => {
     if (!gapDepartureScenario.departures.length) return gapDisplayCoverageAnalysis;
     return evaluateWorkforceScenario(data, {
       team: gapShift, mode: gapDay, unavailableIds: gapAbsentIds,
-      assignments: [
-        ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
-        ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
-      ],
+      assignments: mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits),
     }).analysis;
-  }, [data, gapShift, gapDay, gapAbsentIds, gapDepartureScenario.departures.length, gapDisplayCoverageAnalysis, gapTrainingSimulations, gapOfficerSimulations]);
+  }, [data, gapShift, gapDay, gapAbsentIds, gapDepartureScenario.departures.length, gapDisplayCoverageAnalysis, gapBaseAssignments, gapConfigurationEdits]);
   const gapDepartureChanges = gapDisplayCoverageAnalysis.rows.flatMap((row) => {
     const before = gapBeforeDepartureAnalysis.rows.find((item) => item.stationId === row.stationId)?.shortage || 0;
     return before === row.shortage ? [] : [{ stationId: row.stationId, name: data.stations.find((station) => station.id === row.stationId)?.name || row.stationId, before, after: row.shortage }];
   });
-  const gapAcceptedSimulations = gapSimulationResult?.reasons.filter((item) => item.source === "training" || item.source === "officer") || [];
+  const gapAcceptedSimulations = gapSimulationResult?.reasons.filter((item) => item.source !== "automatic") || [];
   const gapDisplayQualifications = useMemo(() => {
     const completed = gapSimulationResult?.reasons.filter((item) => item.source === "training") || [];
     return [
@@ -999,7 +1019,8 @@ export default function App() {
           id,
           name: person?.name || id,
           kind: gapSimulationResult?.reasons.some((item) => item.employeeId === id && item.stationId === rule.stationId && item.source === "training")
-            ? "training" as const : person && isSupportOfficerPerson(person) ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
+            ? "training" as const : person && (isSupportOfficerPerson(person) || normalizeOfficerRole(person.role) === "站長") ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
+          locked: gapConfigurationEdits.some((item) => item.employeeId === id && item.stationId === rule.stationId),
         };
       });
       return {
@@ -1015,6 +1036,15 @@ export default function App() {
         status: row?.shortage ? "缺口" as const : row?.bottleneck ? "瓶頸" as const : "穩定" as const,
         supportQualifiedNames: coverage.supportQualifiedIds.map((id) => data.people.find((person) => person.id === id)?.name || id),
         changedBySimulation: Boolean(gapTrainingSimulationAnalysis && row && row.shortage !== (beforeRow?.shortage || 0)),
+        candidates: gapAttendance.all.filter((person) => !gapUnavailableIds.includes(person.id))
+          .filter((person) => getCoverageQualificationStatus(gapDisplayQualifications, person.id, rule.stationId) === "合格")
+          .map((person) => ({
+            id: person.id, name: person.name,
+            kind: gapEffectiveAssignments.some((item) => item.employeeId === person.id && item.stationId === rule.stationId && item.source === "training") ? "training" as const
+              : isSupportOfficerPerson(person) || normalizeOfficerRole(person.role) === "站長" ? "officer" as const : supportIds.has(person.id) ? "support" as const : "own" as const,
+            source: isSupportOfficerPerson(person) ? "officer" as const : gapEffectiveAssignments.some((item) => item.employeeId === person.id && item.stationId === rule.stationId && item.source === "training") ? "training" as const : "manual" as const,
+            currentStation: gapDisplayCoverageAnalysis.rows.find((item) => item.assignedIds.includes(person.id))?.stationId,
+          })),
       };
     });
   }, [
@@ -1029,7 +1059,23 @@ export default function App() {
     gapRules,
     gapTrainingSimulationAnalysis,
     gapSimulationResult,
+    gapConfigurationContext,
+    gapConfigurationHistory,
   ]);
+  const gapConfigurationChanges = compareConfigurationAssignments(gapConfigurationBaseline.assignments,
+    Object.fromEntries(gapDisplayCoverageAnalysis.rows.map((row) => [row.stationId, row.assignedIds])));
+  function updateGapConfiguration(next: ScenarioAssignment[]) {
+    setGapConfigurationError("");
+    const merged = mergeConfigurationAssignments(gapBaseAssignments, next);
+    const overfilled = gapRules.find((rule) => merged.filter((item) => item.stationId === rule.stationId).length > getRuleNeed(rule, gapDay));
+    if (overfilled) {
+      setGapConfigurationError(`${data.stations.find((station) => station.id === overfilled.stationId)?.name || overfilled.stationId} 的固定人數已達需求，請先解除一位固定人選。`);
+      return;
+    }
+    const result = evaluateWorkforceScenario(data, { team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds, assignments: merged });
+    if (result.violations.length) { setGapConfigurationError(result.violations.map((item) => item.message).join("；")); return; }
+    setGapConfigurationHistory({ context: gapConfigurationContext, steps: [...gapConfigurationSteps.slice(-19), next] });
+  }
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
@@ -1266,7 +1312,7 @@ export default function App() {
       gapStressWorkerRef.current?.terminate();
       gapStressWorkerRef.current = null;
     };
-  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]);
+  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations, gapConfigurationHistory]);
 
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
@@ -1492,13 +1538,14 @@ export default function App() {
 
     loginSubmittingRef.current = true;
     setLoginSubmitting(true);
-    setFlashMessage("正在驗證帳號，請稍候...");
+    setFlashMessage("正在驗證帳號並讀取最新資料，請稍候...");
 
     try {
       const result = await postGasAction("login", {
         account,
         password,
         sessionDurationMs: getLoginKeepMs(loginKeep),
+        includeBootstrap: true,
       }) as GasSessionResponse;
       if (!result.ok || !result.user || !result.sessionToken || !result.sessionExpiresAt) {
         setFlashMessage(
@@ -1513,6 +1560,8 @@ export default function App() {
       const mergedUser = bootstrapUser ? { ...bootstrapUser, ...result.user } : result.user;
 
       setGasSessionToken(result.sessionToken);
+      const inlineBootstrap = adoptLoginBootstrap(result, result.sessionToken);
+      if (inlineBootstrap) loginBootstrapRef.current = { userId: mergedUser.id, data: inlineBootstrap };
       setCurrentUser(mergedUser);
       saveStoredLoginSession({
         userId: mergedUser.id,
@@ -3537,6 +3586,19 @@ export default function App() {
                     detailsOpen={gapConfigurationDetailsOpen}
                     onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
                     onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
+                    baselineShortage={gapConfigurationBaseline.analysis.shortage}
+                    editCount={gapConfigurationEdits.length}
+                    error={gapConfigurationError}
+                    canUndo={gapConfigurationSteps.length > 1}
+                    onAssign={(employeeId, stationId, source) => updateGapConfiguration(setConfigurationAssignment(gapConfigurationEdits, { employeeId, stationId, source }))}
+                    onRelease={(employeeId) => updateGapConfiguration(gapConfigurationEdits.filter((item) => item.employeeId !== employeeId))}
+                    onUndo={() => { setGapConfigurationError(""); setGapConfigurationHistory({ context: gapConfigurationContext, steps: gapConfigurationSteps.slice(0, -1) }); }}
+                    onReset={() => updateGapConfiguration([])}
+                    changes={gapConfigurationEdits.length ? gapConfigurationChanges.map((item) => ({
+                      name: data.people.find((person) => person.id === item.employeeId)?.name || item.employeeId,
+                      from: data.stations.find((station) => station.id === item.from)?.name || "未配置",
+                      to: data.stations.find((station) => station.id === item.to)?.name || "未配置",
+                    })) : []}
                   />
                   <DepartureScenarioPanel candidates={gapDepartureScenario.candidates} selectedIds={gapDepartureIds} onChange={setGapDepartureIds} before={gapBeforeDepartureAnalysis.shortage} after={gapDisplayCoverageAnalysis.shortage} changes={gapDepartureChanges} />
                   {gapSimulationResult?.violations.length ? <div className="bootstrap-error-banner" role="alert">未採用的模擬：{gapSimulationResult.violations.map((item) => item.message).join("；")}</div> : null}
@@ -4217,7 +4279,8 @@ export default function App() {
                         if (statusA !== statusB) return statusA === "合格" ? -1 : 1;
                         return a.name.localeCompare(b.name, "zh-Hant", { numeric: true });
                       });
-                    const assignedPeople = candidates.filter((person) => selectedIds.includes(person.id));
+                    const assignedPeople = [...candidates.filter((person) => selectedIds.includes(person.id)),
+                      ...manualAttendance.all.filter((person) => stationLeaderIds.includes(person.id) && !selectedIds.includes(person.id))];
                     const pendingPeople = candidates.filter((person) => !selectedIds.includes(person.id));
 
                     return (
@@ -4238,12 +4301,13 @@ export default function App() {
                               (() => {
                                 const status = getStationQualificationStatus(data.qualifications, person.id, rule.stationId);
                                 const isTraining = status === "訓練中";
+                                const isLeader = stationLeaderIds.includes(person.id);
                                 return (
                                   <button
                                     key={person.id}
                                     type="button"
-                                    className={`list-row active${isTraining ? " training-assigned" : ""}`}
-                                    onClick={() => toggleManualAssignment(rule.stationId, person.id)}
+                                    className={`list-row active${isTraining ? " training-assigned" : ""}${isLeader ? " station-leader-assigned" : ""}`}
+                                    onClick={() => isLeader ? setManualOfficerStations((current) => ({ ...current, [person.id]: "" })) : toggleManualAssignment(rule.stationId, person.id)}
                                     title={isTraining ? "訓練人員：僅限手動安排，不納入自動安排" : undefined}
                                   >
                                     <strong>{person.name}</strong>

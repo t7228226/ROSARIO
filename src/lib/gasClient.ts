@@ -72,6 +72,21 @@ export function clearGasSessionToken() {
   observedBackendVersion = "";
 }
 
+export function adoptLoginBootstrap(result: unknown, sessionToken: string): AppBootstrap | undefined {
+  const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+  if (!sessionToken || sessionToken !== activeSessionToken || !isRecord(result) || result.ok !== true || result.sessionToken !== sessionToken) return undefined;
+  const bootstrap = result.bootstrap;
+  if (!isRecord(bootstrap) || bootstrap.ok !== true || bootstrap.serverVersion !== APP_VERSION ||
+    typeof bootstrap.revision !== "number" || !Number.isSafeInteger(bootstrap.revision) || bootstrap.revision < 0) return undefined;
+  for (const key of ["people", "stations", "qualifications", "stationRules", "managementStationRules"]) {
+    if ((key === "stationRules" || key === "managementStationRules") && bootstrap[key] === undefined) continue;
+    if (!Array.isArray(bootstrap[key]) || !bootstrap[key].every(isRecord)) return undefined;
+  }
+  observedRevision = bootstrap.revision;
+  observedBackendVersion = bootstrap.serverVersion;
+  return bootstrap as unknown as AppBootstrap;
+}
+
 function notifyExpiredSession(code: string) {
   if (!code.startsWith("AUTH_")) return;
   clearGasSessionToken();
@@ -176,7 +191,7 @@ async function sendGasAction(action: string, payload: Record<string, unknown>, o
       sessionToken: sessionToken || undefined,
       payload,
     }),
-  }, operationId ? GAS_WRITE_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
+  }, operationId ? GAS_WRITE_TIMEOUT_MS : (action === "login" || action === "session") && payload.includeBootstrap === true ? GAS_BOOTSTRAP_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
   if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已停止舊操作的畫面更新。", "SESSION_CHANGED");
   return readGasResult(response, `GAS ${action} 請求失敗`, sessionToken);
 }
@@ -326,7 +341,7 @@ export async function fetchGasBootstrapData(): Promise<AppBootstrap> {
       action: "bootstrap",
       appVersion: APP_VERSION,
       sessionToken: sessionToken || undefined,
-      payload: {},
+      payload: { includeOperations: false },
     }),
   }, GAS_BOOTSTRAP_TIMEOUT_MS);
   if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已忽略舊資料。", "SESSION_CHANGED");

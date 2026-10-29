@@ -77,7 +77,7 @@ assert.match(gasSource, /function requireSession_\(/, "GAS 必須驗證登入工
 assert.match(gasSource, /assertOperationOwner_\(record, session\)/, "寫入結果查詢必須綁定操作人");
 assert.match(doGetSource, /action === 'bootstrap'.+POST_REQUIRED/s, "bootstrap 不得透過公開 GET 讀取主檔");
 assert.doesNotMatch(doGetSource, /buildBootstrap_\(/, "公開 GET 不得直接建立 bootstrap 資料");
-assert.match(doPostSource, /case 'bootstrap':\s*\{\s*const session = requireSession_\([\s\S]+buildBootstrapForSession_\(session\)/, "bootstrap POST 必須驗證登入工作階段");
+assert.match(doPostSource, /case 'bootstrap':\s*\{\s*const session = requireSession_\([\s\S]+buildBootstrapForSession_\(session, payload\)/, "bootstrap POST 必須驗證登入工作階段");
 assert.match(gasSource, /assertActionScope_\(session, action, payload\)/, "寫入必須執行資料範圍檢查");
 assert.match(gasSource, /if \(action !== 'updateStationRule'\) return true;[\s\S]+ownTeam !== requestedTeam/, "站點規則寫入必須限制在登入者所屬班別");
 assert.match(gasClientSource, /sessionToken: sessionToken \|\| undefined/, "前端 GAS client 必須附帶本次操作的 session token");

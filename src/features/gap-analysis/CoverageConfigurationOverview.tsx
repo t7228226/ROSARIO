@@ -1,4 +1,6 @@
 import AppDialog from "../../components/ui/AppDialog";
+import { useEffect, useRef } from "react";
+import type { ScenarioAssignmentSource } from "../../domain/workforce/types";
 
 export type CoverageAssignmentKind = "own" | "support" | "officer" | "training";
 
@@ -6,7 +8,8 @@ export interface CoverageConfigurationRow {
   stationId: string;
   stationName: string;
   required: number;
-  assigned: Array<{ id: string; name: string; kind: CoverageAssignmentKind }>;
+  assigned: Array<{ id: string; name: string; kind: CoverageAssignmentKind; locked?: boolean }>;
+  candidates: Array<{ id: string; name: string; kind: CoverageAssignmentKind; source: ScenarioAssignmentSource; currentStation?: string }>;
   shortage: number;
   ownQualified: number;
   supportQualified: number;
@@ -27,6 +30,15 @@ interface CoverageConfigurationOverviewProps {
   detailsOpen: boolean;
   onOpenDetails: () => void;
   onCloseDetails: () => void;
+  baselineShortage: number;
+  editCount: number;
+  error: string;
+  canUndo: boolean;
+  onAssign: (employeeId: string, stationId: string, source: ScenarioAssignmentSource) => void;
+  onRelease: (employeeId: string) => void;
+  onUndo: () => void;
+  onReset: () => void;
+  changes: Array<{ name: string; from: string; to: string }>;
 }
 
 function AssignmentNames({ row }: { row: CoverageConfigurationRow }) {
@@ -56,7 +68,10 @@ export default function CoverageConfigurationOverview({
   detailsOpen,
   onOpenDetails,
   onCloseDetails,
+  baselineShortage, editCount, error, canUndo, onAssign, onRelease, onUndo, onReset, changes,
 }: CoverageConfigurationOverviewProps) {
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  useEffect(() => { if (error) errorRef.current?.focus(); }, [error]);
   const shortageRows = rows.filter((row) => row.shortage > 0);
   const bottleneckRows = rows.filter((row) => row.status === "瓶頸");
   const attentionRows = rows.filter((row) => row.shortage > 0 || row.status === "瓶頸" || row.changedBySimulation);
@@ -98,46 +113,54 @@ export default function CoverageConfigurationOverview({
       <AppDialog
         open={detailsOpen}
         title={`${title}：全部站點`}
-        description="詳細資料分開呈現本班、支援及訓練人力；此視窗不會改變任何模擬條件。"
+        description="配置模擬不會寫入正式資格或班表。"
         onClose={onCloseDetails}
         size="wide"
         footer={<button type="button" className="primary" onClick={onCloseDetails}>完成核對</button>}
       >
         <div className="coverage-detail-legend" aria-label="人員來源說明">
-          <span>一般文字：本班</span><span className="support-assignment-name">藍色：支援</span><span className="officer-support-name">綠色：幹部支援</span><span className="training-assumption-name">黃色：假設補訓完成</span>
+          <span>一般文字：本班</span><span className="support-assignment-name">藍色：支援</span><span className="officer-support-name">綠色：站長／幹部支援</span><span className="training-assumption-name">黃色：假設補訓完成</span>
         </div>
-        <div className="coverage-mobile-detail-list">
-          {rows.map((row) => <details className="coverage-mobile-item" key={row.stationId}>
-            <summary><strong>{row.stationName}</strong><span>需求 {row.required} · 合格 {row.totalQualified}</span><span className={row.shortage ? "departure-shortage" : ""}>{row.shortage ? `缺 ${row.shortage} 人` : row.status}</span><span className="coverage-disclosure-arrow" aria-hidden="true">▾</span></summary>
+        <div className="configuration-comparison" aria-label="配置比較" aria-live="polite">
+          <div><span>系統原始最佳缺口</span><strong>{baselineShortage}</strong></div>
+          <div><span>{editCount ? "固定人選後最佳缺口" : "目前最佳缺口"}</span><strong className={totalShortage ? "departure-shortage" : ""}>{totalShortage}</strong></div>
+          <div><span>自訂固定</span><strong>{editCount} 人</strong></div>
+        </div>
+        <div className="configuration-actions">
+          <button type="button" className="ghost" onClick={onUndo} disabled={!canUndo}>復原上一步</button>
+          <button type="button" className="ghost" onClick={onReset} disabled={!editCount}>還原系統配置</button>
+        </div>
+        {error ? <p ref={errorRef} role="alert" tabIndex={-1} className="departure-shortage configuration-impact">{error}</p> : null}
+        {editCount ? <div className="configuration-impact" role="status">
+          <strong>{totalShortage > baselineShortage ? `固定條件新增 ${totalShortage - baselineShortage} 個缺口` : totalShortage < baselineShortage ? `固定條件減少 ${baselineShortage - totalShortage} 個缺口` : "固定條件未增加全站缺口"}</strong>
+          {changes.length ? <details><summary>人員調動 {changes.length} 人</summary><ul>{changes.map((item, index) => <li key={`${item.name}-${index}`}>{item.name}：{item.from} → {item.to}</li>)}</ul></details> : null}
+        </div> : null}
+        <div className="configuration-station-list">
+          {rows.map((row) => <details className={`coverage-mobile-item configuration-station ${row.shortage ? "has-shortage" : ""}`} key={row.stationId}>
+            <summary>
+              <span className="configuration-station-title"><strong>{row.stationName}</strong><span>需求 {row.required} · 合格 {row.totalQualified}</span></span>
+              <span className="configuration-assignment" aria-label={assignmentLabel}><AssignmentNames row={row} /></span>
+              <span className={`configuration-station-status${row.shortage ? " departure-shortage" : ""}`}>{row.shortage ? `缺 ${row.shortage} 人` : row.status}</span>
+              <span className="coverage-disclosure-arrow" aria-hidden="true">▾</span>
+            </summary>
+            <div className="configuration-station-body">
             <dl className="coverage-mobile-counts"><div><dt>本班合格</dt><dd>{row.ownQualified}</dd></div><div><dt>支援合格</dt><dd>{row.supportQualified}</dd></div><div><dt>訓練中</dt><dd>{row.training}</dd></div></dl>
-            <h4>{assignmentLabel}</h4><AssignmentNames row={row} />
-            <h4>支援合格人員</h4><p>{row.supportQualifiedNames.join("、") || "-"}</p>
+            {row.assigned.some((person) => person.locked) ? <div className="configuration-locks">{row.assigned.filter((person) => person.locked).map((person) => <button type="button" key={person.id} className="ghost" onClick={() => onRelease(person.id)}>解除固定：{person.name}</button>)}</div> : null}
+            <h4>可調整人選 · {row.candidates.length} 人</h4>
+            <div className="configuration-candidates">
+              {row.candidates.map((person) => {
+                const fixed = row.assigned.some((item) => item.id === person.id && item.locked);
+                const currentName = rows.find((item) => item.stationId === person.currentStation)?.stationName;
+                return <button type="button" key={person.id} className={`configuration-candidate kind-${person.kind}${fixed ? " is-fixed" : ""}`}
+                  disabled={fixed} aria-label={`固定 ${person.name} 至 ${row.stationName}`}
+                  onClick={() => onAssign(person.id, row.stationId, person.source)}>
+                  <strong>{person.name}</strong><small>{fixed ? "已固定" : currentName ? `目前：${currentName}` : person.source === "officer" ? "可緊急支援" : "尚未配置"}</small>
+                </button>;
+              })}
+              {!row.candidates.length ? <p>目前沒有符合條件的人選。</p> : null}
+            </div>
+            </div>
           </details>)}
-        </div>
-        <div className="table-wrap coverage-detail-table-wrap coverage-desktop-details">
-          <table className="table coverage-detail-table">
-            <thead>
-              <tr>
-                <th>站點</th><th>需求</th><th>{assignmentLabel}</th><th>{shortageLabel}</th><th>本班合格</th><th>支援合格</th><th>總合格</th><th>訓練中</th><th>狀態</th><th>支援合格人員</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.stationId} className={row.shortage ? "danger-row" : row.status === "瓶頸" || row.changedBySimulation ? "warning-row" : ""}>
-                  <td><strong>{row.stationName}</strong></td>
-                  <td>{row.required}</td>
-                  <td><AssignmentNames row={row} /></td>
-                  <td>{row.shortage}</td>
-                  <td>{row.ownQualified}</td>
-                  <td>{row.supportQualified}</td>
-                  <td>{row.totalQualified}</td>
-                  <td>{row.training}</td>
-                  <td>{row.status}</td>
-                  <td>{row.supportQualifiedNames.join("、") || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </AppDialog>
     </section>

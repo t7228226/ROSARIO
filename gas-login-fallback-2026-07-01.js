@@ -45,8 +45,8 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-10-29-014',
-  MIN_WRITE_VERSION: '2026-10-29-014',
+  APP_VERSION: '2026-10-29-015',
+  MIN_WRITE_VERSION: '2026-10-29-015',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   OPERATION_STALE_MS: 7 * 60 * 1000,
@@ -179,7 +179,7 @@ function doPost(e) {
         case 'bootstrap': {
           const session = requireSession_(resolveSessionToken_(body, payload));
           bootstrapDataAccess_(session);
-          return jsonOutput_(readRevisionSnapshot_(function () { return buildBootstrapForSession_(session); }));
+          return jsonOutput_(readRevisionSnapshot_(function () { return buildBootstrapForSession_(session, payload); }));
         }
         default:
           return jsonOutput_({ ok: false, message: 'Unknown POST action', action });
@@ -902,12 +902,17 @@ function validateSessionResponse_(sessionToken, payload) {
       PropertiesService.getScriptProperties().setProperty(sessionPropertyKey_(sessionToken), JSON.stringify(record));
     }
 
-    return {
+    const result = {
       ok: true,
       message: '登入工作階段有效',
       user: user,
       sessionExpiresAt: Number(record.expiresAt),
     };
+    if (payload && payload.includeBootstrap === true) {
+      result.bootstrap = readSessionBootstrap_(sessionToken);
+      result.sessionToken = normalizeString_(sessionToken);
+    }
+    return result;
   });
 }
 
@@ -1161,12 +1166,12 @@ function buildBootstrap_(access) {
   };
 }
 
-function buildBootstrapForSession_(session) {
+function buildBootstrapForSession_(session, payload) {
   const access = bootstrapDataAccess_(session);
   const bootstrap = buildBootstrap_(access);
   bootstrap.serverVersion = SETTINGS.APP_VERSION;
   bootstrap.capabilities = { operationReceipts: true, revision: true };
-  bootstrap.recentOperations = listOperations_(session, {}).operations;
+  if (!payload || payload.includeOperations !== false) bootstrap.recentOperations = listOperations_(session, {}).operations;
   bootstrap.revision = getDataRevision_();
   const rules = bootstrap.stationRules || [];
   const ownUser = buildSessionUser_(session);
@@ -1202,6 +1207,16 @@ function buildBootstrapForSession_(session) {
     return sanitized;
   });
   return bootstrap;
+}
+
+function readSessionBootstrap_(sessionToken) {
+  if (requestSheetCache_) requestSheetCache_ = Object.create(null);
+  bootstrapDataAccess_(requireSession_(sessionToken));
+  return readRevisionSnapshot_(function () {
+    // Login/authorization reads precede the fingerprint and cannot seed this snapshot.
+    if (requestSheetCache_) requestSheetCache_ = Object.create(null);
+    return buildBootstrapForSession_(requireSession_(sessionToken), { includeOperations: false });
+  });
 }
 
 function analysisStationRule_(rule) {
@@ -1334,13 +1349,22 @@ function loginLocked_(payload) {
 
   const session = createSession_(matched, payload.sessionDurationMs);
   PropertiesService.getScriptProperties().deleteProperty(attempt.key);
-  return {
+  const result = {
     ok: true,
     message: '登入成功',
     user,
     sessionToken: session.token,
     sessionExpiresAt: session.record.expiresAt,
   };
+  if (payload.includeBootstrap === true) {
+    try {
+      result.bootstrap = readSessionBootstrap_(session.token);
+    } catch (error) {
+      PropertiesService.getScriptProperties().deleteProperty(sessionPropertyKey_(session.token));
+      throw error;
+    }
+  }
+  return result;
 }
 
 /** =========================

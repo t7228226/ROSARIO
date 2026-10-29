@@ -20,6 +20,41 @@
 .coverage-detail-table .assigned-name-tags, .coverage-mobile-item > .assigned-name-tags { justify-content: center; }
 .confirmed-field { display: grid; min-width: 0; gap: 4px; }
 .confirmed-field small { color: var(--danger, #b42332); overflow-wrap: anywhere; }
+.configuration-comparison { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0 12px; text-align: center; }
+.configuration-comparison > div { display: grid; gap: 8px; min-width: 0; padding: 12px 4px; border-block: 1px solid var(--theme-border); }
+.configuration-comparison strong { font-size: 24px; }
+.configuration-comparison span { font-size: 13px; overflow-wrap: anywhere; }
+.configuration-actions, .configuration-locks { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 12px 0; }
+.configuration-actions button, .configuration-locks button { min-height: 44px; }
+.configuration-impact { text-align: center; margin: 16px 0; padding: 12px; border-block: 1px solid var(--theme-border); }
+.configuration-impact ul { list-style: none; padding: 0; line-height: 1.9; }
+.configuration-impact summary { cursor: pointer; min-height: 44px; align-content: center; }
+.configuration-station { border-bottom: 1px solid var(--theme-border); text-align: center; min-width: 0; }
+.configuration-station > summary { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr) minmax(60px, .6fr); align-items: center; gap: 12px; position: relative; padding: 18px 28px 18px 8px; min-height: 64px; cursor: pointer; list-style: none; }
+.configuration-station > summary::-webkit-details-marker { display: none; }
+.configuration-station.has-shortage > summary { background: color-mix(in srgb, #fca5a5 14%, transparent); }
+.configuration-station-title, .configuration-assignment { display: grid; gap: 8px; min-width: 0; }
+.configuration-station-title > strong { font-size: 18px; }
+.configuration-station-title > span, .configuration-assignment small { font-size: 13px; }
+.configuration-assignment .assigned-name-tags { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; }
+.configuration-station .coverage-disclosure-arrow { position: absolute; right: 6px; top: 22px; transition: transform .15s ease; }
+.configuration-station[open] > summary .coverage-disclosure-arrow { transform: rotate(180deg); }
+.configuration-station-body { padding: 12px 4px 24px; }
+.configuration-station-body h4 { margin: 18px 0 12px; }
+.configuration-station .coverage-mobile-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.configuration-station .coverage-mobile-counts div { display: grid; gap: 6px; }
+.configuration-station .coverage-mobile-counts dd { margin: 0; font-weight: 700; }
+.configuration-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(128px, 100%), 1fr)); gap: 8px; }
+.configuration-candidate { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 6px; min-width: 0; min-height: 66px; border: 1px solid var(--theme-border); border-radius: 8px; background: var(--theme-panel); color: var(--theme-text); padding: 10px 6px; text-align: center; }
+.configuration-candidate strong, .configuration-candidate small { overflow-wrap: anywhere; max-width: 100%; }
+.configuration-candidate small { font-size: 12px; }
+.configuration-candidate.kind-officer { background: #dcfce7; color: #166534; border-color: #4ade80; }
+.configuration-candidate.kind-support { background: #dbeafe; color: #1e3a8a; border-color: #60a5fa; }
+.configuration-candidate.kind-training { background: #fef3c7; color: #854d0e; border-color: #eab308; }
+.configuration-candidate.is-fixed { outline: 2px solid var(--theme-primary); outline-offset: -2px; opacity: 1; }
+.manual-schedule-list .list-row.active.station-leader-assigned:not(.training-assigned) { background: #dcfce7 !important; color: #166534 !important; border: 1px solid #22c55e !important; }
+#root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row.active.station-leader-assigned:not(.training-assigned) strong { color: #166534 !important; }
+@media (prefers-reduced-motion: reduce) { .configuration-station .coverage-disclosure-arrow { transition: none; } }
 @media (max-width: 768px) {
   .app-operational-v3 .analysis-context .info-item > span, .app-operational-v3 .data-sync-bar > span { font-size: 13px; color: var(--ros-text, #15202b) !important; }
   .coverage-configuration-overview .coverage-overview-metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -42,4 +77,10 @@
   .departure-cutoff { grid-template-columns: minmax(0, 1fr); }
   .departure-comparison .table { min-width: 0; width: 100%; table-layout: fixed; }
   .departure-comparison .table th, .departure-comparison .table td { overflow-wrap: anywhere; padding: 8px 2px; }
+  .configuration-station > summary { grid-template-columns: minmax(0, 2fr) minmax(48px, 1fr); grid-template-areas: "title status" "names names"; gap: 8px; padding: 12px 24px; }
+  .configuration-station-title { grid-area: title; }
+  .configuration-station-status { grid-area: status; }
+  .configuration-assignment { grid-area: names; }
+  .configuration-station { padding-block: 4px 8px; }
+  .configuration-station .coverage-disclosure-arrow { top: 18px; }
 }

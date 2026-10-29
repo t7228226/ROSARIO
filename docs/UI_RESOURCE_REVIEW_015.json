@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "scope": "material",
+  "change_kind": "existing",
+  "platform": "react",
+  "surface": "operate",
+  "objective": "配置摘要直接顯示姓名；展開候補並固定人選後重算全站，保留置中排版與現有主題。站長在試排顯示綠色姓名。",
+  "exemption": null,
+  "candidates": [
+    { "source_id": "motion-primitives", "inspected": "https://github.com/ibelick/motion-primitives/blob/main/components/core/disclosure.tsx", "decision": "adapt_method", "detail": "摘要與展開區分離，姓名留在摘要，編輯控制放在展開區。", "reason": "只採用資訊揭露原則，沿用原生 details 與 AppDialog，不複製程式碼、不新增套件。", "target": "src/features/gap-analysis/CoverageConfigurationOverview.tsx", "checks": { "free_only": true, "license_reviewed": true, "compatible": true, "evidence": "公開 MIT 參考，僅採方法；既有 React/HTML/CSS 獨立實作。" } },
+    { "source_id": "animate-ui", "inspected": "https://animate-ui.com/docs/primitives/headless/disclosure", "decision": "reject", "detail": "可及性的開關與面板分離。", "reason": "已有原生 details，不需要額外 Headless/Motion 依賴；不匯入元件。" }
+  ],
+  "implementation": [
+    { "source_id": "motion-primitives", "target": "src/features/gap-analysis/CoverageConfigurationOverview.tsx", "detail": "統一桌機及手機的逐站配置摘要，固定與候補位於展開區；比較全站缺口及調動影響。", "evidence_role": "after" }
+  ],
+  "evidence": [],
+  "verification": [],
+  "reviewer": { "role": "independent-verifier", "summary": "待實作及實際畫面驗證。" }
+}
