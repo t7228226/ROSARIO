@@ -11,4 +11,5 @@ export const FRONT_WRITE_ACTIONS = new Set([
   "upsertPersonalPermissionException",
   "deletePersonalPermissionException",
   "saveScheduleDraft",
+  "saveCoveragePreset",
 ]);

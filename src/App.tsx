@@ -46,6 +46,10 @@ import { previewName, uniquePreviewPeople, type PreviewPerson } from "./features
 import { evaluateWorkforceScenario } from "./domain/workforce/engine";
 import { compareConfigurationAssignments, mergeConfigurationAssignments, setConfigurationAssignment } from "./domain/workforce/configuration";
 import type { ScenarioAssignment } from "./domain/workforce/types";
+import { usePlanningConfigurations } from "./features/gap-analysis/usePlanningConfigurations";
+import PlanningPresetBar from "./features/gap-analysis/PlanningPresetBar";
+import { planningPlacementConflicts, type PlanningConfiguration } from "./domain/workforce/configurationSession";
+import { resolvePlanningRules, type PlanningRule } from "./domain/workforce/planningRules";
 import { pageFromUrl, pageUrl } from "./lib/navigation";
 import ScheduleDraftPicker, { type ScheduleDraft, type ScheduleDraftDetail } from "./features/schedule-preview/ScheduleDraftPicker";
 import {
@@ -112,7 +116,6 @@ type MobileDetailModal =
 
 type ViewMode = "desktop" | "mobile";
 const APP_VERSION = appEnvironment.version;
-const emptyConfigurationSteps: ScenarioAssignment[][] = [[]];
 
 function getStationQualificationStatus(qualifications: Qualification[], employeeId: string, stationId: string) {
   return getCoverageQualificationStatus(qualifications, employeeId, stationId);
@@ -330,6 +333,20 @@ export default function App() {
   const [gapShift, setGapShift] = useState<TeamName>("婷芬班");
   const [gapView, setGapView] = useState<"overview" | "absence" | "training" | "support">("overview");
   const [gapDay, setGapDay] = useState<ShiftMode>("當班");
+  const planningConfigurations = usePlanningConfigurations(currentUser?.id || "");
+  const gapConfigurationSession = planningConfigurations.get(gapShift, gapDay);
+  const gapConfiguration = gapConfigurationSession.configuration;
+  const gapTrainingSimulations = gapConfiguration.assignments.filter((item) => item.source === "training");
+  const gapOfficerSimulations = gapConfiguration.assignments.filter((item) => item.source === "officer");
+  function setGapSourceAssignments(source: ScenarioAssignment["source"], next: Array<{ employeeId: string; stationId: string }> | ((current: Array<{ employeeId: string; stationId: string }>) => Array<{ employeeId: string; stationId: string }>)) {
+    planningConfigurations.change(gapShift, gapDay, (current) => {
+      const selected = typeof next === "function" ? next(current.assignments.filter((item) => item.source === source)) : next;
+      const ids = new Set(selected.map((item) => item.employeeId));
+      return { assignments: [...current.assignments.filter((item) => item.source !== source && !ids.has(item.employeeId)), ...selected.map((item) => ({ ...item, source }))], rules: current.rules.filter((item) => !ids.has(item.employeeId)) };
+    });
+  }
+  const setGapTrainingSimulations = (next: Array<{ employeeId: string; stationId: string }> | ((current: Array<{ employeeId: string; stationId: string }>) => Array<{ employeeId: string; stationId: string }>)) => setGapSourceAssignments("training", next);
+  const setGapOfficerSimulations = (next: Array<{ employeeId: string; stationId: string }> | ((current: Array<{ employeeId: string; stationId: string }>) => Array<{ employeeId: string; stationId: string }>)) => setGapSourceAssignments("officer", next);
   const [gapHelpOpen, setGapHelpOpen] = useState(false);
   const [gapConfigurationDetailsOpen, setGapConfigurationDetailsOpen] = useState(false);
   const [gapAbsentIds, setGapAbsentIds] = useState<string[]>([]);
@@ -341,10 +358,8 @@ export default function App() {
   const [gapTrainingKeyword, setGapTrainingKeyword] = useState("");
   const [gapTrainingPicker, setGapTrainingPicker] = useState<null | { employeeId: string; recommendedStationId?: string; source: "recommendation" | "custom" }>(null);
   const [gapTrainingPickerStationId, setGapTrainingPickerStationId] = useState("");
-  const [gapTrainingSimulations, setGapTrainingSimulations] = useState<Array<{ employeeId: string; stationId: string }>>([]);
-  const [gapOfficerSimulations, setGapOfficerSimulations] = useState<Array<{ employeeId: string; stationId: string }>>([]);
-  const [gapConfigurationHistory, setGapConfigurationHistory] = useState<{ context: string; steps: ScenarioAssignment[][] }>({ context: "", steps: [[]] });
   const [gapConfigurationError, setGapConfigurationError] = useState("");
+  const [gapComparisonOpen, setGapComparisonOpen] = useState(false);
   const [gapOfficerDialogOpen, setGapOfficerDialogOpen] = useState(false);
   const [gapOfficerKeyword, setGapOfficerKeyword] = useState("");
   const [gapOfficerPickerId, setGapOfficerPickerId] = useState("");
@@ -941,29 +956,29 @@ export default function App() {
   }, [data.qualifications, gapRules, gapTrainingPickerPerson]);
   const gapTrainingPickerSelectedStationId = gapTrainingPickerStationId || gapTrainingPicker?.recommendedStationId || gapRules[0]?.stationId || "";
   const gapTrainingPickerSelectedIsQualified = Boolean(gapTrainingPickerPerson && getStationQualificationStatus(data.qualifications, gapTrainingPickerPerson.id, gapTrainingPickerSelectedStationId) === "合格");
-  const gapConfigurationContext = useMemo(() => JSON.stringify([gapShift, gapDay, data.revision, data.people, data.qualifications, data.stationRules, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]), [gapShift, gapDay, data, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations]);
-  const gapConfigurationSteps = gapConfigurationHistory.context === gapConfigurationContext ? gapConfigurationHistory.steps : emptyConfigurationSteps;
-  const gapConfigurationEdits = gapConfigurationSteps[gapConfigurationSteps.length - 1];
+  const gapConfigurationEdits = gapConfiguration.assignments.filter((item) => item.source === "manual");
+  const gapPlanningRules = gapConfigurationSession.enabled ? gapConfiguration.rules : [];
   const gapBaseAssignments = useMemo<ScenarioAssignment[]>(() => [
     ...gapTrainingSimulations.map((item) => ({ ...item, source: "training" as const })),
     ...gapOfficerSimulations.map((item) => ({ ...item, source: "officer" as const })),
   ], [gapTrainingSimulations, gapOfficerSimulations]);
-  const gapEffectiveAssignments = mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits);
+  const gapEffectiveAssignments = gapConfigurationSession.enabled ? mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits) : [];
   const gapConfigurationBaseline = useMemo(() => evaluateWorkforceScenario(data, {
-    team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds, assignments: gapBaseAssignments,
-  }), [data, gapShift, gapDay, gapUnavailableIds, gapBaseAssignments]);
+    team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds,
+  }), [data, gapShift, gapDay, gapUnavailableIds]);
   const gapSimulationResult = useMemo(() => {
-    if (!gapTrainingSimulations.length && !gapOfficerSimulations.length && !gapConfigurationEdits.length) return null;
+    if (!gapConfigurationSession.enabled || (!gapConfiguration.assignments.length && !gapPlanningRules.length)) return null;
     return evaluateWorkforceScenario(data, {
       team: gapShift,
       mode: gapDay,
       unavailableIds: gapUnavailableIds,
       assignments: mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits),
+      planningRules: gapPlanningRules,
     });
-  }, [data, gapShift, gapDay, gapUnavailableIds, gapOfficerSimulations, gapTrainingSimulations, gapConfigurationEdits, gapBaseAssignments]);
+  }, [data, gapShift, gapDay, gapUnavailableIds, gapConfigurationSession]);
   const gapSimulationAnalysis = gapSimulationResult?.analysis || null;
   const gapTrainingSimulationAnalysis = gapSimulationAnalysis;
-  const gapSimulationCount = gapEffectiveAssignments.length;
+  const gapSimulationCount = gapEffectiveAssignments.length + gapPlanningRules.length;
   const gapDisplayCoverageAnalysis = gapSimulationAnalysis || gapActiveCoverageAnalysis;
   const gapCombinedTrainingSuggestions = useMemo(() => {
     const used = new Set<string>();
@@ -973,17 +988,15 @@ export default function App() {
       return true;
     }).slice(0, 10);
   }, [gapDisplayCoverageAnalysis.trainingSuggestions]);
-  useEffect(() => {
-    setGapConfigurationHistory({ context: gapConfigurationContext, steps: [[]] });
-    setGapConfigurationError("");
-  }, [gapConfigurationContext]);
+  useEffect(() => { setGapConfigurationError(""); setGapComparisonOpen(false); }, [gapShift, gapDay]);
   const gapBeforeDepartureAnalysis = useMemo(() => {
     if (!gapDepartureScenario.departures.length) return gapDisplayCoverageAnalysis;
     return evaluateWorkforceScenario(data, {
       team: gapShift, mode: gapDay, unavailableIds: gapAbsentIds,
-      assignments: mergeConfigurationAssignments(gapBaseAssignments, gapConfigurationEdits),
+      assignments: gapEffectiveAssignments,
+      planningRules: gapPlanningRules,
     }).analysis;
-  }, [data, gapShift, gapDay, gapAbsentIds, gapDepartureScenario.departures.length, gapDisplayCoverageAnalysis, gapBaseAssignments, gapConfigurationEdits]);
+  }, [data, gapShift, gapDay, gapAbsentIds, gapDepartureScenario.departures.length, gapDisplayCoverageAnalysis, gapConfigurationSession]);
   const gapDepartureChanges = gapDisplayCoverageAnalysis.rows.flatMap((row) => {
     const before = gapBeforeDepartureAnalysis.rows.find((item) => item.stationId === row.stationId)?.shortage || 0;
     return before === row.shortage ? [] : [{ stationId: row.stationId, name: data.stations.find((station) => station.id === row.stationId)?.name || row.stationId, before, after: row.shortage }];
@@ -1020,7 +1033,7 @@ export default function App() {
           name: person?.name || id,
           kind: gapSimulationResult?.reasons.some((item) => item.employeeId === id && item.stationId === rule.stationId && item.source === "training")
             ? "training" as const : person && (isSupportOfficerPerson(person) || normalizeOfficerRole(person.role) === "站長") ? "officer" as const : supportIds.has(id) ? "support" as const : "own" as const,
-          locked: gapConfigurationEdits.some((item) => item.employeeId === id && item.stationId === rule.stationId),
+          locked: gapEffectiveAssignments.some((item) => item.employeeId === id && item.stationId === rule.stationId) || gapPlanningRules.some((item) => item.employeeId === id && item.mode === "fixed" && item.stationIds.includes(rule.stationId)),
         };
       });
       return {
@@ -1059,8 +1072,7 @@ export default function App() {
     gapRules,
     gapTrainingSimulationAnalysis,
     gapSimulationResult,
-    gapConfigurationContext,
-    gapConfigurationHistory,
+    gapConfigurationSession,
   ]);
   const gapConfigurationChanges = compareConfigurationAssignments(gapConfigurationBaseline.assignments,
     Object.fromEntries(gapDisplayCoverageAnalysis.rows.map((row) => [row.stationId, row.assignedIds])));
@@ -1072,12 +1084,28 @@ export default function App() {
       setGapConfigurationError(`${data.stations.find((station) => station.id === overfilled.stationId)?.name || overfilled.stationId} 的固定人數已達需求，請先解除一位固定人選。`);
       return;
     }
-    const result = evaluateWorkforceScenario(data, { team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds, assignments: merged });
+    const nextRules = gapConfiguration.rules.filter((rule) => !next.some((item) => item.employeeId === rule.employeeId));
+    const result = evaluateWorkforceScenario(data, { team: gapShift, mode: gapDay, unavailableIds: gapUnavailableIds, assignments: merged, planningRules: nextRules });
     if (result.violations.length) { setGapConfigurationError(result.violations.map((item) => item.message).join("；")); return; }
-    setGapConfigurationHistory({ context: gapConfigurationContext, steps: [...gapConfigurationSteps.slice(-19), next] });
+    planningConfigurations.change(gapShift, gapDay, { assignments: merged, rules: nextRules });
+  }
+  function resetGapConfiguration() {
+    planningConfigurations.reset(gapShift, gapDay);
+    setGapConfigurationError(""); setGapComparisonOpen(false);
+  }
+  async function fixGapPerson(employeeId: string, stationId: string, source: ScenarioAssignment["source"]) {
+    const existing = gapConfiguration.rules.find((rule) => rule.employeeId === employeeId);
+    if (existing && existing.mode !== "preferred" && !existing.stationIds.includes(stationId)
+      && !await confirmAction("此指定將取代該人員原本的固定或限定站點規則，是否繼續？")) return;
+    updateGapConfiguration(setConfigurationAssignment(gapConfigurationEdits, { employeeId, stationId, source }));
   }
 
   const manualAttendance = useMemo(() => getAttendanceForTeam(data.people, manualShift, manualDay), [data.people, manualShift, manualDay]);
+  const manualConfigurationSession = planningConfigurations.get(manualShift, manualDay);
+  const manualPresetRules = useMemo<PlanningRule[]>(() => manualConfigurationSession.enabled ? [
+    ...manualConfigurationSession.configuration.rules,
+    ...manualConfigurationSession.configuration.assignments.filter((item) => item.source === "manual").map((item) => ({ employeeId: item.employeeId, mode: "fixed" as const, stationIds: [item.stationId] })),
+  ] : [], [manualConfigurationSession]);
   const manualRules = useMemo(() => getApplicableRules(manualShift, manualDay, data.stationRules || []), [data.stationRules, manualShift, manualDay]);
   // 站點試排畫面排列順序：依照 02_站點主表 / 原本站點清單順序顯示。
   // 規則 priority 只給排人員演算法參考，不可拿來改變畫面站點排列。
@@ -1164,7 +1192,7 @@ export default function App() {
         .map((employeeId) => ({ employeeId, stationId }))
     );
   }, [data.qualifications, manualAssignments]);
-  const manualSafety = useMemo(() => auditScheduleSafety({
+  const manualSafetyBase = useMemo(() => auditScheduleSafety({
     assignments: manualAssignments,
     rules: manualRules,
     officerStations: manualOfficerStations,
@@ -1177,6 +1205,18 @@ export default function App() {
       .filter((person) => ["領班", "組長"].includes(normalizeOfficerRole(person.role) || ""))
       .map((person) => person.id),
   }), [data.people, data.qualifications, manualAssignments, manualCountableIds, manualExtraWorks, manualOfficerPeople, manualOfficerStations, manualRules, manualTrainingAssignments]);
+  const manualPlanningResolution = useMemo(() => resolvePlanningRules({ people: data.people, qualifications: data.qualifications, stationRules: data.stationRules,
+    team: manualShift, mode: manualDay, planningRules: manualPresetRules.filter((rule) => {
+      const person = data.people.find((item) => item.id === rule.employeeId);
+      return !person || !isSupportOfficerPerson(person);
+    }),
+    overrideEmployeeIds: Object.entries(manualOfficerStations).filter(([, stationId]) => Boolean(stationId)).map(([id]) => id), reservedEmployeeIds: manualExtraWorks.flatMap((work) => work.personIds),
+  }), [data, manualShift, manualDay, manualPresetRules, manualOfficerStations, manualExtraWorks]);
+  const manualPlanningConflicts = planningPlacementConflicts(manualPlanningResolution.validRules, {
+    ...Object.fromEntries(manualRules.map((rule) => [rule.stationId, [...(manualAssignments[rule.stationId] || []), ...Object.entries(manualOfficerStations).filter(([, stationId]) => stationId === rule.stationId).map(([id]) => id)]])),
+  });
+  const manualSafety = { ...manualSafetyBase, canPreview: manualSafetyBase.canPreview && !manualPlanningConflicts.length,
+    blockingIssues: [...manualSafetyBase.blockingIssues, ...manualPlanningConflicts.map((id) => `${data.people.find((person) => person.id === id)?.name || id} 的固定或限定規則尚未符合`)] };
   const manualPendingCount = manualSafety.unassignedIds.length;
   const manualEffectiveAssigned = Math.max(0, manualCountableTotal - manualPendingCount);
   const manualSchedulePreview = useMemo(() => {
@@ -1312,7 +1352,7 @@ export default function App() {
       gapStressWorkerRef.current?.terminate();
       gapStressWorkerRef.current = null;
     };
-  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapUnavailableIds, gapTrainingSimulations, gapOfficerSimulations, gapConfigurationHistory]);
+  }, [data.people, data.qualifications, data.stationRules, gapDay, gapShift, gapUnavailableIds, gapConfigurationSession]);
 
   function getRoleAllowedFromSaved(role: UserRole, permissionId: string) {
     if (role === "最高權限") return true;
@@ -1399,6 +1439,7 @@ export default function App() {
       qualifications: gapDisplayQualifications,
       unavailableIds: gapUnavailableIds,
       forcedAssignments: gapAcceptedSimulations.map((item) => ({ employeeId: item.employeeId, stationId: item.stationId })),
+      planningRules: gapPlanningRules,
       maxAbsences: gapStressMaxAbsences,
     });
   }
@@ -1787,12 +1828,15 @@ export default function App() {
       team: manualShift, day: manualDay, rules: data.stationRules || [], people: data.people,
       qualifications: data.qualifications, mode: manualMode,
       officerStations: manualOfficerStations, extraWorks: manualExtraWorks,
+      planningRules: manualPresetRules,
       options: { useMinRequired: true, randomize: true },
     });
     setManualAssignments(plan.assignments);
+    setManualOfficerStations(plan.validOfficerStations);
     setFlashMessage(plan.violations.length
       ? `已安排其餘人力；${plan.violations.length} 項固定站位需確認：${plan.violations.map((item) => item.message).join("；")}`
-      : `自動安排已完成：${manualMode}；已保留固定站長與臨時勤務，依剩餘需求補位。`);
+      : plan.planningWarnings.length ? plan.planningWarnings.map((item) => item.message).join("；")
+      : `自動安排已完成：${manualMode}；已保留配置規則、固定站長與臨時勤務。`);
   }
 
   const manualCustomCandidates = useMemo(() => {
@@ -3514,10 +3558,10 @@ export default function App() {
             <EntranceLayout pageKey="gap-analysis">
               <div className="panel analysis-context">
                 <div className="toolbar">
-                  <select aria-label="覆蓋分析班別" value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
+                  <select aria-label="覆蓋分析班別" value={gapShift} onChange={(e) => { setGapShift(e.target.value as TeamName); setGapAbsentIds([]); }}>
                     {TEAM_OPTIONS.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
-                  <select aria-label="覆蓋分析日別" value={gapDay} onChange={(e) => { setGapDay(e.target.value as ShiftMode); setGapAbsentIds([]); setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>
+                  <select aria-label="覆蓋分析日別" value={gapDay} onChange={(e) => { setGapDay(e.target.value as ShiftMode); setGapAbsentIds([]); }}>
                     {dayOptions.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                 </div>
@@ -3576,6 +3620,11 @@ export default function App() {
                   </div>
                   </details>
 
+                  <PlanningPresetBar userId={currentUser!.id} team={gapShift} day={gapDay} configuration={gapConfiguration} enabled={gapConfigurationSession.enabled}
+                    canUndo={Boolean(gapConfigurationSession.history.length)} people={gapAttendance.all} qualifications={data.qualifications}
+                    stations={gapRules.map((rule) => ({ id: rule.stationId, name: data.stations.find((item) => item.id === rule.stationId)?.name || rule.stationId }))}
+                    onChange={(next) => planningConfigurations.change(gapShift, gapDay, next)} onDefault={(next) => planningConfigurations.applyDefault(gapShift, gapDay, next)}
+                    onEnable={(enabled) => planningConfigurations.enable(gapShift, gapDay, enabled)} onReset={resetGapConfiguration} onUndo={() => planningConfigurations.undo(gapShift, gapDay)} />
                   <CoverageConfigurationOverview
                     title={gapSimulationAnalysis ? "情境模擬配置" : gapUnavailableIds.length ? "人力異動後配置" : "全站配置"}
                     contextLabel={gapDepartureScenario.departures.length ? "已套用離職情境" : gapSimulationAnalysis ? "導入模擬後" : gapUnavailableIds.length ? "缺勤模擬中" : "目前狀態"}
@@ -3587,14 +3636,14 @@ export default function App() {
                     onOpenDetails={() => setGapConfigurationDetailsOpen(true)}
                     onCloseDetails={() => setGapConfigurationDetailsOpen(false)}
                     baselineShortage={gapConfigurationBaseline.analysis.shortage}
-                    editCount={gapConfigurationEdits.length}
+                    editCount={gapSimulationCount}
                     error={gapConfigurationError}
-                    canUndo={gapConfigurationSteps.length > 1}
-                    onAssign={(employeeId, stationId, source) => updateGapConfiguration(setConfigurationAssignment(gapConfigurationEdits, { employeeId, stationId, source }))}
-                    onRelease={(employeeId) => updateGapConfiguration(gapConfigurationEdits.filter((item) => item.employeeId !== employeeId))}
-                    onUndo={() => { setGapConfigurationError(""); setGapConfigurationHistory({ context: gapConfigurationContext, steps: gapConfigurationSteps.slice(0, -1) }); }}
-                    onReset={() => updateGapConfiguration([])}
-                    changes={gapConfigurationEdits.length ? gapConfigurationChanges.map((item) => ({
+                    canUndo={Boolean(gapConfigurationSession.history.length)}
+                    onAssign={(employeeId, stationId, source) => void fixGapPerson(employeeId, stationId, source)}
+                    onRelease={(employeeId) => planningConfigurations.change(gapShift, gapDay, (current) => ({ assignments: current.assignments.filter((item) => item.employeeId !== employeeId), rules: current.rules.filter((item) => item.employeeId !== employeeId) }))}
+                    onUndo={() => { setGapConfigurationError(""); planningConfigurations.undo(gapShift, gapDay); }}
+                    onReset={resetGapConfiguration}
+                    changes={gapSimulationCount ? gapConfigurationChanges.map((item) => ({
                       name: data.people.find((person) => person.id === item.employeeId)?.name || item.employeeId,
                       from: data.stations.find((station) => station.id === item.from)?.name || "未配置",
                       to: data.stations.find((station) => station.id === item.to)?.name || "未配置",
@@ -3602,6 +3651,7 @@ export default function App() {
                   />
                   <DepartureScenarioPanel candidates={gapDepartureScenario.candidates} selectedIds={gapDepartureIds} onChange={setGapDepartureIds} before={gapBeforeDepartureAnalysis.shortage} after={gapDisplayCoverageAnalysis.shortage} changes={gapDepartureChanges} />
                   {gapSimulationResult?.violations.length ? <div className="bootstrap-error-banner" role="alert">未採用的模擬：{gapSimulationResult.violations.map((item) => item.message).join("；")}</div> : null}
+                  {gapSimulationResult?.planningWarnings.length ? <div className="planning-warnings" role="status"><strong>配置規則核對</strong><ul>{gapSimulationResult.planningWarnings.map((item, index) => <li key={index}>{item.message}</li>)}</ul></div> : null}
                   <div className="analysis-view-tabs" role="group" aria-label="分析工作項目">
                     {([ ["overview", "目前缺口"], ["absence", "缺勤測試"], ["training", "補訓計畫"], ["support", "幹部支援"] ] as const).map(([key, label]) =>
                       <button type="button" key={key} aria-pressed={gapView === key} onClick={() => setGapView(key)}>{label}</button>
@@ -3618,9 +3668,9 @@ export default function App() {
                       </div>
                     </div>
                     <p className="muted">領班、組長與主任以現場管理為主要勤務。僅在必要時列出可緊急支援的缺口，亦可自訂人員與站點進行情境檢核。</p>
-                    {gapActiveCoverageAnalysis.officerSuggestions.length ? (
+                    {gapDisplayCoverageAnalysis.officerSuggestions.length ? (
                       <div className="officer-relief-tags">
-                        {gapActiveCoverageAnalysis.officerSuggestions.map((item) => {
+                        {gapDisplayCoverageAnalysis.officerSuggestions.map((item) => {
                             const person = data.people.find((p) => p.id === item.employeeId);
                             const station = data.stations.find((stationItem) => stationItem.id === item.stationId);
                             const active = gapOfficerSimulations.some((selected) => selected.employeeId === item.employeeId && selected.stationId === item.stationId);
@@ -3782,7 +3832,8 @@ export default function App() {
                     </div>
                   </div>
 
-                  {gapSimulationCount && gapTrainingSimulationAnalysis ? (() => {
+                  {gapSimulationCount && !gapComparisonOpen ? <button type="button" className="ghost" onClick={() => setGapComparisonOpen(true)}>查看配置比較（已保留 {gapSimulationCount} 項）</button> : null}
+                  {gapComparisonOpen && gapSimulationCount && gapTrainingSimulationAnalysis ? (() => {
                     const reduced = Math.max(0, gapActiveCoverageAnalysis.shortage - gapTrainingSimulationAnalysis.shortage);
                     const selectedStationIds = new Set([...gapTrainingSimulations, ...gapOfficerSimulations].map((item) => item.stationId));
                     const trainingText = gapTrainingSimulations.map((item) => {
@@ -3806,11 +3857,10 @@ export default function App() {
                     return (
                       <div className={`panel coverage-summary-panel ${reduced > 0 ? "is-covered" : "has-gap"}`}>
                         <div className="panel-header">
-                          <h3>導入模擬結果</h3>
-                          <button type="button" className="ghost compact-help-button" onClick={() => { setGapTrainingSimulations([]); setGapOfficerSimulations([]); }}>關閉</button>
+                          <h3>配置比較</h3>
+                          <button type="button" className="ghost compact-help-button" onClick={() => setGapComparisonOpen(false)}>收起比較</button>
                         </div>
-                        <p className="muted">假設以下補訓或幹部支援直接導入指定站點，再重新檢查其他站是否出現缺口：{selectedText}</p>
-                        <p className="muted">領班/組長/主任導入會特別標示，方便你確認是否真的要動用現場監督支援站點。</p>
+                        <p className="muted">依目前配置條件重算全站；收起比較不會取消配置。{selectedText}</p>
                         <div className="detail-grid">
                           <Info label="目前缺口" value={String(gapActiveCoverageAnalysis.shortage)} />
                           <Info label="導入後缺口" value={String(gapTrainingSimulationAnalysis.shortage)} />
@@ -3818,7 +3868,7 @@ export default function App() {
                           <Info label="導入後覆蓋" value={`${gapTrainingSimulationAnalysis.required - gapTrainingSimulationAnalysis.shortage}/${gapTrainingSimulationAnalysis.required}`} />
                           <Info label="重複指派" value={duplicatedAssignedNames.length ? duplicatedAssignedNames.join("、") : "0"} />
                         </div>
-                        <table className="table">
+                        <div className="table-wrap configuration-comparison-table"><table className="table">
                           <thead>
                             <tr>
                               <th>站點</th>
@@ -3868,7 +3918,7 @@ export default function App() {
                               );
                             })}
                           </tbody>
-                        </table>
+                        </table></div>
                       </div>
                     );
                   })() : null}
@@ -4160,6 +4210,16 @@ export default function App() {
           {currentRole && page === "manual-schedule" && canUsePage("manual-schedule") ? (
             <EntranceLayout pageKey="manual-schedule">
               <div>
+              <PlanningPresetBar userId={currentUser!.id} team={manualShift} day={manualDay} configuration={manualConfigurationSession.configuration}
+                enabled={manualConfigurationSession.enabled} canUndo={Boolean(manualConfigurationSession.history.length)}
+                people={manualAttendance.all} qualifications={data.qualifications} stations={manualRules.map((rule) => ({ id: rule.stationId, name: data.stations.find((item) => item.id === rule.stationId)?.name || rule.stationId }))}
+                onChange={(next) => planningConfigurations.change(manualShift, manualDay, next)} onDefault={(next) => planningConfigurations.applyDefault(manualShift, manualDay, next)}
+                onEnable={(enabled) => planningConfigurations.enable(manualShift, manualDay, enabled)} onReset={() => planningConfigurations.reset(manualShift, manualDay)} onUndo={() => planningConfigurations.undo(manualShift, manualDay)}
+                onCapture={() => ({ assignments: Object.entries(manualAssignments).flatMap(([stationId, ids]) => ids.filter((id) => getCoverageQualificationStatus(data.qualifications, id, stationId) === "合格").map((employeeId) => ({ employeeId, stationId, source: "manual" as const }))), rules: Object.entries(manualOfficerStations).filter(([, stationId]) => Boolean(stationId)).map(([employeeId, stationId]) => ({ employeeId, mode: "fixed" as const, stationIds: [stationId] })) })} />
+              {manualPresetRules.length ? <p className="muted" role="status">配置規則會在「重新自動安排」時套用；現有試排保留，輸出前會再次檢查固定與限定站點。</p> : null}
+              {manualConfigurationSession.enabled && (manualConfigurationSession.configuration.assignments.some((item) => item.source !== "manual") || manualPresetRules.some((rule) => { const person = data.people.find((item) => item.id === rule.employeeId); return person && isSupportOfficerPerson(person); })) ? <p className="planning-rule-warnings" role="status">補訓完成假設與領班、組長、主任的支援模擬僅供覆蓋分析，不會自動導入實際試排或變更管理勤務。</p> : null}
+              {manualPlanningConflicts.length ? <div className="planning-rule-warnings" role="alert">目前試排尚未符合 {manualPlanningConflicts.length} 位人員的配置規則，請重新安排或調整規則後再預覽。</div> : null}
+              {manualPlanningResolution.warnings.length ? <ul className="planning-rule-warnings" role="status">{manualPlanningResolution.warnings.map((warning, index) => <li key={`${warning.code}-${index}`}>{warning.message}</li>)}</ul> : null}
 
               <div className="panel">
                 <div className="toolbar">

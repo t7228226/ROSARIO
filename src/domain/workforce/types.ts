@@ -7,6 +7,8 @@ import type {
   CoverageAnalysisResult,
   CoverageStationRow,
 } from "../../lib/selectors";
+import type { PlanningRule, PlanningRuleWarning } from "./planningRules";
+export type { PlanningRule, PlanningRuleWarning } from "./planningRules";
 
 export type ScenarioAssignmentSource = "manual" | "training" | "officer";
 
@@ -21,6 +23,7 @@ export interface WorkforceScenario {
   mode: ShiftMode;
   unavailableIds?: string[];
   assignments?: ScenarioAssignment[];
+  planningRules?: PlanningRule[];
 }
 
 export type WorkforceViolationCode =
@@ -57,6 +60,7 @@ export interface WorkforceResult {
   unassignedIds: string[];
   reasons: AssignmentReason[];
   violations: WorkforceViolation[];
+  planningWarnings: PlanningRuleWarning[];
 }
 
 export type WorkforceSnapshot = AppBootstrap;

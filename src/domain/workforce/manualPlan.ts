@@ -3,6 +3,7 @@ import { buildSmartAssignments, getApplicableRules, getAttendanceForTeam, getRul
 import type { AssignmentState } from "./assignmentState";
 import type { ScheduleExtraWork } from "./scheduleSafety";
 import type { WorkforceViolation } from "./types";
+import { resolvePlanningRules, type PlanningRule, type PlanningRuleWarning } from "./planningRules";
 
 export interface ManualPlanInput {
   team: TeamName;
@@ -14,6 +15,7 @@ export interface ManualPlanInput {
   officerStations?: Record<string, string>;
   extraWorks?: ScheduleExtraWork[];
   options?: { useMinRequired?: boolean; randomize?: boolean };
+  planningRules?: PlanningRule[];
 }
 
 export interface ManualPlanResult {
@@ -22,6 +24,7 @@ export interface ManualPlanResult {
   reservedExtraIds: string[];
   violations: WorkforceViolation[];
   shortage: number;
+  planningWarnings: PlanningRuleWarning[];
 }
 
 function officerRole(person: Person) {
@@ -56,12 +59,25 @@ export function buildManualPlan(input: ManualPlanInput): ManualPlanResult {
   const validated = validateForcedAssignments(rules, attendance.all, input.qualifications, new Set(), leaderStations);
   violations.push(...validated.violations);
   const validOfficerStations = Object.fromEntries(validated.validAssignments);
+  const planning = resolvePlanningRules({ ...input, stationRules: input.rules, mode: input.day,
+    reservedEmployeeIds: reservedExtraIds, overrideEmployeeIds: [...requestedStations.keys()] });
+  const fixedRegularStations = new Map<string, string>();
+  planning.fixedAssignments.forEach((stationId, employeeId) => {
+    const person = peopleById.get(employeeId)!;
+    const role = officerRole(person);
+    if (role && role !== "站長") {
+      planning.warnings.push({ code: "SUPERVISORY_DUTY", employeeId, stationId,
+        message: `${person.name}：${role} 保留管理勤務，實體試排不導入分析用幹部緊急支援` });
+    }
+    else if (role === "站長") validOfficerStations[employeeId] = stationId;
+    else fixedRegularStations.set(employeeId, stationId);
+  });
   const leaderCountByStation = new Map<string, number>();
-  validated.validAssignments.forEach((stationId) => {
+  new Map([...Object.entries(validOfficerStations), ...fixedRegularStations]).forEach((stationId) => {
     leaderCountByStation.set(stationId, (leaderCountByStation.get(stationId) || 0) + 1);
   });
 
-  // Fixed leaders consume both minimum demand and the original overflow capacity.
+  // Fixed people consume both minimum demand and the original overflow capacity.
   const residualRules = rules.map((rule) => {
     const fixedCount = leaderCountByStation.get(rule.stationId) || 0;
     const need = getRuleNeed(rule, input.day);
@@ -73,16 +89,21 @@ export function buildManualPlan(input: ManualPlanInput): ManualPlanResult {
     };
   });
   const regularPeople = attendance.all.filter((person) =>
-    !officerRole(person) && !reservedIds.has(person.id) && !requestedStations.has(person.id)
+    !officerRole(person) && !reservedIds.has(person.id) && !requestedStations.has(person.id) && !fixedRegularStations.has(person.id)
   );
   const rows = buildSmartAssignments(input.team, input.day, residualRules, regularPeople, input.qualifications,
-    input.mode || "當班優先", { ...input.options, useMinRequired: input.options?.useMinRequired ?? true });
+    input.mode || "當班優先", { ...input.options, useMinRequired: input.options?.useMinRequired ?? true,
+      planningRules: planning.validRules.filter((rule) => rule.mode !== "fixed") });
 
   return {
-    assignments: Object.fromEntries(rows.map((row) => [row.stationId, row.assigned.map((person) => person.id)])),
+    assignments: Object.fromEntries(rows.map((row) => [row.stationId, [
+      ...[...fixedRegularStations].filter(([, stationId]) => stationId === row.stationId).map(([employeeId]) => employeeId),
+      ...row.assigned.map((person) => person.id),
+    ]])),
     validOfficerStations,
     reservedExtraIds,
     violations,
     shortage: rows.reduce((sum, row) => sum + row.shortage, 0),
+    planningWarnings: planning.warnings,
   };
 }

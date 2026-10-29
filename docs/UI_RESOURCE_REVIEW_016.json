@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0", "scope": "material", "change_kind": "existing", "platform": "react", "surface": "operate",
+  "objective": "區分關閉、暫停與還原；以置中的工具列、原生多選及既有對話框管理配置規則與個人雲端預設，保留現有風格。",
+  "exemption": null,
+  "candidates": [
+    { "source_id": "motion-primitives", "inspected": "https://github.com/ibelick/motion-primitives/blob/main/components/core/disclosure.tsx", "decision": "adapt_method", "detail": "收合只控制可見性，配置狀態獨立管理。", "reason": "參考受控揭露方法，沿用 AppDialog 與原生 details，不新增元件依賴或複製程式碼。", "target": "src/features/gap-analysis/PlanningPresetBar.tsx", "checks": { "free_only": true, "license_reviewed": true, "compatible": true, "evidence": "僅採公開 MIT 範例互動方法；使用既有 React 與 HTML/CSS。" } },
+    { "source_id": "animate-ui", "inspected": "https://animate-ui.com/docs/primitives/headless/disclosure", "decision": "reject", "detail": "DisclosureButton 與內容區的分離範例。", "reason": "既有 AppDialog 的可見性與狀態已能分離，不需要引入 Headless 或 Motion。" }
+  ],
+  "implementation": [{ "source_id": "motion-primitives", "target": "src/features/gap-analysis/PlanningPresetBar.tsx", "detail": "配置開關獨立於編輯與預設對話框，關閉不清除資料；還原另有明確命令。", "evidence_role": "after" }],
+  "evidence": [
+    { "role": "before", "path": "private-backups/upgrade-016/before-desktop.png", "sha256": "d3e67da8f23563669a14072e5e80b2d4c0800ded3c28d788d8f89bcc87893b14" },
+    { "role": "after", "path": "private-backups/upgrade-016/rules-desktop.png", "sha256": "d5248208404fd9d0bdc471e6ee7356931ea3cebbfc1033b8114061c052e7aeee" },
+    { "role": "mobile", "path": "private-backups/upgrade-016/rules-mobile390.png", "sha256": "e28387298544232f74e6f47f751a51aa0f7eb1681cb2d846d378fdf8ac715a7a" },
+    { "role": "narrow", "path": "private-backups/upgrade-016/rules-mobile320.png", "sha256": "8d3234e5e146f1bdfe64720c0d9f27a45af0522c585bf162c68fa22333454265" },
+    { "role": "presets", "path": "private-backups/upgrade-016/presets-green.png", "sha256": "175633bf7ee8b799b2d0e4dba3d09950d266592a4352009e9183d93d041e87c8" },
+    { "role": "night", "path": "private-backups/upgrade-016/rules-night.png", "sha256": "9505eb299ae6e49735d07b4c43404aa8d65f8d76d5c758a98b4eedf121f35ac1" },
+    { "role": "contrast", "path": "private-backups/upgrade-016/rules-contrast.png", "sha256": "529722b6e62a3277d215a5331e4f122fcc3178ed505c4211d1ae5ec140894db1" }
+  ],
+  "verification": [
+    { "id": "visual-comparison", "status": "pass", "evidence_roles": ["before", "after", "mobile", "narrow", "presets", "night", "contrast"] },
+    { "id": "viewport-fit", "status": "pass", "evidence_roles": ["mobile", "narrow"] },
+    { "id": "interaction-states", "status": "pass", "evidence_roles": ["after", "presets"] },
+    { "id": "keyboard-focus", "status": "pass", "evidence_roles": ["after", "narrow"] }
+  ],
+  "reviewer": { "role": "independent-verifier", "summary": "Socrates 實際審閱桌機與 390/320 截圖，未見發布阻斷或 P2 視覺問題。此為既有介面新增規則／預設工具，比較受控揭露與現有 AppDialog 方法，不以舊班表畫面聲稱同狀態前後比較。主流程修正三項缺陷：舊 max-width 220 使欄位靠左、390 站點選項過長單欄改雙欄、試排規則未符合只出短暫提示改持續警告；前兩項已重看，第三項以實際操作狀態驗證而非上述截圖。主流程另檢查五主題、儲存／讀取狀態、空白規則、Tab 循環及 Escape。390 內容 client/scroll 為375/375，320為305/305，320對話框283/283。320頁首與footer偏高、站點可見範圍少列P3，不影響捲動操作。未做原生iPhone驗收，未新增動畫，沿用既有減量設定。" }
+}

@@ -76,6 +76,7 @@ export default function CoverageConfigurationOverview({
   const bottleneckRows = rows.filter((row) => row.status === "瓶頸");
   const attentionRows = rows.filter((row) => row.shortage > 0 || row.status === "瓶頸" || row.changedBySimulation);
   const totalShortage = shortageRows.reduce((sum, row) => sum + row.shortage, 0);
+  const overfilledRows = rows.filter((row) => row.assigned.length > row.required);
 
   return (
     <section className="panel coverage-configuration-overview">
@@ -93,6 +94,7 @@ export default function CoverageConfigurationOverview({
         <div><dt>低備援站</dt><dd>{bottleneckRows.length}</dd></div>
         <div className={totalShortage ? "is-danger" : "is-success"}><dt>合計缺口</dt><dd>{totalShortage}</dd></div>
       </dl>
+      {overfilledRows.length ? <p className="planning-rule-warnings" role="status">固定配置超出需求：{overfilledRows.map((row) => `${row.stationName} 已排 ${row.assigned.length}／需求 ${row.required}`).join("；")}。超出人數不會抵銷其他站點的缺口。</p> : null}
 
       {attentionRows.length ? (
         <div className="coverage-attention-list" aria-label="目前需要關注的站點">
@@ -113,7 +115,7 @@ export default function CoverageConfigurationOverview({
       <AppDialog
         open={detailsOpen}
         title={`${title}：全部站點`}
-        description="配置模擬不會寫入正式資格或班表。"
+        description="關閉會保留配置；恢復系統預設不會刪除已儲存的預設。"
         onClose={onCloseDetails}
         size="wide"
         footer={<button type="button" className="primary" onClick={onCloseDetails}>完成核對</button>}
@@ -123,16 +125,16 @@ export default function CoverageConfigurationOverview({
         </div>
         <div className="configuration-comparison" aria-label="配置比較" aria-live="polite">
           <div><span>系統原始最佳缺口</span><strong>{baselineShortage}</strong></div>
-          <div><span>{editCount ? "固定人選後最佳缺口" : "目前最佳缺口"}</span><strong className={totalShortage ? "departure-shortage" : ""}>{totalShortage}</strong></div>
-          <div><span>自訂固定</span><strong>{editCount} 人</strong></div>
+          <div><span>{editCount ? "套用配置後最佳缺口" : "目前最佳缺口"}</span><strong className={totalShortage ? "departure-shortage" : ""}>{totalShortage}</strong></div>
+          <div><span>套用規則</span><strong>{editCount} 項</strong></div>
         </div>
         <div className="configuration-actions">
           <button type="button" className="ghost" onClick={onUndo} disabled={!canUndo}>復原上一步</button>
-          <button type="button" className="ghost" onClick={onReset} disabled={!editCount}>還原系統配置</button>
+          <button type="button" className="ghost" onClick={onReset} disabled={!editCount}>恢復系統預設</button>
         </div>
         {error ? <p ref={errorRef} role="alert" tabIndex={-1} className="departure-shortage configuration-impact">{error}</p> : null}
         {editCount ? <div className="configuration-impact" role="status">
-          <strong>{totalShortage > baselineShortage ? `固定條件新增 ${totalShortage - baselineShortage} 個缺口` : totalShortage < baselineShortage ? `固定條件減少 ${baselineShortage - totalShortage} 個缺口` : "固定條件未增加全站缺口"}</strong>
+          <strong>{totalShortage > baselineShortage ? `自訂配置新增 ${totalShortage - baselineShortage} 個缺口` : totalShortage < baselineShortage ? `自訂配置減少 ${baselineShortage - totalShortage} 個缺口` : "自訂配置未增加全站缺口"}</strong>
           {changes.length ? <details><summary>人員調動 {changes.length} 人</summary><ul>{changes.map((item, index) => <li key={`${item.name}-${index}`}>{item.name}：{item.from} → {item.to}</li>)}</ul></details> : null}
         </div> : null}
         <div className="configuration-station-list">

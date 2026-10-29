@@ -5,6 +5,7 @@ import {
   getCoverageQualificationStatus,
 } from "../../lib/selectors";
 import type { Person, Qualification } from "../../types";
+import { resolvePlanningRules } from "./planningRules";
 import type {
   AssignmentReason,
   ScenarioAssignment,
@@ -169,6 +170,13 @@ export function evaluateWorkforceScenario(
     validSources.set(assignment.employeeId, assignment.source);
   }
 
+  const planning = resolvePlanningRules({ ...snapshot, team: scenario.team, mode: scenario.mode,
+    planningRules: scenario.planningRules, unavailableIds: scenario.unavailableIds,
+    overrideEmployeeIds: (scenario.assignments || []).map((item) => item.employeeId) });
+  planning.fixedAssignments.forEach((stationId, employeeId) => {
+    forcedAssignments.set(employeeId, stationId);
+    validSources.set(employeeId, isOfficer(peopleById.get(employeeId)!) ? "officer" : "manual");
+  });
   const analysis = analyzeStationCoverage(
     scenario.team,
     scenario.mode,
@@ -177,8 +185,9 @@ export function evaluateWorkforceScenario(
     simulatedQualifications,
     unavailableIds,
     forcedAssignments,
-    { excludeOfficersFromCoverage: true }
+    { excludeOfficersFromCoverage: true, planningRules: planning.validRules.filter((rule) => rule.mode !== "fixed") }
   );
+  analysis.planningWarnings = planning.warnings;
   violations.push(...analysis.violations);
   analysis.fullyCovered = analysis.fullyCovered && violations.length === 0;
   const assignments = Object.fromEntries(
@@ -210,5 +219,6 @@ export function evaluateWorkforceScenario(
     unassignedIds,
     reasons,
     violations,
+    planningWarnings: planning.warnings,
   };
 }

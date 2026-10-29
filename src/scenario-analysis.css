@@ -52,6 +52,29 @@
 .configuration-candidate.kind-support { background: #dbeafe; color: #1e3a8a; border-color: #60a5fa; }
 .configuration-candidate.kind-training { background: #fef3c7; color: #854d0e; border-color: #eab308; }
 .configuration-candidate.is-fixed { outline: 2px solid var(--theme-primary); outline-offset: -2px; opacity: 1; }
+.planning-preset-bar { min-width: 0; margin-block: 16px; padding-block: 16px; border-block: 1px solid var(--ros-border); text-align: center; }
+.planning-bar-heading, .planning-bar-actions { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+.planning-bar-heading { margin-bottom: 12px; }
+.planning-bar-heading > span { font-size: 13px; color: var(--ros-muted); }
+.planning-bar-actions button { min-height: 44px; }
+.planning-enabled { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; text-align: center; }
+.planning-enabled input, .planning-station-options input { width: 20px; height: 20px; flex-shrink: 0; margin: 0; }
+.planning-rule-form { display: grid; gap: 16px; text-align: center; min-width: 0; }
+.planning-rule-form > label:not(.planning-enabled) { display: grid; gap: 8px; min-width: 0; }
+.app-dialog .planning-rule-form input:not([type=checkbox]), .app-dialog .planning-rule-form select { width: min(100%, 440px); max-width: 100%; min-width: 0; min-height: 44px; box-sizing: border-box; justify-self: center; }
+.planning-rule-form > p { margin-block: 0; }
+.planning-mode { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.planning-mode button { min-height: 44px; padding: 8px 4px; border: 1px solid var(--ros-border); background: var(--ros-surface); color: var(--ros-text); border-radius: 6px; }
+.planning-mode button[aria-pressed=true] { color: var(--ros-primary-contrast, #fff); background: var(--ros-primary); border-color: var(--ros-primary); }
+.planning-station-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(120px, 100%), 1fr)); gap: 8px; margin: 0; padding: 12px; border: 1px solid var(--ros-border); min-width: 0; }
+.planning-station-options label { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; min-height: 44px; overflow-wrap: anywhere; }
+.planning-rule-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; border-top: 1px solid var(--ros-border); padding-block: 10px; }
+.planning-rule-entry { display: grid; justify-items: center; gap: 6px; min-height: 44px; min-width: 0; background: transparent; color: var(--ros-text); border: 0; }
+.planning-rule-entry span { overflow-wrap: anywhere; }
+.planning-warnings { text-align: center; border-inline-start: 3px solid var(--ros-warning); padding: 12px; margin-block: 12px; }
+.planning-warnings ul { list-style: none; padding: 0; line-height: 1.8; }
+.planning-rule-warnings { padding: 12px; margin-block: 12px; border: 1px solid var(--ros-border); border-inline-start: 3px solid var(--ros-warning); text-align: center; overflow-wrap: anywhere; list-style: none; line-height: 1.8; }
+.configuration-comparison-table { max-width: 100%; overflow: auto; }
 .manual-schedule-list .list-row.active.station-leader-assigned:not(.training-assigned) { background: #dcfce7 !important; color: #166534 !important; border: 1px solid #22c55e !important; }
 #root .app-shell.app-operational-v3 .content .manual-schedule-list .list-row.active.station-leader-assigned:not(.training-assigned) strong { color: #166534 !important; }
 @media (prefers-reduced-motion: reduce) { .configuration-station .coverage-disclosure-arrow { transition: none; } }

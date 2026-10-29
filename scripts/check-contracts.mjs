@@ -84,6 +84,12 @@ assert.match(gasClientSource, /sessionToken: sessionToken \|\| undefined/, "前�
 assert.match(gasClientSource, /action: "bootstrap"[\s\S]+sessionToken: sessionToken \|\| undefined/, "前端 bootstrap 必須使用已驗證 POST");
 assert.match(gasClientSource, /sessionToken !== activeSessionToken/, "舊登入請求不得污染新登入狀態");
 assert.match(doPostSource, /case 'listOperations':/, "GAS 必須提供已驗證操作清單");
+assert.match(frontendSource, /"saveCoveragePreset"/, "配置預設必須使用可靠寫入通道");
+assert.match(gasSource, /saveCoveragePreset: 'PERM_006'/, "配置預設儲存必須驗證覆蓋分析權限");
+assert.match(doPostSource, /case 'saveCoveragePreset':\s*return jsonOutput_\(executeWriteRequest_\([\s\S]*?saveCoveragePreset_\(payload, session\)/, "配置預設必須保留授權、revision 與 receipt");
+assert.match(doPostSource, /case 'loadCoveragePresets':\s*\{\s*const session = assertReadPermission_\([^;]+, 'PERM_006'\);[\s\S]*?readRevisionSnapshot_\([\s\S]*?loadCoveragePresets_\(payload, session\)/, "配置預設讀取必須驗證權限並使用一致快照");
+const bootstrapSource = gasSource.slice(gasSource.indexOf("function buildBootstrap_("), gasSource.indexOf("function mergeAccountFieldsIntoPeople_("));
+assert.doesNotMatch(bootstrapSource, /COVERAGE_PRESETS|loadCoveragePresets_/, "bootstrap 不得載入或自動套用配置預設");
 assert.match(appSource, /<OperationCenter/, "前端必須提供操作狀態中心");
 assert.doesNotMatch(appSource, /window\.(confirm|prompt)\(/, "操作確認不可阻塞瀏覽器主執行緒");
 const customAssign = appSource.slice(appSource.indexOf("async function handleCustomAssign"), appSource.indexOf("function renderPermissionPage"));

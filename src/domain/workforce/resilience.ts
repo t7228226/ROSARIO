@@ -15,6 +15,7 @@ import type {
   StationRule,
   TeamName,
 } from "../../types";
+import { isPlanningStationAllowed, resolvePlanningRules, type PlanningRule, type PlanningRuleWarning } from "./planningRules";
 
 const OFFICER_ROLES = new Set(["領班", "組長", "主任"]);
 const FULL_ENUMERATION_LIMIT = 25_000;
@@ -32,6 +33,7 @@ export interface ResilienceInput {
   maxAbsences: number;
   unavailableIds?: string[];
   forcedAssignments?: Array<{ employeeId: string; stationId: string }>;
+  planningRules?: PlanningRule[];
 }
 
 export interface ResilienceLevelResult {
@@ -121,6 +123,7 @@ export interface CoverageResilienceResult {
   supportDependencies: SupportDependency[];
   trainingSuggestions: ResilienceTrainingSuggestion[];
   violations: CoverageAssignmentViolation[];
+  planningWarnings: PlanningRuleWarning[];
 }
 
 interface ScenarioSnapshot {
@@ -220,7 +223,8 @@ function solveScenario(
   unavailableIds: Set<string>,
   ownIds: Set<string>,
   supportIds: Set<string>,
-  forcedAssignments = new Map<string, string>()
+  forcedAssignments = new Map<string, string>(),
+  planningRules: PlanningRule[] = []
 ): SolvedScenario {
   const { assignedByStation, qualifiedByStation } = solveCoverageMatching(
     rules,
@@ -231,7 +235,9 @@ function solveScenario(
     mode === "當班" ? "資格優先" : "支援優先",
     ownIds,
     supportIds,
-    forcedAssignments
+    forcedAssignments,
+    false,
+    planningRules
   );
   const shortageByStation = new Map<string, number>();
   let totalShortage = 0;
@@ -346,7 +352,8 @@ function buildTrainingSuggestions(
   exhaustive: boolean,
   ownIds: Set<string>,
   supportIds: Set<string>,
-  forcedAssignments: Map<string, string>
+  forcedAssignments: Map<string, string>,
+  planningRules: PlanningRule[]
 ) {
   const qualificationCountMap = getQualificationCountMap(workingPeople, qualifications);
   const targetStationIds = [
@@ -373,6 +380,7 @@ function buildTrainingSuggestions(
 
   for (const stationId of targetStationIds) {
     const stationCandidateEvaluations = trainingPeople
+      .filter((person) => isPlanningStationAllowed(planningRules, person.id, stationId))
       .filter((person) => !["合格", "不可排"].includes(getCoverageQualificationStatus(qualifications, person.id, stationId)))
       .map((person) => {
         const simulatedQualifications: Qualification[] = [
@@ -392,7 +400,8 @@ function buildTrainingSuggestions(
           new Set<string>(),
           ownIds,
           supportIds,
-          new Map([...forcedAssignments, [person.id, stationId]])
+          new Map([...forcedAssignments, [person.id, stationId]]),
+          planningRules
         );
         return {
           person,
@@ -435,7 +444,8 @@ function buildTrainingSuggestions(
           new Set(scenario.absentIds),
           ownIds,
           supportIds,
-          trainingAssignments
+          trainingAssignments,
+          planningRules
         ).totalShortage;
         if (simulatedShortage === 0) fullyCoveredAfter += 1;
         shortageSlotsReduced += Math.max(0, scenario.totalShortage - simulatedShortage);
@@ -507,8 +517,10 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     });
     else requestedAssignments.set(employeeId, stationId);
   });
+  const planning = resolvePlanningRules({ ...input, overrideEmployeeIds: [...requestedAssignments.keys()] });
+  const planningRules = planning.validRules.filter((rule) => rule.mode !== "fixed");
   const { validAssignments: forcedAssignments, violations } = validateForcedAssignments(rules, attendance.all, input.qualifications,
-    unavailableIds, requestedAssignments);
+    unavailableIds, new Map([...planning.fixedAssignments, ...requestedAssignments]));
   violations.push(...duplicateAssignments);
   const workingPeople = attendance.all.filter((person) => !unavailableIds.has(person.id) && (!isOfficer(person) || forcedAssignments.has(person.id)));
   const workingPersonIds = new Set(workingPeople.map((person) => person.id));
@@ -523,7 +535,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     new Set<string>(),
     ownIds,
     supportIds,
-    forcedAssignments
+    forcedAssignments,
+    planningRules
   );
   const withoutSupport = supportIds.size
     ? solveScenario(
@@ -534,7 +547,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         new Set(supportIds),
         ownIds,
         supportIds,
-        forcedAssignments
+        forcedAssignments,
+        planningRules
       )
     : null;
   const baselineRequired = rules.reduce((sum, rule) => sum + getRuleNeed(rule, input.mode), 0);
@@ -570,7 +584,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
         new Set(absentIds),
         ownIds,
         supportIds,
-        forcedAssignments
+        forcedAssignments,
+        planningRules
       );
       const addedShortage = Math.max(0, scenario.totalShortage - baseline.totalShortage);
       if (scenario.totalShortage === 0) levelFullyCovered += 1;
@@ -677,7 +692,8 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     levels.every((item) => item.exhaustive),
     ownIds,
     supportIds,
-    forcedAssignments
+    forcedAssignments,
+    planningRules
   );
 
   return {
@@ -698,5 +714,6 @@ export function analyzeCoverageResilience(input: ResilienceInput): CoverageResil
     supportDependencies,
     trainingSuggestions,
     violations,
+    planningWarnings: planning.warnings,
   };
 }

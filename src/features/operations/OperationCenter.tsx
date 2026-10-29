@@ -11,6 +11,7 @@ const actionLabels: Record<string, string> = {
   upsertPersonalPermissionException: "更新個人權限", deletePersonalPermissionException: "刪除個人權限",
   syncQualificationsFromMatrix: "同步站點資格",
   acknowledgeOperation: "核對操作紀錄",
+  saveCoveragePreset: "儲存配置預設",
 };
 const statusLabels = { processing: "處理中", success: "已完成", failed: "未完成", unknown: "待確認", reviewed: "已人工核對" };
 const emptyReceipts: OperationReceipt[] = [];

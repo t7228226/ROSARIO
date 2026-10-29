@@ -36,6 +36,7 @@ const SHEETS = {
   PERSONAL_PERMISSION_EXCEPTIONS: '10_個人例外權限',
   SCHEDULE_DRAFTS: '11_站點試排紀錄',
   SCHEDULE_DRAFT_DETAILS: '12_站點試排明細',
+  COVERAGE_PRESETS: '13_配置預設',
   SYSTEM: '00_系統設定',
 };
 
@@ -45,8 +46,8 @@ const SETTINGS = {
 
   // 前端版本防護：APP_VERSION 是目前最新版本，MIN_WRITE_VERSION 是允許寫入的最低版本。
   // 若 00_系統設定 內有更高版本才採用，避免舊設定覆蓋新部署。
-  APP_VERSION: '2026-10-29-015',
-  MIN_WRITE_VERSION: '2026-10-29-015',
+  APP_VERSION: '2026-10-30-016',
+  MIN_WRITE_VERSION: '2026-10-30-016',
   OPERATION_TTL_MS: 24 * 60 * 60 * 1000,
   OPERATION_MAX_RECORDS: 160,
   OPERATION_STALE_MS: 7 * 60 * 1000,
@@ -78,6 +79,8 @@ const DATA_FINGERPRINT_PROPERTY = 'ROSARIO_DATA_FINGERPRINT';
 // Receipt metadata must not change the business-data revision.
 const OPERATION_LEDGER_SHEET = '13_操作收據';
 const OPERATION_LEDGER_HEADERS = ['operationId', 'receipt'];
+const COVERAGE_PRESET_HEADERS = ['預設ID', '擁有人ID', '名稱', '班別', '日別', '預設', '更新時間']
+  .concat(Array.from({ length: 10 }, function (_, index) { return '配置JSON' + (index || ''); }));
 let scriptLockHeld_ = false;
 let requestSheetCache_ = null;
 let dataMutationAttempted_ = false;
@@ -93,6 +96,7 @@ const ACTION_PERMISSION_MAP = {
   upsertPersonalPermissionException: 'PERM_016',
   deletePersonalPermissionException: 'PERM_016',
   saveScheduleDraft: 'PERM_008',
+  saveCoveragePreset: 'PERM_006',
   syncQualificationsFromMatrix: 'PERM_005',
   acknowledgeOperation: 'PERM_016',
 };
@@ -111,7 +115,7 @@ function doGet(e) {
     if (action === 'version') {
       return jsonOutput_(buildVersionStatus_((e && e.parameter && e.parameter.appVersion) || ''));
     }
-    if (action === 'bootstrap' || action === 'syncQualificationsFromMatrix' || action === 'matrixDebug' || action === 'permissionConfig' || action === 'loadScheduleDrafts' || action === 'operationStatus' || action === 'listOperations') {
+    if (action === 'bootstrap' || action === 'syncQualificationsFromMatrix' || action === 'matrixDebug' || action === 'permissionConfig' || action === 'loadScheduleDrafts' || action === 'loadCoveragePresets' || action === 'operationStatus' || action === 'listOperations') {
       return jsonOutput_({ ok: false, code: 'POST_REQUIRED', message: '此操作必須使用已驗證的 POST 請求。' });
     }
     return jsonOutput_({ ok: false, message: 'Unknown GET action', action });
@@ -159,6 +163,13 @@ function doPost(e) {
           return jsonOutput_(executeWriteRequest_(action, body, payload, function () { return deletePersonalPermissionException_(payload); }));
         case 'saveScheduleDraft':
           return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return saveScheduleDraft_(payload, session); }));
+        case 'saveCoveragePreset':
+          return jsonOutput_(executeWriteRequest_(action, body, payload, function (session) { return saveCoveragePreset_(payload, session); }));
+        case 'loadCoveragePresets': {
+          const session = assertReadPermission_(resolveSessionToken_(body, payload), 'PERM_006');
+          coveragePresetScope_(payload);
+          return jsonOutput_(readRevisionSnapshot_(function () { return loadCoveragePresets_(payload, session); }));
+        }
         case 'loadScheduleDrafts': {
           const session = assertReadPermission_(resolveSessionToken_(body, payload), 'PERM_007');
           return jsonOutput_(readRevisionSnapshot_(function () { return loadScheduleDrafts_(payload, session); }));
@@ -214,6 +225,10 @@ function executeWriteRequest_(action, body, payload, callback) {
       assertExpectedRevision_(expectedRevision);
       if (action === 'updateStationRule') validateRuleDemand_(payload);
       if (action === 'saveScheduleDraft') draftAssignments_(payload);
+      if (action === 'saveCoveragePreset') {
+        coveragePresetSavePlan_(payload, session);
+        assertExpectedRevision_(expectedRevision);
+      }
     });
   });
 }
@@ -394,8 +409,8 @@ function utf8Size_(value) {
 }
 
 function validateWritePayloadSize_(action, payload) {
-  // Draft rows are not echoed into receipts; profile/rule responses are small records.
-  const limit = action === 'saveScheduleDraft' ? 200000 : 6000;
+  // Draft rows and preset JSON are not echoed into receipts.
+  const limit = action === 'saveCoveragePreset' ? 1500000 : action === 'saveScheduleDraft' ? 200000 : 6000;
   if (utf8Size_(JSON.stringify(payload)) > limit) {
     throw authError_('資料內容過長，本次未寫入；請縮短文字或分次處理。', 'PAYLOAD_TOO_LARGE');
   }
@@ -2399,6 +2414,208 @@ function deletePersonalPermissionException_(payload) {
   setCellIfExists_(ws, headers, rowNumber, '更新時間', new Date());
   setCellIfExists_(ws, headers, rowNumber, '更新人', normalizeString_(payload.updatedBy) || '系統');
   return { ok: true, message: '個人例外權限已停用' };
+}
+
+function coveragePresetObject_(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(function (key) { return keys.indexOf(key) < 0; })) {
+    throw authError_('配置預設含有不支援的欄位或格式。', 'COVERAGE_PRESET_INVALID');
+  }
+}
+
+function coveragePresetString_(value, maxLength) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > (maxLength || 80) || /[\u0000-\u001f\u007f-\u009f]/.test(value)) {
+    throw authError_('配置預設文字欄位不正確或過長。', 'COVERAGE_PRESET_INVALID');
+  }
+  return value.trim();
+}
+
+function coveragePresetScope_(payload) {
+  coveragePresetObject_(payload, ['team', 'dayKey', 'sessionToken', 'operationId', 'appVersion', 'expectedRevision']);
+  const team = coveragePresetString_(payload && payload.team);
+  const dayKey = coveragePresetString_(payload && payload.dayKey);
+  // PERM_006 analysis is cross-team; unlike draft editing, it is not own-team-only.
+  const teams = normalizePeople_(getSheetObjects_(SHEETS.PEOPLE)).map(function (person) { return person.shift; })
+    .concat(getSheetObjects_(SHEETS.RULES).map(function (row) { return normalizeString_(row['班別']); }));
+  if (teams.indexOf(team) < 0 || ['當班', '第一天', '第二天'].indexOf(dayKey) < 0) {
+    throw authError_('配置預設必須指定可分析的班別與日別。', 'COVERAGE_PRESET_INVALID');
+  }
+  return { team: team, dayKey: dayKey };
+}
+
+function normalizeCoveragePreset_(value, checkIds) {
+  coveragePresetObject_(value, ['id', 'name', 'team', 'dayKey', 'isDefault', 'updatedAt', 'configuration']);
+  const scope = coveragePresetScope_({ team: value.team, dayKey: value.dayKey });
+  if (typeof value.isDefault !== 'boolean' || (value.updatedAt !== undefined && (!Number.isSafeInteger(value.updatedAt) || value.updatedAt < 0))) {
+    throw authError_('配置預設旗標或更新時間不正確。', 'COVERAGE_PRESET_INVALID');
+  }
+  const configuration = value.configuration;
+  coveragePresetObject_(configuration, ['assignments', 'rules']);
+  const people = checkIds ? new Set(normalizePeople_(getSheetObjects_(SHEETS.PEOPLE)).map(function (person) { return person.id; })) : null;
+  const stations = checkIds ? new Set(getSheetObjects_(SHEETS.STATIONS).filter(function (row) {
+    return !isStructuralIdentity_(row['站點代碼'], ['站點代碼', '站點編號']);
+  }).map(function (row) { return normalizeString_(row['站點代碼']); })) : null;
+  const knownId = function (value, ids) {
+    const id = coveragePresetString_(value);
+    if (ids && !ids.has(id)) throw authError_('配置預設包含不存在的人員或站點。', 'COVERAGE_PRESET_INVALID');
+    return id;
+  };
+  const seen = new Set();
+  const normalizeList = function (items, isRule) {
+    if (!Array.isArray(items) || items.length > 200) throw authError_('配置預設清單最多 200 人。', 'COVERAGE_PRESET_INVALID');
+    return items.map(function (item) {
+      coveragePresetObject_(item, isRule ? ['employeeId', 'mode', 'stationIds'] : ['employeeId', 'stationId', 'source']);
+      const employeeId = knownId(item.employeeId, people);
+      if (seen.has(employeeId)) throw authError_('配置指定與規則不可重複指定同一人員。', 'COVERAGE_PRESET_INVALID');
+      seen.add(employeeId);
+      if (!isRule) {
+        if (['manual', 'training', 'officer'].indexOf(item.source) < 0) throw authError_('配置來源不正確。', 'COVERAGE_PRESET_INVALID');
+        return { employeeId: employeeId, stationId: knownId(item.stationId, stations), source: item.source };
+      }
+      if (['fixed', 'allowed', 'preferred'].indexOf(item.mode) < 0 || !Array.isArray(item.stationIds) || item.stationIds.length < 1 || item.stationIds.length > 20) {
+        throw authError_('配置規則模式或站點數量不正確。', 'COVERAGE_PRESET_INVALID');
+      }
+      const stationIds = item.stationIds.map(function (id) { return knownId(id, stations); });
+      if (new Set(stationIds).size !== stationIds.length || (item.mode === 'fixed' && stationIds.length !== 1)) {
+        throw authError_('配置站點不可重複，固定規則只能指定一站。', 'COVERAGE_PRESET_INVALID');
+      }
+      return { employeeId: employeeId, mode: item.mode, stationIds: stationIds };
+    });
+  };
+  return {
+    id: value.id === undefined ? '' : coveragePresetString_(value.id), name: coveragePresetString_(value.name, 60),
+    team: scope.team, dayKey: scope.dayKey, isDefault: value.isDefault, updatedAt: value.updatedAt || 0,
+    configuration: { assignments: normalizeList(configuration.assignments, false), rules: normalizeList(configuration.rules, true) },
+  };
+}
+
+function coveragePresetTable_() {
+  const sheet = getSheet_(SHEETS.COVERAGE_PRESETS, true);
+  const values = sheet ? sheet.getDataRange().getValues() : [];
+  if (!values.some(function (row) { return row.some(function (cell) { return cell !== ''; }); })) return { sheet: sheet, values: [], firstDataRow: 1 };
+  const info = getSheetHeaderInfo_(sheet, values);
+  if (canonicalJson_(info.headers) !== canonicalJson_(COVERAGE_PRESET_HEADERS)) {
+    throw authError_('配置預設工作表欄位不完整，請聯絡管理員。', 'SHEET_SCHEMA_INVALID');
+  }
+  return { sheet: sheet, values: values, firstDataRow: info.rowIndex + 1 };
+}
+
+function coveragePresetFromRow_(row) {
+  try {
+    if (row.slice(7).some(function (cell) { return typeof cell !== 'string'; })) throw new Error('Invalid JSON cells');
+    const preset = normalizeCoveragePreset_({
+      id: row[0], name: row[2], team: row[3], dayKey: row[4], isDefault: row[5], updatedAt: row[6],
+      configuration: JSON.parse(row.slice(7).join('')),
+    }, false);
+    if (!preset.id) throw new Error('Missing ID');
+    return preset;
+  } catch (_) { throw authError_('配置預設儲存內容無法辨識，請聯絡管理員。', 'COVERAGE_PRESET_STORAGE_INVALID'); }
+}
+
+function loadCoveragePresets_(payload, session) {
+  if (!session) throw authError_('缺少登入工作階段。', 'AUTH_REQUIRED');
+  const scope = coveragePresetScope_(payload);
+  const table = coveragePresetTable_();
+  const presets = table.values.slice(table.firstDataRow).filter(function (row) {
+    return row[1] === session.employeeId && row[3] === scope.team && row[4] === scope.dayKey;
+  }).map(coveragePresetFromRow_);
+  if (presets.length > 20 || new Set(presets.map(function (preset) { return preset.id; })).size !== presets.length ||
+      presets.filter(function (preset) { return preset.isDefault; }).length > 1) {
+    throw authError_('配置預設數量、ID 或預設旗標不一致，請聯絡管理員。', 'COVERAGE_PRESET_STORAGE_INVALID');
+  }
+  return { ok: true, presets: presets.sort(function (a, b) { return b.updatedAt - a.updatedAt || a.id.localeCompare(b.id); }) };
+}
+
+function coveragePresetSavePlan_(payload, session) {
+  coveragePresetObject_(payload, ['preset', 'sessionToken', 'operationId', 'appVersion', 'expectedRevision']);
+  const preset = normalizeCoveragePreset_(payload.preset, true);
+  const table = coveragePresetTable_();
+  const ids = new Set();
+  let existingIndex = -1, count = 0, defaults = 0;
+  table.values.forEach(function (row, index) {
+    if (index < table.firstDataRow || !row.some(function (cell) { return cell !== ''; })) return;
+    const id = coveragePresetString_(row[0]);
+    if (ids.has(id)) throw authError_('配置預設 ID 重複，請聯絡管理員。', 'COVERAGE_PRESET_STORAGE_INVALID');
+    ids.add(id);
+    if (id === preset.id) {
+      if (row[1] !== session.employeeId || row[3] !== preset.team || row[4] !== preset.dayKey) {
+        throw authError_('不能覆寫其他使用者或班別日別的配置預設。', 'FORBIDDEN');
+      }
+      existingIndex = index;
+    }
+    if (row[1] === session.employeeId && row[3] === preset.team && row[4] === preset.dayKey) {
+      count++;
+      if (typeof row[5] !== 'boolean') throw authError_('配置預設旗標不正確。', 'COVERAGE_PRESET_STORAGE_INVALID');
+      if (row[5] && id !== preset.id) defaults++;
+    }
+  });
+  if (count > 20 || (existingIndex < 0 && count >= 20)) throw authError_('每個班別日別最多保存 20 個個人配置預設。', 'COVERAGE_PRESET_CAPACITY');
+  if (!preset.isDefault && defaults > 1) throw authError_('配置預設旗標不一致。', 'COVERAGE_PRESET_STORAGE_INVALID');
+  preset.id = preset.id || ('COVERAGE_' + Utilities.getUuid());
+  if (existingIndex < 0 && ids.has(preset.id)) throw authError_('配置預設 ID 已存在。', 'COVERAGE_PRESET_STORAGE_INVALID');
+  preset.updatedAt = Date.now();
+  const chunks = [], json = JSON.stringify(preset.configuration);
+  for (let offset = 0; offset < json.length;) {
+    let chunk = json.slice(offset, offset + 45000);
+    const last = chunk.charCodeAt(chunk.length - 1);
+    if (last >= 0xd800 && last <= 0xdbff) chunk = chunk.slice(0, -1);
+    chunks.push(chunk); offset += chunk.length;
+  }
+  if (chunks.length > 10) throw authError_('配置預設內容超出儲存上限。', 'PAYLOAD_TOO_LARGE');
+  const next = table.values.length ? table.values.map(function (row) { return row.slice(); }) : [COVERAGE_PRESET_HEADERS.slice()];
+  const changed = table.values.length ? [] : [0];
+  next.forEach(function (row, index) {
+    if (index >= table.firstDataRow && row[1] === session.employeeId && row[3] === preset.team && row[4] === preset.dayKey && row[5] && preset.isDefault) {
+      row[5] = false; row[6] = preset.updatedAt; changed.push(index);
+    }
+  });
+  const targetIndex = existingIndex < 0 ? next.length : existingIndex;
+  next[targetIndex] = [preset.id, session.employeeId, preset.name, preset.team, preset.dayKey, preset.isDefault, preset.updatedAt]
+    .concat(Array.from({ length: 10 }, function (_, index) { return chunks[index] || ''; }));
+  changed.push(targetIndex);
+  return { table: table, next: next, first: Math.min.apply(null, changed), last: Math.max.apply(null, changed), preset: preset };
+}
+
+function saveCoveragePreset_(payload, session) {
+  if (!session) throw authError_('缺少登入工作階段。', 'AUTH_REQUIRED');
+  const plan = coveragePresetSavePlan_(payload, session);
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const created = !plan.table.sheet;
+  let sheet = plan.table.sheet;
+  if (sheet && sheet.getRange(plan.first + 1, 1, plan.last - plan.first + 1, COVERAGE_PRESET_HEADERS.length).getFormulas().some(function (row) { return row.some(Boolean); })) {
+    throw authError_('配置預設儲存範圍含有公式，本次不會覆寫。', 'COVERAGE_PRESET_STORAGE_INVALID');
+  }
+  try {
+    if (created) { invalidateSheetReads_(); sheet = spreadsheet.insertSheet(SHEETS.COVERAGE_PRESETS); }
+    const range = sheet.getRange(plan.first + 1, 1, plan.last - plan.first + 1, COVERAGE_PRESET_HEADERS.length);
+    const values = plan.next.slice(plan.first, plan.last + 1);
+    setLiteralValues_(range, values);
+    SpreadsheetApp.flush();
+    if (canonicalJson_(range.getValues()) !== canonicalJson_(values)) throw new Error('Preset readback mismatch');
+  } catch (_) {
+    try {
+      if (created && sheet) {
+        invalidateSheetReads_(); spreadsheet.deleteSheet(sheet);
+        if (getSheet_(SHEETS.COVERAGE_PRESETS, true)) throw new Error('Preset sheet rollback mismatch');
+      }
+      else if (sheet) {
+        if (sheet.getLastRow() > plan.next.length) throw new Error('Concurrent preset row append');
+        const original = plan.table.values.slice(plan.first, plan.last + 1);
+        if (original.length) setLiteralValues_(sheet.getRange(plan.first + 1, 1, original.length, COVERAGE_PRESET_HEADERS.length), original);
+        if (plan.next.length > plan.table.values.length && sheet.getLastRow() > plan.table.values.length) {
+          invalidateSheetReads_(); sheet.deleteRow(plan.next.length);
+        }
+      }
+      SpreadsheetApp.flush();
+      if (created && getSheet_(SHEETS.COVERAGE_PRESETS, true)) throw new Error('Preset creation outcome unknown');
+      if (!created && canonicalJson_(sheet.getDataRange().getValues()) !== canonicalJson_(plan.table.values)) throw new Error('Preset rollback mismatch');
+    } catch (_) {
+      const unknown = authError_('配置預設可能部分寫入且無法回復，請核對操作結果，勿建立新操作重送。', 'WRITE_OUTCOME_UNKNOWN');
+      unknown.outcomeUnknown = true;
+      throw unknown;
+    }
+    throw authError_('配置預設未儲存，已回復原內容。', 'COVERAGE_PRESET_SAVE_FAILED');
+  }
+  return { ok: true, presetId: plan.preset.id, updatedAt: plan.preset.updatedAt };
 }
 
 function saveScheduleDraft_(payload, session) {

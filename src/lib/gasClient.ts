@@ -191,7 +191,7 @@ async function sendGasAction(action: string, payload: Record<string, unknown>, o
       sessionToken: sessionToken || undefined,
       payload,
     }),
-  }, operationId ? GAS_WRITE_TIMEOUT_MS : (action === "login" || action === "session") && payload.includeBootstrap === true ? GAS_BOOTSTRAP_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
+  }, operationId ? GAS_WRITE_TIMEOUT_MS : ((action === "login" || action === "session") && payload.includeBootstrap === true) || action === "loadCoveragePresets" ? GAS_BOOTSTRAP_TIMEOUT_MS : GAS_READ_TIMEOUT_MS);
   if (sessionToken !== activeSessionToken) throw new GasRequestRejectedError("登入狀態已變更，已停止舊操作的畫面更新。", "SESSION_CHANGED");
   return readGasResult(response, `GAS ${action} 請求失敗`, sessionToken);
 }

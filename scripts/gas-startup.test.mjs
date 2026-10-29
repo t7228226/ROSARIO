@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
+import { readFileSync } from "node:fs";
 import { fixture } from "./helpers/gasFixture.mjs";
 
-const VERSION = "2026-10-29-015";
+const VERSION = JSON.parse(readFileSync(new URL("../release.json", import.meta.url), "utf8")).version;
 const login = (f, extra = {}) => f.post("login", {
   account: "worker", password: "synthetic-old-password", includeBootstrap: true, ...extra,
 });
@@ -133,7 +134,7 @@ test("a manual edit after inline startup still conflicts with the adopted write 
   assert.equal(fresh.people[0].note, "synthetic manual edit after login");
 });
 
-test("startup release keeps the write floor at 015", () => {
+test("startup release keeps the write floor aligned with the release manifest", () => {
   const f = fixture();
   assert.equal(vm.runInContext("SETTINGS.APP_VERSION", f.context), VERSION);
   assert.equal(vm.runInContext("SETTINGS.MIN_WRITE_VERSION", f.context), VERSION);
